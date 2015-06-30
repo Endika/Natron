@@ -12,6 +12,10 @@
 #ifndef CURVE_WIDGET_H
 #define CURVE_WIDGET_H
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <set>
 
 #include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
@@ -21,9 +25,10 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QtOpenGL/QGLWidget>
 #include <QMetaType>
 #include <QDialog>
+#include <QByteArray>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 #endif
@@ -46,7 +51,10 @@ class Bezier;
 class RotoContext;
 class QVBoxLayout;
 class QHBoxLayout;
-class QLabel;
+namespace Natron {
+    class Label;
+}
+
 class CurveGui
     : public QObject
 {
@@ -101,7 +109,7 @@ public:
     void setVisibleAndRefresh(bool visible);
 
     /**
-     * @brief same as setVisibleAndRefresh() but doesn't emit any signal for a repaint
+     * @brief same as setVisibleAndRefresh() but doesn't Q_EMIT any signal for a repaint
      **/
     void setVisible(bool visible);
 
@@ -120,12 +128,9 @@ public:
      * @brief Evaluates the curve and returns the y position corresponding to the given x.
      * The coordinates are those of the curve, not of the widget.
      **/
-    virtual double evaluate(double x) const;
+    virtual double evaluate(bool useExpr, double x) const = 0;
     
-    boost::shared_ptr<Curve>  getInternalCurve() const
-    {
-        return _internalCurve;
-    }
+    virtual boost::shared_ptr<Curve>  getInternalCurve() const;
 
     void drawCurve(int curveIndex,int curvesCount);
 
@@ -136,8 +141,10 @@ public:
     virtual bool areKeyFramesValuesClampedToIntegers() const;
     virtual bool isYComponentMovable() const;
     virtual KeyFrameSet getKeyFrames() const;
+    virtual int getKeyFrameIndex(double time) const = 0;
+    virtual void setKeyFrameInterpolation(Natron::KeyframeTypeEnum interp,int index) = 0;
     
-signals:
+Q_SIGNALS:
 
     void curveChanged();
     
@@ -146,7 +153,13 @@ signals:
 private:
 
     std::pair<KeyFrame,bool> nextPointForSegment(double x1,double* x2,const KeyFrameSet & keyframes);
+    
+protected:
+    
     boost::shared_ptr<Curve> _internalCurve; ///ptr to the internal curve
+    
+private:
+    
     QString _name; /// the name of the curve
     QColor _color; /// the color that must be used to draw the curve
     int _thickness; /// its thickness
@@ -182,10 +195,14 @@ public:
     
     virtual ~KnobCurveGui();
     
+    virtual boost::shared_ptr<Curve>  getInternalCurve() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
     KnobGui* getKnobGui() const
     {
         return _knob;
     }
+    
+    virtual double evaluate(bool useExpr,double x) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     
     boost::shared_ptr<RotoContext> getRotoContext() const { return _roto; }
     
@@ -195,6 +212,10 @@ public:
     {
         return _dimension;
     }
+    
+    virtual int getKeyFrameIndex(double time) const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual void setKeyFrameInterpolation(Natron::KeyframeTypeEnum interp,int index) OVERRIDE FINAL;
+
     
 private:
     
@@ -221,7 +242,7 @@ public:
     
     boost::shared_ptr<Bezier> getBezier() const ;
     
-    virtual double evaluate(double x) const;
+    virtual double evaluate(bool useExpr,double x) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::pair<double,double> getCurveYRange() const;
 
     virtual bool areKeyFramesTimeClampedToIntegers() const { return true; }
@@ -229,6 +250,10 @@ public:
     virtual bool areKeyFramesValuesClampedToIntegers() const { return true; }
     virtual bool isYComponentMovable() const { return false; }
     virtual KeyFrameSet getKeyFrames() const;
+    
+    virtual int getKeyFrameIndex(double time) const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual void setKeyFrameInterpolation(Natron::KeyframeTypeEnum interp,int index) OVERRIDE FINAL;
+
 private:
     
     
@@ -237,7 +262,6 @@ private:
 };
 
 
-class QMenu;
 class CurveWidgetPrivate;
 
 class CurveWidget
@@ -260,18 +284,18 @@ public:
     virtual ~CurveWidget() OVERRIDE;
 
     const QFont & getTextFont() const;
-
+ 
     void centerOn(double xmin,double xmax,double ymin,double ymax);
 
-    void addCurveAndSetColor(CurveGui* curve);
+    void addCurveAndSetColor(const boost::shared_ptr<CurveGui>& curve);
 
     void removeCurve(CurveGui* curve);
 
-    void centerOn(const std::vector<CurveGui*> & curves);
+    void centerOn(const std::vector<boost::shared_ptr<CurveGui> > & curves);
 
-    void showCurvesAndHideOthers(const std::vector<CurveGui*> & curves);
+    void showCurvesAndHideOthers(const std::vector<boost::shared_ptr<CurveGui> > & curves);
 
-    void getVisibleCurves(std::vector<CurveGui*>* curves) const;
+    void getVisibleCurves(std::vector<boost::shared_ptr<CurveGui> >* curves) const;
 
     void setSelectedKeys(const SelectedKeys & keys);
 
@@ -308,13 +332,14 @@ public:
      **/
     virtual void getBackgroundColour(double &r, double &g, double &b) const OVERRIDE FINAL;
 
+    virtual unsigned int getCurrentRenderScale() const OVERRIDE FINAL { return 0; }
     
     virtual void saveOpenGLContext() OVERRIDE FINAL;
     virtual void restoreOpenGLContext() OVERRIDE FINAL;
     
     void pushUndoCommand(QUndoCommand* cmd);
 
-public slots:
+public Q_SLOTS:
 
     void refreshDisplayedTangents();
 
@@ -345,6 +370,12 @@ public slots:
     void breakDerivativesForSelectedKeyFrames();
 
     void frameSelectedCurve();
+    
+    void loopSelectedCurve();
+    
+    void negateSelectedCurve();
+    
+    void reverseSelectedCurve();
 
     void refreshSelectedKeysBbox();
 
@@ -408,14 +439,11 @@ class ImportExportCurveDialog
 public:
 
     ImportExportCurveDialog(bool isExportDialog,
-                            const std::vector<CurveGui*> & curves,
+                            const std::vector<boost::shared_ptr<CurveGui> > & curves,
                             Gui* gui,
                             QWidget* parent = 0);
 
-    virtual ~ImportExportCurveDialog()
-    {
-    }
-
+    virtual ~ImportExportCurveDialog();
     QString getFilePath();
 
     double getXStart() const;
@@ -424,13 +452,18 @@ public:
 
     double getXEnd() const;
 
-    void getCurveColumns(std::map<int,CurveGui*>* columns) const;
+    void getCurveColumns(std::map<int,boost::shared_ptr<CurveGui> >* columns) const;
 
-public slots:
+public Q_SLOTS:
 
     void open_file();
 
 private:
+    
+    QByteArray saveState();
+    
+    void restoreState(const QByteArray& state);
+    
     Gui* _gui;
     bool _isExportDialog;
     QVBoxLayout* _mainLayout;
@@ -438,36 +471,36 @@ private:
     //////File
     QWidget* _fileContainer;
     QHBoxLayout* _fileLayout;
-    QLabel* _fileLabel;
+    Natron::Label* _fileLabel;
     LineEdit* _fileLineEdit;
     Button* _fileBrowseButton;
 
     //////x start value
     QWidget* _startContainer;
     QHBoxLayout* _startLayout;
-    QLabel* _startLabel;
+    Natron::Label* _startLabel;
     SpinBox* _startSpinBox;
 
     //////x increment
     QWidget* _incrContainer;
     QHBoxLayout* _incrLayout;
-    QLabel* _incrLabel;
+    Natron::Label* _incrLabel;
     SpinBox* _incrSpinBox;
 
     //////x end value
     QWidget* _endContainer;
     QHBoxLayout* _endLayout;
-    QLabel* _endLabel;
+    Natron::Label* _endLabel;
     SpinBox* _endSpinBox;
 
 
     /////Columns
     struct CurveColumn
     {
-        CurveGui* _curve;
+        boost::shared_ptr<CurveGui> _curve;
         QWidget* _curveContainer;
         QHBoxLayout* _curveLayout;
-        QLabel* _curveLabel;
+        Natron::Label* _curveLabel;
         SpinBox* _curveSpinBox;
     };
 
@@ -499,12 +532,12 @@ public:
     
     virtual ~EditKeyFrameDialog();
     
-signals:
+Q_SIGNALS:
     
     void valueChanged(int dimension,double value);
     
     
-public slots:
+public Q_SLOTS:
     
     void onXSpinBoxValueChanged(double d);
     void onYSpinBoxValueChanged(double d);

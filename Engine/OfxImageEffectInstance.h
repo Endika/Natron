@@ -10,12 +10,22 @@
 #ifndef NATRON_ENGINE_OFXIMAGEEFFECTINSTANCE_H_
 #define NATRON_ENGINE_OFXIMAGEEFFECTINSTANCE_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <string>
 #include <cstdarg>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #endif
+#include "Global/Macros.h"
+// ofxhPropertySuite.h:565:37: warning: 'this' pointer cannot be null in well-defined C++ code; comparison may be assumed to always evaluate to true [-Wtautological-undefined-compare]
+CLANG_DIAG_OFF(unknown-pragmas)
+CLANG_DIAG_OFF(tautological-undefined-compare) // appeared in clang 3.5
 #include <ofxhImageEffect.h>
+CLANG_DIAG_ON(tautological-undefined-compare)
+CLANG_DIAG_ON(unknown-pragmas)
 
 #include "Global/GlobalDefines.h"
 
@@ -25,6 +35,7 @@ class RectD;
 
 namespace OFX {
     namespace Host {
+        class Plugin;
         namespace Property
         {
             class Set;
@@ -34,7 +45,7 @@ namespace OFX {
 
 namespace Natron {
 class Image;
-
+class ImageComponents;
 class OfxImageEffectInstance
     : public OFX::Host::ImageEffect::Instance
 {
@@ -125,6 +136,11 @@ public:
     /// the recursive instanceChangedAction will be fed the correct
     /// renderScale
     virtual void getRenderScaleRecursive(double &x, double &y) const OVERRIDE FINAL;
+    
+    
+    virtual OfxStatus getViewCount(int *nViews) const OVERRIDE FINAL;
+
+    virtual OfxStatus getViewName(int viewIndex,char** name) const OVERRIDE FINAL;
     
     /// Run the clip preferences action from the effect.
     ///
@@ -257,10 +273,13 @@ public:
     void discardClipsView();
     void setClipsMipMapLevel(unsigned int mipMapLevel);
     void discardClipsMipMapLevel();
+    void setClipsPlaneBeingRendered(const Natron::ImageComponents& comp);
+    void discardClipsPlaneBeingRendered();
+    void setInputClipPlane(int inputNb,bool hasImage, const Natron::ImageComponents& comp);
     ////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    bool getCanApplyTransform(OfxClipInstance** clip) const;
+    bool getInputsHoldingTransform(std::list<int>* inputs) const;
     
     const std::map<std::string,OFX::Host::ImageEffect::ClipInstance*>& getClips() const;
     
@@ -277,6 +296,23 @@ private:
        This has nothing to do with the base class _params member! */
     std::map<OFX::Host::Param::Instance*,std::string> _parentingMap;
 };
+
+class OfxImageEffectDescriptor : public OFX::Host::ImageEffect::Descriptor
+{
+public:
+    
+    OfxImageEffectDescriptor(OFX::Host::Plugin *plug);
+    
+    OfxImageEffectDescriptor(const std::string &bundlePath, OFX::Host::Plugin *plug);
+    
+    OfxImageEffectDescriptor(const OFX::Host::ImageEffect::Descriptor &rootContext,
+                             OFX::Host::Plugin *plugin);
+    
+    virtual OFX::Host::Param::Descriptor *paramDefine(const char *paramType,
+                                    const char *name) OVERRIDE FINAL;
+    
+};
+
 } // namespace Natron
 
 #endif // ifndef NATRON_ENGINE_OFXIMAGEEFFECTINSTANCE_H_

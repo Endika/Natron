@@ -11,6 +11,10 @@
 #ifndef PROJECTPRIVATE_H
 #define PROJECTPRIVATE_H
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <map>
 #include <list>
 #include "Global/Macros.h"
@@ -60,9 +64,7 @@ struct ProjectPrivate
 {
     Natron::Project* _publicInterface;
     mutable QMutex projectLock; //< protects the whole project
-    QString projectName; //< name of the project, e.g: "Untitled.EXT"
-    QString projectPath; //< path of the project, e.g: /Users/Lala/Projects/
-    QString lastAutoSaveFilePath; //< path + name of the last auto-save file
+    QString lastAutoSaveFilePath; //< absolute file path of the last auto-save file
     bool hasProjectBeenSavedByUser; //< has this project ever been saved by the user?
     QDateTime ageSinceLastSave; //< the last time the user saved
     QDateTime lastAutoSave; //< the last time since autosave
@@ -75,6 +77,8 @@ struct ProjectPrivate
 
     ///Project parameters (settings)
     boost::shared_ptr<Path_Knob> envVars;
+    boost::shared_ptr<String_Knob> projectName; //< name of the project, e.g: "Untitled.ntp"
+    boost::shared_ptr<String_Knob> projectPath;  //< path of the project, e.g: /Users/Lala/Projects/
     boost::shared_ptr<Choice_Knob> formatKnob; //< built from builtinFormats & additionalFormats
     boost::shared_ptr<Button_Knob> addFormatKnob;
     boost::shared_ptr<Int_Knob> viewsCount;
@@ -92,11 +96,15 @@ struct ProjectPrivate
     boost::shared_ptr<String_Knob> projectCreationDate;
     boost::shared_ptr<String_Knob> saveDate;
     
+    boost::shared_ptr<String_Knob> onProjectLoadCB;
+    boost::shared_ptr<String_Knob> onProjectSaveCB;
+    boost::shared_ptr<String_Knob> onProjectCloseCB;
+    boost::shared_ptr<String_Knob> onNodeCreated;
+    boost::shared_ptr<String_Knob> onNodeDeleted;
+    
     boost::shared_ptr<TimeLine> timeline; // global timeline
-    mutable QMutex nodesLock; //< protects nodeCounters & currentNodes
     bool autoSetProjectFormat;
-    std::vector< boost::shared_ptr<Natron::Node> > currentNodes;
-    Natron::Project* project;
+
     mutable QMutex isLoadingProjectMutex;
     bool isLoadingProject; //< true when the project is loading
     bool isLoadingProjectInternal; //< true when loading the internal project (not gui)
@@ -104,11 +112,11 @@ struct ProjectPrivate
     bool isSavingProject; //< true when the project is saving
     boost::shared_ptr<QTimer> autoSaveTimer;
     std::list<boost::shared_ptr<QFutureWatcher<void> > > autoSaveFutures;
-
+    bool projectClosing;
     
     ProjectPrivate(Natron::Project* project);
 
-    bool restoreFromSerialization(const ProjectSerialization & obj,const QString& name,const QString& path,bool isAutoSave,const QString& realFilePath);
+    bool restoreFromSerialization(const ProjectSerialization & obj,const QString& name,const QString& path, bool* mustSave);
 
     bool findFormat(int index,Format* format) const;
     
@@ -116,6 +124,18 @@ struct ProjectPrivate
      * @brief Auto fills the project directory parameter given the project file path
      **/
     void autoSetProjectDirectory(const QString& path);
+    
+    std::string runOnProjectSaveCallback(const std::string& filename,bool autoSave);
+    
+    void runOnProjectCloseCallback();
+    
+    void runOnProjectLoadCallback();
+    
+    void setProjectFilename(const std::string& filename);
+    std::string getProjectFilename() const;
+    
+    void setProjectPath(const std::string& path);
+    std::string getProjectPath() const;
 };
 }
 

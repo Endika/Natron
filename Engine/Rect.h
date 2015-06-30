@@ -12,6 +12,10 @@
 #ifndef NATRON_ENGINE_RECT_H_
 #define NATRON_ENGINE_RECT_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <cassert>
 #include <iostream>
 #include <vector>
@@ -20,11 +24,11 @@
 
 #include "Global/GlobalDefines.h"
 
-#ifndef Q_MOC_RUN
-CLANG_DIAG_OFF(unused-parameter)
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
+GCC_DIAG_OFF(unused-parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/xml_iarchive.hpp>
-CLANG_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused-parameter)
 #include <boost/archive/xml_oarchive.hpp>
 #endif
 
@@ -142,7 +146,7 @@ public:
         y1 = b;
         x2 = r;
         y2 = t;
-        assert( (x2 >= x1) && (y2 >= y1) );
+        /*assert( (x2 >= x1) && (y2 >= y1) );*/
     }
 
     void set(const RectI & b)
@@ -198,7 +202,7 @@ public:
        int pot = 3;
        int scale = 1 << pot;
        int scalem1 = scale - 1;
-       for(i=-100; i<100; ++i)
+       for(i=-100; i < 100; ++i)
        {
          printf("%d => %d,%d %d,%d\n", i, i & ~scalem1, i+scalem1 & ~scalem1, (i >> pot) << pot, ((i+scalem1)>>pot) << pot);
        }
@@ -319,18 +323,11 @@ public:
                int r,
                int t)
     {
-        if ( l < left() ) {
-            x1 = l;
-        }
-        if ( b < bottom() ) {
-            y1 = b;
-        }
-        if ( r > right() ) {
-            x2 = r;
-        }
-        if ( t > top() ) {
-            y2 = t;
-        }
+        x1 = std::min(x1, l);
+        x2 = std::max(x2, r);
+        y1 = std::min(y1, b);
+        y2 = std::max(y2, t);
+
     }
 
     /*intersection of two boxes*/
@@ -437,35 +434,7 @@ public:
         std::cout << "top = " << y2 << std::endl;
     }
 
-    static std::vector<RectI> splitRectIntoSmallerRect(const RectI & rect,
-                                                       int splitsCount)
-    {
-        std::vector<RectI> ret;
-
-        if ( rect.isNull() ) {
-            return ret;
-        }
-        int averagePixelsPerSplit = std::ceil(double( rect.area() ) / (double)splitsCount);
-        /*if the splits happen to have less pixels than 1 scan-line contains, just do scan-line rendering*/
-        if ( averagePixelsPerSplit < rect.width() ) {
-            for (int i = rect.bottom(); i < rect.top(); ++i) {
-                ret.push_back( RectI(rect.left(),i,rect.right(),i + 1) );
-            }
-        } else {
-            //we round to the ceil
-            int scanLinesCount = std::ceil( (double)averagePixelsPerSplit / (double)rect.width() );
-            int startBox = rect.bottom();
-            while (startBox < rect.top() - scanLinesCount) {
-                ret.push_back( RectI(rect.left(),startBox,rect.right(),startBox + scanLinesCount) );
-                startBox += scanLinesCount;
-            }
-            if ( startBox < rect.top() ) {
-                ret.push_back( RectI( rect.left(),startBox,rect.right(),rect.top() ) );
-            }
-        }
-
-        return ret;
-    }
+    std::vector<RectI> splitIntoSmallerRects(int splitsCount) const;
 
     static RectI fromOfxRectI(const OfxRectI & r)
     {
@@ -667,18 +636,10 @@ public:
                double r,
                double t)
     {
-        if ( l < left() ) {
-            x1 = l;
-        }
-        if ( b < bottom() ) {
-            y1 = b;
-        }
-        if ( r > right() ) {
-            x2 = r;
-        }
-        if ( t > top() ) {
-            y2 = t;
-        }
+        x1 = std::min(x1, l);
+        x2 = std::max(x2, r);
+        y1 = std::min(y1, b);
+        y2 = std::max(y2, t);
     }
 
     /*intersection of two boxes*/
@@ -701,10 +662,10 @@ public:
         return true;
     }
 
-    bool intersect(int l,
-                   int b,
-                   int r,
-                   int t,
+    bool intersect(double l,
+                   double b,
+                   double r,
+                   double t,
                    RectD* intersection) const
     {
         return intersect(RectD(l,b,r,t),intersection);
@@ -723,10 +684,10 @@ public:
         return true;
     }
 
-    bool intersects(int l,
-                    int b,
-                    int r,
-                    int t) const
+    bool intersects(double l,
+                    double b,
+                    double r,
+                    double t) const
     {
         return intersects( RectD(l,b,r,t) );
     }

@@ -2,8 +2,8 @@
 #License, v. 2.0. If a copy of the MPL was not distributed with this
 #file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-CONFIG += warn_on
-DEFINES += OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_VEGAS OFX_SUPPORTS_PARAMETRIC OFX_EXTENSIONS_TUTTLE
+CONFIG += warn_on no_keywords
+DEFINES += OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_VEGAS OFX_SUPPORTS_PARAMETRIC OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NATRON
 DEFINES += OFX_SUPPORTS_MULTITHREAD
 
 trace_ofx_actions{
@@ -113,34 +113,33 @@ win32 {
 }
 
 win32-msvc* {
+    CONFIG(64bit){
+        message("Compiling for architecture x86 64 bits")
+        Release:DESTDIR = x64/release
+        Release:OBJECTS_DIR = x64/release/.obj
+        Release:MOC_DIR = x64/release/.moc
+        Release:RCC_DIR = x64/release/.rcc
+        Release:UI_DIR = x64/release/.ui
 
-CONFIG(64bit){
-	message("Compiling for architecture x86 64 bits")
-	Release:DESTDIR = x64/release
-	Release:OBJECTS_DIR = x64/release/.obj
-	Release:MOC_DIR = x64/release/.moc
-	Release:RCC_DIR = x64/release/.rcc
-	Release:UI_DIR = x64/release/.ui
-	
-	Debug:DESTDIR = x64/debug
-	Debug:OBJECTS_DIR = x64/debug/.obj
-	Debug:MOC_DIR = x64/debug/.moc
-	Debug:RCC_DIR = x64/debug/.rcc
-	Debug:UI_DIR = x64/debug/.ui
-} else {
-	message("Compiling for architecture x86 32 bits")
-	Release:DESTDIR = win32/release
-	Release:OBJECTS_DIR = win32/release/.obj
-	Release:MOC_DIR = win32/release/.moc
-	Release:RCC_DIR = win32/release/.rcc
-	Release:UI_DIR = win32/release/.ui
-	
-	Debug:DESTDIR = win32/debug
-	Debug:OBJECTS_DIR = win32/debug/.obj
-	Debug:MOC_DIR = win32/debug/.moc
-	Debug:RCC_DIR = win32/debug/.rcc
-	Debug:UI_DIR = win32/debug/.ui
-}
+        Debug:DESTDIR = x64/debug
+        Debug:OBJECTS_DIR = x64/debug/.obj
+        Debug:MOC_DIR = x64/debug/.moc
+        Debug:RCC_DIR = x64/debug/.rcc
+        Debug:UI_DIR = x64/debug/.ui
+    } else {
+        message("Compiling for architecture x86 32 bits")
+        Release:DESTDIR = win32/release
+        Release:OBJECTS_DIR = win32/release/.obj
+        Release:MOC_DIR = win32/release/.moc
+        Release:RCC_DIR = win32/release/.rcc
+        Release:UI_DIR = win32/release/.ui
+
+        Debug:DESTDIR = win32/debug
+        Debug:OBJECTS_DIR = win32/debug/.obj
+        Debug:MOC_DIR = win32/debug/.moc
+        Debug:RCC_DIR = win32/debug/.rcc
+        Debug:UI_DIR = win32/debug/.ui
+    }
 }
 
 unix {
@@ -149,12 +148,54 @@ unix {
      CONFIG += link_pkgconfig
      glew:      PKGCONFIG += glew
      expat:     PKGCONFIG += expat
-     cairo:     PKGCONFIG += cairo
-     !macx {
-         LIBS +=  -lGLU
-     }
-     linux {
+     linux-* {
+         # link with static cairo on linux, to avoid linking to X11 libraries in NatronRenderer
+         cairo {
+             PKGCONFIG += pixman-1 freetype2 fontconfig
+             LIBS +=  $$system(pkg-config --variable=libdir cairo)/libcairo.a
+         }
          LIBS += -ldl
+     } else {
+         cairo:     PKGCONFIG += cairo
+     }
+
+     # User may specify an alternate python3-config from the command-line,
+     # as in "qmake PYTHON_CONFIG=python3.4-config" (MacPorts doesn't have a python3-config)
+     isEmpty(PYTHON_CONFIG) {
+         PYTHON_CONFIG = python3-config
+     }
+     #message(PYTHON_CONFIG = $$PYTHON_CONFIG)
+     python {
+         LIBS += $$system($$PYTHON_CONFIG --ldflags)
+         QMAKE_CXXFLAGS += $$system($$PYTHON_CONFIG --includes)
+     }
+
+     # There may be different pyside.pc/shiboken.pc for different versions of python.
+     # pkg-config will probably give a bad answer, unless python3 is the system default.
+     # See for example tools/travis/install_dependencies.sh for a solution that works on Linux,
+     # using a custom config.pri
+     shiboken: PKGCONFIG += shiboken
+     pyside:   PKGCONFIG += pyside
+     # The following hack also works with Homebrew if pyside is installed with option --with-python3
+     macx {
+       shiboken {
+         PKGCONFIG -= shiboken
+         PYSIDE_PKG_CONFIG_PATH = $$system($$PYTHON_CONFIG --prefix)/lib/pkgconfig
+         INCLUDEPATH += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --variable=includedir shiboken)
+         # the sed stuff is to work around an Xcode generator bug
+         LIBS += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --libs shiboken | sed -e s/-undefined\\ dynamic_lookup//)
+       }
+       pyside {
+         PKGCONFIG -= pyside
+         PYSIDE_PKG_CONFIG_PATH = $$system($$PYTHON_CONFIG --prefix)/lib/pkgconfig
+         INCLUDEPATH += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --variable=includedir pyside)
+         INCLUDEPATH += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --variable=includedir pyside)/QtCore
+         # QtGui include are needed because it looks for Qt::convertFromPlainText which is defined in
+         # qtextdocument.h in the QtGui module.
+         INCLUDEPATH += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --variable=includedir pyside)/QtGui
+         INCLUDEPATH += $$system(pkg-config --variable=includedir QtGui)
+         LIBS += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --libs pyside)
+       }
      }
 } #unix
 
@@ -208,3 +249,4 @@ coverage {
   QMAKE_LFLAGS += -fprofile-arcs -ftest-coverage
   QMAKE_CLEAN += $(OBJECTS_DIR)/*.gcda $(OBJECTS_DIR)/*.gcno
 }
+

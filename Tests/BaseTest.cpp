@@ -9,15 +9,22 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 
 #include "BaseTest.h"
 
+#include <QFile>
 #include "Engine/Node.h"
 #include "Engine/Project.h"
 #include "Engine/AppManager.h"
 #include "Engine/AppInstance.h"
+#include "Engine/KnobTypes.h"
 #include "Engine/EffectInstance.h"
 #include "Engine/Plugin.h"
+#include "Engine/Curve.h"
 using namespace Natron;
 
 
@@ -67,8 +74,8 @@ BaseTest::SetUp()
 {
     AppManager* manager = new AppManager;
     int argc = 0;
-
-    manager->load(argc,NULL,QString(),QStringList(),std::list<std::pair<int,int> >(),QString());
+    CLArgs cl;
+    manager->load(argc, 0, cl);
 
     _app = manager->getTopLevelInstance();
 
@@ -90,8 +97,9 @@ boost::shared_ptr<Natron::Node> BaseTest::createNode(const QString & pluginID,
 {
     boost::shared_ptr<Node> ret =  _app->createNode( CreateNodeArgs(pluginID,
                                                                     "",
-                                                                    majorVersion,minorVersion,-1,true,INT_MIN,INT_MIN,true,true,
-                                                                    QString(),CreateNodeArgs::DefaultValuesList()) );
+                                                                    majorVersion,minorVersion,true,INT_MIN,INT_MIN,true,true,false,
+                                                                    QString(),CreateNodeArgs::DefaultValuesList(),
+                                                                    _app->getProject()) );
 
     EXPECT_NE(ret.get(),(Natron::Node*)NULL);
 
@@ -207,7 +215,9 @@ TEST_F(BaseTest,GenerateDot)
     ///create the writer and set its output filename
     boost::shared_ptr<Node> writer = createNode(_writeOIIOPluginID);
 
-    writer->setOutputFilesForWriter("test_dot_generator#.jpg");
+    const QString& binPath = appPTR->getApplicationBinaryPath();
+    QString filePath = binPath + "/test_dot_generator.jpg";
+    writer->setOutputFilesForWriter(filePath.toStdString());
 
     ///attempt to connect the 2 nodes together
     connectNodes(generator, writer, 0, true);
@@ -221,6 +231,31 @@ TEST_F(BaseTest,GenerateDot)
     w.lastFrame = INT_MAX;
     works.push_back(w);
     _app->startWritersRendering(works);
+    
+    EXPECT_TRUE(QFile::exists(filePath));
+    QFile::remove(filePath);
+}
+
+TEST_F(BaseTest,SetValues)
+{
+    boost::shared_ptr<Node> generator = createNode(_dotGeneratorPluginID);
+    assert(generator);
+    boost::shared_ptr<KnobI> knob = generator->getKnobByName("radius");
+    Double_Knob* radius = dynamic_cast<Double_Knob*>(knob.get());
+    assert(radius);
+    radius->setValue(100, 0);
+    EXPECT_TRUE(radius->getValue() == 100);
+    
+    //Check that linear interpolation is working as intended
+    KeyFrame kf;
+    radius->setInterpolationAtTime(0, 0, Natron::eKeyframeTypeLinear, &kf);
+    radius->setValueAtTime(0, 0, 0);
+    radius->setValueAtTime(100, 100, 0);
+    for (int i = 0; i <= 100; ++i) {
+        double v = radius->getValueAtTime(i) ;
+        EXPECT_TRUE(std::abs(v - i) < 1e-6);
+    }
+    
 }
 
 ///High level test: simple node connections test

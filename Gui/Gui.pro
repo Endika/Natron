@@ -7,7 +7,7 @@ TARGET = Gui
 TEMPLATE = lib
 CONFIG += staticlib
 CONFIG += moc rcc
-CONFIG += boost glew opengl qt cairo 
+CONFIG += boost glew opengl qt cairo python shiboken pyside
 QT += gui core opengl network 
 greaterThan(QT_MAJOR_VERSION, 4): QT += concurrent
 
@@ -36,6 +36,15 @@ INCLUDEPATH += $$PWD/../libs/SequenceParsing
 DEPENDPATH += $$PWD/../Engine
 DEPENDPATH += $$PWD/../Global
 
+INCLUDEPATH += $$PWD/../Engine
+INCLUDEPATH += $$PWD/../Engine/NatronEngine
+INCLUDEPATH += $$PWD/../Global
+
+#To overcome wrongly generated #include <...> by shiboken
+INCLUDEPATH += $$PWD
+INCLUDEPATH += $$PWD/NatronGui
+DEPENDPATH += $$PWD/NatronGui
+
 win32-msvc* {
 	CONFIG(64bit) {
 		QMAKE_LFLAGS += /MACHINE:X64
@@ -49,6 +58,7 @@ SOURCES += \
     ActionShortcuts.cpp \
     AnimatedCheckBox.cpp \
     AnimationButton.cpp \
+    BackDropGui.cpp \
     Button.cpp \
     ClickableLabel.cpp \
     ComboBox.cpp \
@@ -56,12 +66,14 @@ SOURCES += \
     CurveEditorUndoRedo.cpp \
     CurveWidget.cpp \
     CustomParamInteract.cpp \
+    DefaultOverlays.cpp \
     DockablePanel.cpp \
     Edge.cpp \
     FromQtEnums.cpp \
     Gui.cpp \
     GuiApplicationManager.cpp \
     GuiAppInstance.cpp \
+    GuiAppWrapper.cpp \
     Histogram.cpp \
     InfoViewerWidget.cpp \
     KnobGui.cpp \
@@ -69,11 +81,11 @@ SOURCES += \
     KnobGuiFile.cpp \
     KnobGuiTypes.cpp \
     KnobUndoCommand.cpp \
+    Label.cpp \
     LineEdit.cpp \
     MessageBox.cpp \
-    MenuWithToolTips.cpp \
+    Menu.cpp \
     MultiInstancePanel.cpp \
-    NodeBackDrop.cpp \
     NodeBackDropSerialization.cpp \
     NodeCreationDialog.cpp \
     NodeGraph.cpp \
@@ -83,6 +95,7 @@ SOURCES += \
     PreferencesPanel.cpp \
     ProjectGui.cpp \
     ProjectGuiSerialization.cpp \
+    PythonPanels.cpp \
     QtDecoder.cpp \
     QtEncoder.cpp \
     RenderingProgressDialog.cpp \
@@ -90,6 +103,8 @@ SOURCES += \
     RotoPanel.cpp \
     RotoUndoCommand.cpp \
     ScaleSliderQWidget.cpp \
+    ScriptEditor.cpp \
+    ScriptTextEdit.cpp \
     SequenceFileDialog.cpp \
     Shaders.cpp \
     SerializableWindow.cpp \
@@ -105,14 +120,23 @@ SOURCES += \
     ToolButton.cpp \
     TimeLineGui.cpp \
     TrackerGui.cpp \
+    Utils.cpp \
     ViewerGL.cpp \
-    ViewerTab.cpp
+    ViewerTab.cpp \
+    NatronGui/natrongui_module_wrapper.cpp \
+    NatronGui/pyguiapplication_wrapper.cpp \
+    NatronGui/guiapp_wrapper.cpp \
+    NatronGui/pymodaldialog_wrapper.cpp \
+    NatronGui/pypanel_wrapper.cpp \
+    NatronGui/pytabwidget_wrapper.cpp \
+    NatronGui/pyviewer_wrapper.cpp
 
 HEADERS += \
     AboutWindow.h \
     ActionShortcuts.h \
     AnimatedCheckBox.h \
     AnimationButton.h \
+    BackDropGui.h \
     Button.h \
     ClickableLabel.h \
     ComboBox.h \
@@ -121,6 +145,7 @@ HEADERS += \
     CurveSelection.h \
     CurveWidget.h \
     CustomParamInteract.h \
+    DefaultOverlays.h \
     DockablePanel.h \
     Edge.h \
     FromQtEnums.h \
@@ -129,6 +154,8 @@ HEADERS += \
     GuiMacros.h \
     GuiApplicationManager.h \
     GuiAppInstance.h \
+    GuiAppWrapper.h \
+    GlobalGuiWrapper.h \
     Histogram.h \
     InfoViewerWidget.h \
     KnobGui.h \
@@ -136,11 +163,11 @@ HEADERS += \
     KnobGuiFile.h \
     KnobGuiTypes.h \
     KnobUndoCommand.h \
+    Label.h \
     LineEdit.h \
     MessageBox.h \
-    MenuWithToolTips.h \
+    Menu.h \
     MultiInstancePanel.h \
-    NodeBackDrop.h \
     NodeBackDropSerialization.h \
     NodeCreationDialog.h \
     NodeGraph.h \
@@ -150,6 +177,8 @@ HEADERS += \
     PreferencesPanel.h \
     ProjectGui.h \
     ProjectGuiSerialization.h \
+    Pyside_Gui_Python.h \
+    PythonPanels.h \
     QtDecoder.h \
     QtEncoder.h \
     RenderingProgressDialog.h \
@@ -157,6 +186,8 @@ HEADERS += \
     RotoPanel.h \
     RotoUndoCommand.h \
     ScaleSliderQWidget.h \
+    ScriptEditor.h \
+    ScriptTextEdit.h \
     SequenceFileDialog.h \
     Shaders.h \
     SerializableWindow.h \
@@ -172,6 +203,7 @@ HEADERS += \
     TimeLineGui.h \
     ToolButton.h \
     TrackerGui.h \
+    Utils.h \
     ViewerGL.h \
     ViewerTab.h \
     ZoomContext.h \
@@ -196,7 +228,14 @@ HEADERS += \
     ../libs/OpenFX/include/nuke/fnOfxExtensions.h \
     ../libs/OpenFX/include/nuke/fnPublicOfxExtensions.h \
     ../libs/OpenFX/include/tuttle/ofxReadWrite.h \
-    ../libs/OpenFX_extensions/ofxhParametricParam.h
+    ../libs/OpenFX_extensions/ofxhParametricParam.h \
+    NatronGui/natrongui_python.h \
+    NatronGui/pyguiapplication_wrapper.h \
+    NatronGui/guiapp_wrapper.h \
+    NatronGui/pymodaldialog_wrapper.h \
+    NatronGui/pypanel_wrapper.h \
+    NatronGui/pytabwidget_wrapper.h \
+    NatronGui/pyviewer_wrapper.h
 
 RESOURCES += \
     GuiResources.qrc

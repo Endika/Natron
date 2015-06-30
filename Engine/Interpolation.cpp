@@ -1,10 +1,13 @@
-
 //  Natron
 //
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 //  Created by Frédéric Devernay on 06/03/2014.
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "Interpolation.h"
 
@@ -14,7 +17,14 @@
 #include <vector>
 #include <algorithm>
 #include <boost/math/special_functions/fpclassify.hpp>
+GCC_DIAG_OFF(unused-parameter)
+// boost/optional/optional.hpp:1254:53: warning: unused parameter 'out' [-Wunused-parameter]
 #include <boost/math/special_functions/cbrt.hpp>
+GCC_DIAG_ON(unused-parameter)
+
+#ifndef M_PI
+#define M_PI        3.14159265358979323846264338327950288   /* pi             */
+#endif
 
 using namespace Natron;
 
@@ -242,6 +252,59 @@ Natron::solveCubic(double c0,
     return num;
 } // solveCubic
 
+/// compute one root from the cubic c0 + c1*x + c2*x2 + c3*x3 = 0, with c3 != 0.
+/// @returns one solution.
+static double
+getOneCubicRoot(double c0,
+                double c1,
+                double c2,
+                double c3)
+{
+    assert (c3 != 0.);
+
+    // normalize the equation:x ^ 3 + Ax ^ 2 + Bx  + C = 0
+    double A = c2 / c3;
+    double B = c1 / c3;
+    double C = c0 / c3;
+
+    // substitute x = y - A / 3 to eliminate the quadric term: x^3 + px + q = 0
+    double sq_A = A * A;
+    double p = 1.0 / 3.0 * (-1.0 / 3.0 * sq_A + B);
+    double q = 1.0 / 2.0 * (2.0 / 27.0 * A * sq_A - 1.0 / 3.0 * A * B + C);
+
+    double s;
+
+    // use Cardano's formula
+    double cb_p = p * p * p;
+    double D = q * q + cb_p;
+    if ( D == 0. || isZero(D) ) {
+        if ( q == 0. || isZero(q) ) {
+            // one triple solution
+            s = 0.;
+        } else {
+            // one single and one double solution
+            double u = cbrt(-q);
+            s = 2.0 * u;
+        }
+    } else if (D < 0.0) {
+        // casus irreductibilis: three real solutions
+        double phi = 1.0 / 3.0 * acos( -q / sqrt(-cb_p) );
+        double t = 2.0 * sqrt(-p);
+        s = t * cos(phi);
+    } else { // D > 0.0
+        // one real solution
+        double sqrt_D = sqrt(D);
+        double u = cbrt( sqrt_D + fabs(q) );
+        if (q > 0.0) {
+            s = -u + p / u;
+        } else {
+            s = u - p / u;
+        }
+    }
+    // resubstitute
+    return s - 1.0 / 3.0 * A;
+}
+
 /// solve quartic c0 + c1*x + c2*x2 + c3*x3 +c4*x4 = 0.
 /// @returns the number of solutions.
 /// solutions an and their order are put in s and o
@@ -266,7 +329,7 @@ Natron::solveQuartic(double c0,
     double C = c1 / c4;
     double D = c0 / c4;
 
-    // subsitute x = y - A / 4 to eliminate the cubic term: x^4 + px^2 + qx + r = 0
+    // substitute x = y - A / 4 to eliminate the cubic term: x^4 + px^2 + qx + r = 0
     double sq_A = A * A;
     double p = -3.0 / 8.0 * sq_A + B;
     double q = 1.0 / 8.0 * sq_A * A - 1.0 / 2.0 * A * B + C;
@@ -283,11 +346,8 @@ Natron::solveQuartic(double c0,
         ++num;
     } else {
         // solve the resolvent cubic...
-        num = solveCubic(1.0 / 2.0 * r * p - 1.0 / 8.0 * q * q, -r, -1.0 / 2.0 * p, -1, s, o);
-        assert(num == 1);
-
-        // ...and take the one real solution...
-        double z = s[0];
+        // ...and take one real solution... (there may be more)
+        double z = getOneCubicRoot(1.0 / 2.0 * r * p - 1.0 / 8.0 * q * q, -r, -1.0 / 2.0 * p, -1);
 
         // ...to build two quadratic equations
         double u = z * z - r;

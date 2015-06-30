@@ -11,7 +11,12 @@
 
 #ifndef OUTPUTSCHEDULERTHREAD_H
 #define OUTPUTSCHEDULERTHREAD_H
-#ifndef Q_MOC_RUN
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #include <boost/scoped_ptr.hpp>
 #endif
@@ -186,7 +191,7 @@ public:
      * but is directly rendering (e.g: a Writer rendering image sequences doesn't need to be ordered)
      * then the scheduler takes this as a hint to know how many frames have been rendered.
      **/
-    void notifyFrameRendered(int frame,Natron::SchedulingPolicyEnum policy);
+    void notifyFrameRendered(int frame,int viewIndex,int viewsCount,Natron::SchedulingPolicyEnum policy);
 
     /**
      * @brief To be called by concurrent worker threads in case of failure, all renders will be aborted
@@ -202,7 +207,7 @@ public:
     
     void doAbortRenderingOnMainThread (bool blocking)
     {
-        emit s_abortRenderingOnMainThread(blocking);
+        Q_EMIT s_abortRenderingOnMainThread(blocking);
     }
     
     
@@ -250,8 +255,14 @@ public:
     void getPluginFrameRange(int& first,int &last) const;
     
     
+    void runCallbackWithVariables(const QString& callback);
     
-public slots:
+    /**
+     * @brief Returns true if a render is being aborted
+     **/
+    bool isBeingAborted() const;
+
+public Q_SLOTS:
     
     void doProcessFrameMainThread(const BufferedFrames& frames,bool mustSeekTimeline,int time);
     
@@ -270,12 +281,16 @@ public slots:
      * If you want to abortRendering() from one of those threads, call doAbortRenderingOnMainThreadInstead
      **/
     void abortRendering(bool blocking);
-signals:
+    
+    void onExecuteCallbackOnMainThread(QString callback);
+    
+Q_SIGNALS:
     
     void s_doProcessOnMainThread(const BufferedFrames& frames,bool mustSeekTimeline,int time);
     
     void s_abortRenderingOnMainThread(bool blocking);
     
+    void s_executeCallbackOnMainThread(QString);
     
 protected:
     
@@ -358,10 +373,13 @@ protected:
     /**
      * @brief Callback when stopRender() is called
      **/
-    virtual void onRenderStopped() {}
+    virtual void onRenderStopped(bool /*aborted*/) {}
     
     RenderEngine* getEngine() const;
     
+    void runCallback(const QString& callback);
+    
+
 private:
     
     virtual void run() OVERRIDE FINAL;
@@ -414,6 +432,7 @@ public:
     
     virtual ~DefaultScheduler();
     
+
 private:
     
     virtual void processFrame(const BufferedFrames& frames) OVERRIDE FINAL;
@@ -434,7 +453,9 @@ private:
     
     virtual void aboutToStartRender() OVERRIDE FINAL;
     
-    virtual void onRenderStopped() OVERRIDE FINAL;
+    virtual void onRenderStopped(bool aborted) OVERRIDE FINAL;
+    
+
     
     Natron::OutputEffectInstance* _effect;
 };
@@ -473,7 +494,7 @@ private:
     
     virtual int getLastRenderedTime() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     
-    virtual void onRenderStopped() OVERRIDE FINAL;
+    virtual void onRenderStopped(bool aborted) OVERRIDE FINAL;
     
     ViewerInstance* _viewer;
 };
@@ -486,6 +507,7 @@ private:
  * Instead of re-using the OutputSchedulerClass and adding extra handling for special cases we separated it in a different class, specialized for this kind
  * of "current frame re-rendering" which needs much less code to run than all the code in OutputSchedulerThread
  **/
+struct RequestedFrame;
 struct ViewerCurrentFrameRequestSchedulerPrivate;
 class ViewerCurrentFrameRequestScheduler : public QThread
 {
@@ -507,11 +529,13 @@ public:
     
     bool hasThreadsWorking() const;
     
-public slots:
+    void notifyFrameProduced(const BufferableObjectList& frames,const boost::shared_ptr<RequestedFrame>& request);
+    
+public Q_SLOTS:
     
     void doProcessProducedFrameOnMainThread(const BufferableObjectList& frames);
     
-signals:
+Q_SIGNALS:
     
     void s_processProducedFrameOnMainThread(const BufferableObjectList& frames);
     
@@ -521,6 +545,45 @@ private:
     
     boost::scoped_ptr<ViewerCurrentFrameRequestSchedulerPrivate> _imp;
     
+};
+
+struct ViewerArgs;
+struct CurrentFrameFunctorArgs
+{
+    int view;
+    int time;
+    ViewerInstance* viewer;
+    U64 viewerHash;
+    boost::shared_ptr<RequestedFrame> request;
+    ViewerCurrentFrameRequestSchedulerPrivate* scheduler;
+    bool canAbort;
+    boost::shared_ptr<Natron::Node> isRotoPaintRequest;
+    boost::shared_ptr<ViewerArgs> args[2];
+};
+
+
+/**
+ * @brief Single thread used by the ViewerCurrentFrameRequestScheduler when the global thread pool has reached its maximum
+ * activity to keep the renders responsive even if the thread pool is choking. 
+ **/
+struct ViewerCurrentFrameRequestRendererBackupPrivate;
+class ViewerCurrentFrameRequestRendererBackup : public QThread
+{
+public:
+    
+    ViewerCurrentFrameRequestRendererBackup();
+    
+    virtual ~ViewerCurrentFrameRequestRendererBackup();
+    
+    void renderCurrentFrame(const CurrentFrameFunctorArgs& args);
+    
+    void quitThread();
+    
+private:
+    
+    virtual void run() OVERRIDE FINAL;
+    
+    boost::scoped_ptr<ViewerCurrentFrameRequestRendererBackupPrivate> _imp;
 };
 
 
@@ -588,7 +651,13 @@ public:
      **/
     bool hasThreadsWorking() const;
     
-public slots:
+    /**
+     * @brief Returns true if a sequential render is being aborted
+     **/
+    bool isSequentialRenderBeingAborted() const;
+    
+    
+public Q_SLOTS:
 
     
     /**
@@ -611,7 +680,7 @@ public slots:
     void abortRendering_Blocking() { abortRendering(true); }
 
     
-signals:
+Q_SIGNALS:
     
     /**
      * @brief Emitted when the fps has changed
@@ -631,6 +700,9 @@ signals:
      * This will not be emitted after calling renderCurrentFrame
      **/
     void renderFinished(int retCode);
+    
+    
+    void renderStarted(bool forward);
 
     /**
     * @brief Emitted when gui is frozen and rendering is finished to update all knobs
@@ -648,12 +720,18 @@ protected:
 private:
     
     /**
-     * The following functions are called by the OutputThreadScheduler to emit the corresponding signals
+     * The following functions are called by the OutputThreadScheduler to Q_EMIT the corresponding signals
      **/
-    void s_fpsChanged(double actual,double desired) { emit fpsChanged(actual, desired); }
-    void s_frameRendered(int time) { emit frameRendered(time); }
-    void s_renderFinished(int retCode) { emit renderFinished(retCode); }
-    void s_refreshAllKnobs() { emit refreshAllKnobs(); }
+    void s_fpsChanged(double actual,double desired) { Q_EMIT fpsChanged(actual, desired); }
+    void s_frameRendered(int time) { Q_EMIT frameRendered(time); }
+    void s_renderStarted(bool forward) { Q_EMIT renderStarted(forward); }
+    void s_renderFinished(int retCode) { Q_EMIT renderFinished(retCode); }
+    void s_refreshAllKnobs() { Q_EMIT refreshAllKnobs(); }
+    
+    friend class ViewerInstance;
+    void notifyFrameProduced(const BufferableObjectList& frames,const boost::shared_ptr<RequestedFrame>& request);
+
+    
     boost::scoped_ptr<RenderEnginePrivate> _imp;
 };
 

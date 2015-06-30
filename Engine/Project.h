@@ -11,10 +11,15 @@
 #ifndef NATRON_ENGINE_PROJECT_H_
 #define NATRON_ENGINE_PROJECT_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <map>
 #include <vector>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/noncopyable.hpp>
+#include <boost/enable_shared_from_this.hpp>
 #endif
 
 #include "Global/Macros.h"
@@ -29,6 +34,7 @@ CLANG_DIAG_ON(uninitialized)
 #include "Engine/Knob.h"
 #include "Engine/Format.h"
 #include "Engine/TimeLine.h"
+#include "Engine/NodeGroup.h"
 
 class QString;
 class QDateTime;
@@ -43,7 +49,7 @@ class OutputEffectInstance;
 struct ProjectPrivate;
 
 class Project
-    : public QObject,  public KnobHolder, public boost::noncopyable
+    :  public KnobHolder, public NodeCollection,  public boost::noncopyable, public boost::enable_shared_from_this<Natron::Project>
 {
     Q_OBJECT
 
@@ -53,11 +59,10 @@ public:
 
     virtual ~Project();
 
-
     /**
      * @brief Loads the project with the given path and name corresponding to a file on disk.
      **/
-    bool loadProject(const QString & path,const QString & name);
+    bool loadProject(const QString & path,const QString & name, bool isUntitledAutosave = false);
 
     /**
      * @brief Saves the project with the given path and name corresponding to a file on disk.
@@ -83,12 +88,8 @@ public:
     static QString autoSavesDir() WARN_UNUSED_RETURN;
 
 
-    /** @brief Attemps to find an autosave. If found one,prompts the user
-     * whether he/she wants to load it. If something was loaded this function
-     * returns true,otherwise false.
-     * DO NOT CALL THIS: This is called by AppInstance when the application is launching.
-     **/
-    bool findAndTryLoadAutoSave() WARN_UNUSED_RETURN;
+    
+    bool findAutoSaveForProject(const QString& projectPath,const QString& projectName,QString* autoSaveFileName);
 
     /**
      * @brief Returns true if the project is currently loading.
@@ -96,36 +97,6 @@ public:
     bool isLoadingProject() const;
     
     bool isLoadingProjectInternal() const;
-
-    /**
-     * @brief Constructs a vector with all the nodes in the project (even the ones the user
-     * has deleted but were kept in the undo/redo stack.) This is MT-safe.
-     **/
-    std::vector< boost::shared_ptr<Natron::Node> > getCurrentNodes() const;
-
-    bool hasNodes() const;
-
-    bool connectNodes(int inputNumber,const std::string & inputName,Node* output);
-
-    /**
-     * @brief Connects the node 'input' to the node 'output' on the input number 'inputNumber'
-     * of the node 'output'. If 'force' is true, then it will disconnect any previous connection
-     * existing on 'inputNumber' and connect the previous input as input of the new 'input' node.
-     **/
-    bool connectNodes(int inputNumber,boost::shared_ptr<Natron::Node> input,Node* output,bool force = false);
-
-    /**
-     * @brief Disconnects the node 'input' and 'output' if any connection between them is existing.
-     * If autoReconnect is true, after disconnecting 'input' and 'output', if the 'input' had only
-     * 1 input, and it was connected, it will connect output to the input of  'input'.
-     **/
-    bool disconnectNodes(Node* input,Node* output,bool autoReconnect = false);
-
-    /**
-     * @brief Attempts to add automatically the node 'created' to the node graph.
-     * 'selected' is the node currently selected by the user.
-     **/
-    bool autoConnectNodes(boost::shared_ptr<Natron::Node> selected,boost::shared_ptr<Natron::Node> created);
 
     QString getProjectName() const WARN_UNUSED_RETURN;
 
@@ -165,20 +136,6 @@ public:
 
     int currentFrame() const WARN_UNUSED_RETURN;
 
-    void initNodeCountersAndSetName(Node* n);
-
-    void addNodeToProject(boost::shared_ptr<Natron::Node> n);
-
-    /**
-     * @brief Remove the node n from the project so the pointer is no longer
-     * referenced anywhere. This function is called on nodes that were already deleted by the user but were kept into
-     * the undo/redo stack. That means this node is no longer references by any other node and can be safely deleted.
-     * The first thing this function does is to assert that the node n is not active.
-     **/
-    void removeNodeFromProject(const boost::shared_ptr<Natron::Node> & n);
-
-    void clearNodes(bool emitSignal = true);
-    
     void ensureAllProcessingThreadsFinished();
 
     /**
@@ -193,24 +150,25 @@ public:
 
     qint64 getProjectCreationTime() const;
 
-    /**
-     * @brief Returns a pointer to a node whose name is the same as the name given in parameter.
-     * If no such node could be found, NULL is returned.
-     **/
-    boost::shared_ptr<Natron::Node> getNodeByName(const std::string & name) const;
 
     /**
      * @brief Called exclusively by the Node class when it needs to retrieve the shared ptr
      * from the "this" pointer.
      **/
-    boost::shared_ptr<Natron::Node> getNodePointer(Natron::Node* n) const;
     Natron::ViewerColorSpaceEnum getDefaultColorSpaceForBitDepth(Natron::ImageBitDepthEnum bitdepth) const;
 
 
     /**
      * @brief Remove all the autosave files from the disk.
      **/
-    static void removeAutoSaves();
+    static void clearAutoSavesDir();
+    void removeLastAutosave();
+    
+    QString getLockAbsoluteFilePath() const;
+    void createLockFile();
+    void removeLockFile();
+    bool getLockFileInfos(const QString& projectPath,const QString& projectName,QString* authorName,QString* lastSaveDate,qint64* appPID) const;
+    
     virtual bool isProject() const
     {
         return true;
@@ -243,19 +201,7 @@ public:
     static void makeRelativeToVariable(const std::string& varName,const std::string& varValue,std::string& str);
     
     static bool isRelative(const std::string& str);
-    
-    /**
-     * @brief For all active nodes, find all file-paths that uses the given projectPathName and if the location was valid,
-     * change the file-path to be relative to the newProjectPath.
-     **/
-    void fixRelativeFilePaths(const std::string& projectPathName,const std::string& newProjectPath,bool blockEval);
 
-    
-    /**
-     * @brief For all active nodes, if it has a file-path parameter using the oldName of a variable, it will turn it into the
-     * newName.
-     **/
-    void fixPathName(const std::string& oldName,const std::string& newName);
     
     /**
      * @brief If str is relative it will canonicalize the path, i.e expand all variables and '.' and '..' that may 
@@ -275,17 +221,29 @@ public:
      **/
     void makeRelativeToProject(std::string& str);
     
+    bool fixFilePath(const std::string& projectPathName,const std::string& newProjectPath,
+                     std::string& filePath);
+
+    
     void onOCIOConfigPathChanged(const std::string& path,bool blockevaluation);
 
 
     static std::string escapeXML(const std::string &input);
     static std::string unescapeXML(const std::string &input);
     
-
-    void setAllNodesAborted(bool aborted);
-    
     double getProjectFrameRate() const;
     
+    boost::shared_ptr<Path_Knob> getEnvVarKnob() const;
+    
+    std::string getOnProjectLoadCB() const;
+    std::string getOnProjectSaveCB() const;
+    std::string getOnProjectCloseCB() const;
+    
+    std::string getOnNodeCreatedCB() const;
+    std::string getOnNodeDeleteCB() const;
+    
+    bool isProjectClosing() const;
+
     bool isFrameRangeLocked() const;
     
     void getFrameRange(int* first,int* last) const;
@@ -294,19 +252,50 @@ public:
     
     void recomputeFrameRangeFromReaders();
     
-public slots:
+    void createViewer();
+    
+    void resetProject();
+    
+    
+    struct TreeOutput
+    {
+        boost::shared_ptr<Natron::Node> node;
+        std::list<std::pair<int,Natron::Node*> > outputs;
+    };
+    
+    struct TreeInput
+    {
+        boost::shared_ptr<Natron::Node> node;
+        std::vector<boost::shared_ptr<Natron::Node> > inputs;
+    };
+    
+    struct NodesTree
+    {
+        TreeOutput output;
+        std::list<TreeInput> inputs;
+        std::list<boost::shared_ptr<Natron::Node> > inbetweenNodes;
+    };
+    
+    static void extractTreesFromNodes(const std::list<boost::shared_ptr<Natron::Node> >& nodes,std::list<Project::NodesTree>& trees);
+    
+    void closeProject(bool aboutToQuit)
+    {
+        reset(aboutToQuit);
+    }
+    
+public Q_SLOTS:
 
     void onAutoSaveTimerTriggered();
 
     ///Closes the project, clearing all nodes and reseting the project name
     void closeProject()
     {
-        reset();
+        closeProject(false);
     }
-
+    
     void onAutoSaveFutureFinished();
 
-signals:
+Q_SIGNALS:
 
     void mustCreateFormat();
 
@@ -316,8 +305,6 @@ signals:
 
     void autoPreviewChanged(bool);
 
-    void nodesCleared();
-
     void projectNameChanged(QString);
 
     void knobsInitialized();
@@ -325,26 +312,23 @@ signals:
 
 private:
 
-    void refreshViewersAndPreviews();
-
     /*Returns the index of the format*/
     int tryAddProjectFormat(const Format & f);
 
     void setProjectDefaultFormat(const Format & f);
 
-    bool loadProjectInternal(const QString & path,const QString & name,bool isAutoSave,const QString& realFilePath);
+    bool loadProjectInternal(const QString & path,const QString & name,bool isAutoSave,
+                             bool isUntitledAutosave, bool* mustSave);
 
     QString saveProjectInternal(const QString & path,const QString & name,bool autosave = false);
 
     
-    bool fixFilePath(const std::string& projectPathName,const std::string& newProjectPath,
-                        std::string& filePath);
-
+    
 
     /**
      * @brief Resets the project state clearing all nodes and the project name.
      **/
-    void reset();
+    void reset(bool aboutToQuit);
 
     /**
      * @brief Must be implemented to initialize any knob using the
@@ -384,7 +368,7 @@ private:
 
     void save(ProjectSerialization* serializationObject) const;
 
-    bool load(const ProjectSerialization & obj,const QString& name,const QString& path,bool isAutoSave,const QString& realFilePath);
+    bool load(const ProjectSerialization & obj,const QString& name,const QString& path, bool* mustSave);
 
 
     boost::scoped_ptr<ProjectPrivate> _imp;

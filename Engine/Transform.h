@@ -38,6 +38,10 @@
    Maybe we should make this a git submodule instead.
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <cmath>
 
 class RectD;
@@ -175,6 +179,8 @@ Matrix3x3 matCanonicalToPixel(double pixelaspectratio, //!< 1.067 for PAL, where
 Matrix3x3 matMul(const Matrix3x3 & m1, const Matrix3x3 & m2);
 
 Point3D matApply(const Matrix3x3 & m,const Point3D & p);
+    
+void matApply(const Matrix3x3 & m,double* x, double *y, double *z);
 
 struct Matrix4x4
 {

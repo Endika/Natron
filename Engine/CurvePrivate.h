@@ -11,10 +11,14 @@
 #ifndef NATRON_ENGINE_CURVEPRIVATE_H_
 #define NATRON_ENGINE_CURVEPRIVATE_H_
 
-#ifndef Q_MOC_RUN
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #endif
-#include <QReadWriteLock>
+#include <QMutex>
 
 #include "Engine/Rect.h"
 #include "Engine/Variant.h"
@@ -39,6 +43,7 @@ struct CurvePrivate
     };
 
     KeyFrameSet keyFrames;
+    std::map<double,double> resultCache; //< a cache for interpolations
     KnobI* owner;
     int dimensionInOwner;
     bool isParametric;
@@ -46,26 +51,27 @@ struct CurvePrivate
     double xMin, xMax;
     double yMin, yMax;
     bool hasYRange;
-    mutable QReadWriteLock _lock; //< the plug-ins can call getValueAt at any moment and we must make sure the user is not playing around
+    mutable QMutex _lock; //< the plug-ins can call getValueAt at any moment and we must make sure the user is not playing around
 
 
     CurvePrivate()
-        : keyFrames()
-          , owner(NULL)
-          , dimensionInOwner(-1)
-          , isParametric(false)
-          , type(eCurveTypeDouble)
-          , xMin(INT_MIN)
-          , xMax(INT_MAX)
-          , yMin(INT_MIN)
-          , yMax(INT_MAX)
-          , hasYRange(false)
-          , _lock(QReadWriteLock::Recursive)
+    : keyFrames()
+    , resultCache()
+    , owner(NULL)
+    , dimensionInOwner(-1)
+    , isParametric(false)
+    , type(eCurveTypeDouble)
+    , xMin(INT_MIN)
+    , xMax(INT_MAX)
+    , yMin(INT_MIN)
+    , yMax(INT_MAX)
+    , hasYRange(false)
+    , _lock(QMutex::Recursive)
     {
     }
 
     CurvePrivate(const CurvePrivate & other)
-        : _lock(QReadWriteLock::Recursive)
+        : _lock(QMutex::Recursive)
     {
         *this = other;
     }
@@ -83,6 +89,7 @@ struct CurvePrivate
         yMax = other.yMax;
         hasYRange = other.hasYRange;
     }
+    
 };
 
 

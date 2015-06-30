@@ -11,6 +11,11 @@
 
 #ifndef NATRON_GUI_KNOBGUIFILE_H_
 #define NATRON_GUI_KNOBGUIFILE_H_
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <map>
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
@@ -64,9 +69,11 @@ public:
 
     virtual ~File_KnobGui() OVERRIDE;
     
+    virtual void removeSpecificGui() OVERRIDE FINAL;
+
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void onTextEdited() ;
     
@@ -96,7 +103,9 @@ private:
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void setReadOnly(bool readOnly,int dimension) OVERRIDE FINAL;
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
-
+    virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
 private:
 
     void updateLastOpened(const QString &str);
@@ -108,7 +117,7 @@ private:
     QDateTime _lastModified;
     QFileSystemWatcher* _watcher;
     std::string _fileBeingWatched;
-    boost::shared_ptr<File_Knob> _knob;
+    boost::weak_ptr<File_Knob> _knob;
 };
 
 
@@ -131,9 +140,11 @@ public:
 
     virtual ~OutputFile_KnobGui() OVERRIDE;
 
+    virtual void removeSpecificGui() OVERRIDE FINAL;
+    
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void onTextEdited() ;
 
@@ -158,14 +169,16 @@ private:
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void setReadOnly(bool readOnly,int dimension) OVERRIDE FINAL;
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
-
+    virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
     void updateLastOpened(const QString &str);
 
 private:
     LineEdit *_lineEdit;
     Button *_openFileButton;
     QString _lastOpened;
-    boost::shared_ptr<OutputFile_Knob> _knob;
+    boost::weak_ptr<OutputFile_Knob> _knob;
 };
 
 
@@ -188,10 +201,12 @@ public:
                  DockablePanel *container);
 
     virtual ~Path_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
 
 
@@ -223,7 +238,9 @@ private:
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void setReadOnly(bool readOnly,int dimension) OVERRIDE FINAL;
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
-
+    virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
     void updateLastOpened(const QString &str);
 
     /**
@@ -257,7 +274,7 @@ private:
     Button* _removePathButton;
     Button* _editPathButton;
     QString _lastOpened;
-    boost::shared_ptr<Path_Knob> _knob;
+    boost::weak_ptr<Path_Knob> _knob;
     bool _isInsertingItem;
     Variables _items;
 };

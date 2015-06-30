@@ -13,11 +13,15 @@
 #ifndef ROTOUNDOCOMMAND_H
 #define ROTOUNDOCOMMAND_H
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <list>
 #include <map>
 #include <QUndoCommand>
 #include <QList>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #include <boost/weak_ptr.hpp>
 #endif
@@ -28,6 +32,8 @@ class RotoGui;
 class RotoLayer;
 class RotoPanel;
 class QRectF;
+class RotoDrawableItem;
+class RotoStrokeItem;
 class QTreeWidgetItem;
 class RotoItem;
 class Double_Knob;
@@ -64,7 +70,7 @@ private:
     bool _rippleEditEnabled;
     int _selectedTool; //< corresponds to the RotoGui::RotoToolEnum enum
     int _time; //< the time at which the change was made
-    std::list<boost::shared_ptr<Bezier> > _selectedCurves;
+    std::list<boost::shared_ptr<RotoDrawableItem> > _selectedCurves;
     std::list<int> _indexesToMove; //< indexes of the control points
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > _originalPoints,_selectedPoints,_pointsToDrag;
 };
@@ -94,9 +100,7 @@ public:
                          double ty,
                          double sx,
                          double sy,
-                         int time,
-                         TransformPointsSelectionEnum type,
-                         const QRectF& bbox);
+                         int time);
 
     virtual ~TransformUndoCommand();
 
@@ -115,7 +119,7 @@ private:
     int _selectedTool; //< corresponds to the RotoGui::RotoToolEnum enum
     boost::shared_ptr<Transform::Matrix3x3> _matrix;
     int _time; //< the time at which the change was made
-    std::list<boost::shared_ptr<Bezier> > _selectedCurves;
+    std::list<boost::shared_ptr<RotoDrawableItem> > _selectedCurves;
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > _originalPoints,_selectedPoints;
 };
 
@@ -149,7 +153,7 @@ class RemovePointUndoCommand
 {
     struct CurveDesc
     {
-        boost::shared_ptr<Bezier> oldCurve,curve;
+        boost::shared_ptr<RotoDrawableItem> oldCurve,curve;
         std::list<int> points;
         boost::shared_ptr<RotoLayer> parentLayer;
         bool curveRemoved;
@@ -191,7 +195,7 @@ class RemoveCurveUndoCommand
 {
     struct RemovedCurve
     {
-        boost::shared_ptr<Bezier> curve;
+        boost::shared_ptr<RotoDrawableItem> curve;
         boost::shared_ptr<RotoLayer> layer;
         int indexInLayer;
     };
@@ -200,7 +204,7 @@ public:
 
 
     RemoveCurveUndoCommand(RotoGui* roto,
-                           const std::list<boost::shared_ptr<Bezier> > & curves);
+                           const std::list<boost::shared_ptr<RotoDrawableItem> > & curves);
 
     virtual ~RemoveCurveUndoCommand();
 
@@ -211,6 +215,25 @@ private:
     RotoGui* _roto;
     bool _firstRedoCalled;
     std::list<RemovedCurve> _curves;
+};
+
+class AddStrokeUndoCommand : public QUndoCommand
+{
+public:
+    
+    AddStrokeUndoCommand(RotoGui* roto,const boost::shared_ptr<RotoStrokeItem>& item);
+    
+    virtual ~AddStrokeUndoCommand();
+    virtual void undo() OVERRIDE FINAL;
+    virtual void redo() OVERRIDE FINAL;
+    
+private:
+    
+    RotoGui* _roto;
+    bool _firstRedoCalled;
+    boost::shared_ptr<RotoStrokeItem> _item;
+    boost::shared_ptr<RotoLayer> _layer;
+    int _indexInLayer;
 };
 
 
@@ -242,7 +265,7 @@ private:
     bool _featherLinkEnabled;
     bool _rippleEditEnabled;
     int _time; //< the time at which the change was made
-    std::list<boost::shared_ptr<Bezier> > _selectedCurves;
+    std::list<boost::shared_ptr<RotoDrawableItem> > _selectedCurves;
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > _selectedPoints;
     boost::shared_ptr<BezierCP> _tangentBeingDragged,_oldCp,_oldFp;
     bool _left;
@@ -372,6 +395,7 @@ public:
 
     MakeBezierUndoCommand(RotoGui* roto,
                           const boost::shared_ptr<Bezier> & curve,
+                          bool isOpenBezier,
                           bool createPoint,
                           double dx,
                           double dy,
@@ -400,6 +424,7 @@ private:
     double _dx,_dy;
     int _time;
     int _lastPointAdded;
+    bool _isOpenBezier;
 };
 
 

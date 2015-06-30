@@ -12,6 +12,10 @@
 #ifndef NATRON_GUI_LINEEDIT_H_
 #define NATRON_GUI_LINEEDIT_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
@@ -32,7 +36,8 @@ class LineEdit
 {
     Q_OBJECT Q_PROPERTY( int animation READ getAnimation WRITE setAnimation)
     Q_PROPERTY(bool dirty READ getDirty WRITE setDirty)
-
+    Q_PROPERTY(bool altered READ getAltered WRITE setAltered)
+    
 public:
     explicit LineEdit(QWidget* parent = 0);
     virtual ~LineEdit() OVERRIDE;
@@ -50,20 +55,29 @@ public:
     }
 
     void setDirty(bool b);
+    
+    void setAltered(bool b);
+    bool getAltered() const
+    {
+        return altered;
+    }
 
-signals:
+Q_SIGNALS:
     
     void textDropped();
     
     void textPasted();
     
-public slots:
+public Q_SLOTS:
 
     void onEditingFinished();
 
-private:
-    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL;
+protected:
+    
+    virtual void paintEvent(QPaintEvent* e) OVERRIDE;
 
+private:
+    
     virtual void dropEvent(QDropEvent* e) OVERRIDE FINAL;
 
     virtual void dragEnterEvent(QDragEnterEvent* e) OVERRIDE FINAL;
@@ -76,6 +90,7 @@ private:
     
     int animation;
     bool dirty;
+    bool altered;
 };
 
 

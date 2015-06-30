@@ -8,6 +8,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "ViewerTab.h"
 
 #include <cassert>
@@ -19,10 +23,10 @@
 #include <QSpacerItem>
 #include <QGridLayout>
 #include <QGroupBox>
-#include <QLabel>
 #include <QVBoxLayout>
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QTimer>
 #include <QCoreApplication>
 #include <QToolBar>
 CLANG_DIAG_OFF(unused-private-field)
@@ -32,12 +36,15 @@ CLANG_DIAG_ON(unused-private-field)
 #include <QtGui/QKeySequence>
 #include <QTextDocument>
 
+#include <boost/weak_ptr.hpp>
+
 #include "Engine/ViewerInstance.h"
 #include "Engine/Settings.h"
 #include "Engine/Project.h"
 #include "Engine/TimeLine.h"
 #include "Engine/Node.h"
 #include "Engine/OutputSchedulerThread.h"
+#include "Engine/Transform.h"
 
 #include "Gui/ViewerGL.h"
 #include "Gui/InfoViewerWidget.h"
@@ -48,7 +55,6 @@ CLANG_DIAG_ON(unused-private-field)
 #include "Gui/Button.h"
 #include "Gui/Gui.h"
 #include "Gui/TabWidget.h"
-#include "Gui/FromQtEnums.h"
 #include "Gui/GuiAppInstance.h"
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/ClickableLabel.h"
@@ -59,6 +65,15 @@ CLANG_DIAG_ON(unused-private-field)
 #include "Gui/MultiInstancePanel.h"
 #include "Gui/GuiMacros.h"
 #include "Gui/ActionShortcuts.h"
+#include "Gui/Label.h"
+#include "Gui/Utils.h"
+
+#ifndef M_LN2
+#define M_LN2       0.693147180559945309417232121458176568  /* loge(2)        */
+#endif
+
+#define NATRON_TRANSFORM_AFFECTS_OVERLAYS
+
 
 using namespace Natron;
 
@@ -66,7 +81,7 @@ namespace {
 struct InputName
 {
     QString name;
-    EffectInstance* input;
+    boost::weak_ptr<Natron::Node> input;
 };
 
 typedef std::map<int,InputName> InputNamesMap;
@@ -149,8 +164,11 @@ struct ViewerTabPrivate
 
     /*1st row*/
     //ComboBox* viewerLayers;
+    ComboBox* layerChoice;
+    ComboBox* alphaChannelChoice;
     ChannelsComboBox* viewerChannels;
     ComboBox* zoomCombobox;
+    Button* syncViewerButton;
     Button* centerViewerButton;
     Button* clipToProjectFormatButton;
     Button* enableViewerRoI;
@@ -161,17 +179,23 @@ struct ViewerTabPrivate
     Button* activateRenderScale;
     bool renderScaleActive;
     ComboBox* renderScaleCombo;
-    QLabel* firstInputLabel;
+    Natron::Label* firstInputLabel;
     ComboBox* firstInputImage;
     ComboBox* compositingOperator;
-    QLabel* secondInputLabel;
+    Natron::Label* secondInputLabel;
     ComboBox* secondInputImage;
 
     /*2nd row*/
+    Button* toggleGainButton;
     SpinBox* gainBox;
     ScaleSliderQWidget* gainSlider;
+    double lastFstopValue;
     ClickableLabel* autoConstrastLabel;
     QCheckBox* autoContrast;
+    SpinBox* gammaBox;
+    double lastGammaValue;
+    Button* toggleGammaButton;
+    ScaleSliderQWidget* gammaSlider;
     ComboBox* viewerColorSpace;
     Button* checkerboardButton;
     ComboBox* viewsComboBox;
@@ -198,6 +222,10 @@ struct ViewerTabPrivate
     SpinBox* incrementSpinBox;
     Button* nextIncrement_Button;
     Button* playbackMode_Button;
+    
+    mutable QMutex playbackModeMutex;
+    Natron::PlaybackModeEnum playbackMode;
+    
     LineEdit* frameRangeEdit;
 
     ClickableLabel* canEditFrameRangeLabel;
@@ -237,98 +265,138 @@ struct ViewerTabPrivate
     mutable QMutex fpsMutex;
     double fps;
     
+    //The last node that took the penDown/motion/keyDown/keyRelease etc...
+    boost::weak_ptr<Natron::Node> lastOverlayNode;
+    
     ViewerTabPrivate(Gui* gui,
                      ViewerInstance* node)
-        : viewer(NULL)
-        , app( gui->getApp() )
-        , viewerContainer(NULL)
-        , viewerLayout(NULL)
-        , viewerSubContainer(NULL)
-        , viewerSubContainerLayout(NULL)
-        , mainLayout(NULL)
-        , firstSettingsRow(NULL)
-        , secondSettingsRow(NULL)
-        , firstRowLayout(NULL)
-        , secondRowLayout(NULL)
-        , viewerChannels(NULL)
-        , zoomCombobox(NULL)
-        , centerViewerButton(NULL)
-        , clipToProjectFormatButton(NULL)
-        , enableViewerRoI(NULL)
-        , refreshButton(NULL)
-        , iconRefreshOff()
-        , iconRefreshOn()
-        , ongoingRenderCount(0)
-        , activateRenderScale(NULL)
-        , renderScaleActive(false)
-        , renderScaleCombo(NULL)
-        , firstInputLabel(NULL)
-        , firstInputImage(NULL)
-        , compositingOperator(NULL)
-        , secondInputLabel(NULL)
-        , secondInputImage(NULL)
-        , gainBox(NULL)
-        , gainSlider(NULL)
-        , autoConstrastLabel(NULL)
-        , autoContrast(NULL)
-        , viewerColorSpace(NULL)
-        , checkerboardButton(NULL)
-        , viewsComboBox(NULL)
-        , currentViewIndex(0)
-        , currentViewMutex()
-        , infoWidget()
-        , playerButtonsContainer(0)
-        , playerLayout(NULL)
-        , currentFrameBox(NULL)
-        , firstFrame_Button(NULL)
-        , previousKeyFrame_Button(NULL)
-        , play_Backward_Button(NULL)
-        , previousFrame_Button(NULL)
-        , stop_Button(NULL)
-        , nextFrame_Button(NULL)
-        , play_Forward_Button(NULL)
-        , nextKeyFrame_Button(NULL)
-        , lastFrame_Button(NULL)
-        , previousIncrement_Button(NULL)
-        , incrementSpinBox(NULL)
-        , nextIncrement_Button(NULL)
-        , playbackMode_Button(NULL)
-        , frameRangeEdit(NULL)
-        , canEditFrameRangeLabel(NULL)
-        , canEditFpsBox(NULL)
-        , canEditFpsLabel(NULL)
-        , fpsLockedMutex()
-        , fpsLocked(true)
-        , fpsBox(NULL)
-        , turboButton(NULL)
-        , timeLineGui(NULL)
-        , rotoNodes()
-        , currentRoto()
-        , trackerNodes()
-        , currentTracker()
-        , inputNamesMap()
-        , compOperatorMutex()
-        , compOperator(eViewerCompositingOperatorNone)
-        , gui(gui)
-        , viewerNode(node)
-        , visibleToolbarsMutex()
-        , infobarVisible(true)
-        , playerVisible(true)
-        , timelineVisible(true)
-        , leftToolbarVisible(true)
-        , rightToolbarVisible(true)
-        , topToolbarVisible(true)
-        , isFileDialogViewer(false)
-        , checkerboardMutex()
-        , checkerboardEnabled(false)
-        , fpsMutex()
-        , fps(24.)
+    : viewer(NULL)
+    , app( gui->getApp() )
+    , viewerContainer(NULL)
+    , viewerLayout(NULL)
+    , viewerSubContainer(NULL)
+    , viewerSubContainerLayout(NULL)
+    , mainLayout(NULL)
+    , firstSettingsRow(NULL)
+    , secondSettingsRow(NULL)
+    , firstRowLayout(NULL)
+    , secondRowLayout(NULL)
+    , layerChoice(NULL)
+    , alphaChannelChoice(NULL)
+    , viewerChannels(NULL)
+    , zoomCombobox(NULL)
+    , syncViewerButton(NULL)
+    , centerViewerButton(NULL)
+    , clipToProjectFormatButton(NULL)
+    , enableViewerRoI(NULL)
+    , refreshButton(NULL)
+    , iconRefreshOff()
+    , iconRefreshOn()
+    , ongoingRenderCount(0)
+    , activateRenderScale(NULL)
+    , renderScaleActive(false)
+    , renderScaleCombo(NULL)
+    , firstInputLabel(NULL)
+    , firstInputImage(NULL)
+    , compositingOperator(NULL)
+    , secondInputLabel(NULL)
+    , secondInputImage(NULL)
+    , toggleGainButton(NULL)
+    , gainBox(NULL)
+    , gainSlider(NULL)
+    , lastFstopValue(0.)
+    , autoConstrastLabel(NULL)
+    , autoContrast(NULL)
+    , gammaBox(NULL)
+    , lastGammaValue(1.)
+    , toggleGammaButton(NULL)
+    , gammaSlider(NULL)
+    , viewerColorSpace(NULL)
+    , checkerboardButton(NULL)
+    , viewsComboBox(NULL)
+    , currentViewIndex(0)
+    , currentViewMutex()
+    , infoWidget()
+    , playerButtonsContainer(0)
+    , playerLayout(NULL)
+    , currentFrameBox(NULL)
+    , firstFrame_Button(NULL)
+    , previousKeyFrame_Button(NULL)
+    , play_Backward_Button(NULL)
+    , previousFrame_Button(NULL)
+    , stop_Button(NULL)
+    , nextFrame_Button(NULL)
+    , play_Forward_Button(NULL)
+    , nextKeyFrame_Button(NULL)
+    , lastFrame_Button(NULL)
+    , previousIncrement_Button(NULL)
+    , incrementSpinBox(NULL)
+    , nextIncrement_Button(NULL)
+    , playbackMode_Button(NULL)
+    , playbackModeMutex()
+    , playbackMode(Natron::ePlaybackModeLoop)
+    , frameRangeEdit(NULL)
+    , canEditFrameRangeLabel(NULL)
+    , canEditFpsBox(NULL)
+    , canEditFpsLabel(NULL)
+    , fpsLockedMutex()
+    , fpsLocked(true)
+    , fpsBox(NULL)
+    , turboButton(NULL)
+    , timeLineGui(NULL)
+    , rotoNodes()
+    , currentRoto()
+    , trackerNodes()
+    , currentTracker()
+    , inputNamesMap()
+    , compOperatorMutex()
+    , compOperator(eViewerCompositingOperatorNone)
+    , gui(gui)
+    , viewerNode(node)
+    , visibleToolbarsMutex()
+    , infobarVisible(true)
+    , playerVisible(true)
+    , timelineVisible(true)
+    , leftToolbarVisible(true)
+    , rightToolbarVisible(true)
+    , topToolbarVisible(true)
+    , isFileDialogViewer(false)
+    , checkerboardMutex()
+    , checkerboardEnabled(false)
+    , fpsMutex()
+    , fps(24.)
+    , lastOverlayNode()
     {
         infoWidget[0] = infoWidget[1] = NULL;
         currentRoto.first = NULL;
         currentRoto.second = NULL;
     }
+    
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+    // return the tronsform to apply to the overlay as a 3x3 homography in canonical coordinates
+    bool getOverlayTransform(int time,
+                             int view,
+                             const boost::shared_ptr<Natron::Node>& target,
+                             Natron::EffectInstance* currentNode,
+                             Transform::Matrix3x3* transform) const;
+#endif
+    
+    void getComponentsAvailabel(std::set<ImageComponents>* comps) const;
 };
+
+static void makeFullyQualifiedLabel(Natron::Node* node,std::string* ret)
+{
+    boost::shared_ptr<NodeCollection> parent = node->getGroup();
+    NodeGroup* isParentGrp = dynamic_cast<NodeGroup*>(parent.get());
+    std::string toPreprend = node->getLabel();
+    if (isParentGrp) {
+        toPreprend.insert(0, "/");
+    }
+    ret->insert(0, toPreprend);
+    if (isParentGrp) {
+        makeFullyQualifiedLabel(isParentGrp->getNode().get(), ret);
+    }
+}
 
 ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
                      NodeGui* currentRoto,
@@ -338,10 +406,26 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
                      ViewerInstance* node,
                      QWidget* parent)
     : QWidget(parent)
+    , ScriptObject()
       , _imp( new ViewerTabPrivate(gui,node) )
 {
     installEventFilter(this);
-    setObjectName( node->getName().c_str() );
+    
+    std::string nodeName =  node->getNode()->getFullyQualifiedName();
+    for (std::size_t i = 0; i < nodeName.size(); ++i) {
+        if (nodeName[i] == '.') {
+            nodeName[i] = '_';
+        }
+    }
+    setScriptName(nodeName);
+    std::string label;
+    makeFullyQualifiedLabel(node->getNode().get(), &label);
+    setLabel(label);
+    
+    NodePtr internalNode = node->getNode();
+    QObject::connect(internalNode.get(), SIGNAL(scriptNameChanged(QString)), this, SLOT(onInternalNodeScriptNameChanged(QString)));
+    QObject::connect(internalNode.get(), SIGNAL(labelChanged(QString)), this, SLOT(onInternalNodeLabelChanged(QString)));
+    
     _imp->mainLayout = new QVBoxLayout(this);
     setLayout(_imp->mainLayout);
     _imp->mainLayout->setSpacing(0);
@@ -357,12 +441,24 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->firstRowLayout->setSpacing(0);
     _imp->mainLayout->addWidget(_imp->firstSettingsRow);
 
-    // _viewerLayers = new ComboBox(_firstSettingsRow);
-    //_firstRowLayout->addWidget(_viewerLayers);
+    _imp->layerChoice = new ComboBox(_imp->firstSettingsRow);
+    _imp->layerChoice->setToolTip("<p><b>" + tr("Layer:") + "</b></p><p>"
+                                  + tr("The layer that the Viewer node will fetch upstream in the tree. "
+                                       "The channels of the layer will be mapped to the RGBA channels of the viewer according to "
+                                       "its number of channels. (e.g: UV would be mapped to RG)") + "</p>");
+    QObject::connect(_imp->layerChoice,SIGNAL(currentIndexChanged(int)),this,SLOT(onLayerComboChanged(int)));
+    _imp->firstRowLayout->addWidget(_imp->layerChoice);
+    
+    _imp->alphaChannelChoice = new ComboBox(_imp->firstSettingsRow);
+    _imp->alphaChannelChoice->setToolTip("<p><b>" + tr("Alpha channel:") + "</b></p><p>"
+                                         + tr("Select here a channel of any layer that will be used when displaying the "
+                                              "alpha channel with the <b>Channels</b> choice on the right.") + "</p>");
+    QObject::connect(_imp->alphaChannelChoice,SIGNAL(currentIndexChanged(int)),this,SLOT(onAlphaChannelComboChanged(int)));
+    _imp->firstRowLayout->addWidget(_imp->alphaChannelChoice);
 
     _imp->viewerChannels = new ChannelsComboBox(_imp->firstSettingsRow);
-    _imp->viewerChannels->setToolTip( "<p><b>" + tr("Channels") + ": \n</b></p>"
-                                       + tr("The channels to display on the viewer.") );
+    _imp->viewerChannels->setToolTip( "<p><b>" + tr("Channels:") + "</b></p><p>"
+                                       + tr("The channels to display on the viewer.") + "</p>");
     _imp->firstRowLayout->addWidget(_imp->viewerChannels);
     
     QAction* lumiAction = new ActionWithShortcut(kShortcutGroupViewer,kShortcutIDActionLuminance,kShortcutDescActionLuminance,_imp->viewerChannels);
@@ -382,8 +478,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     QObject::connect( _imp->viewerChannels, SIGNAL( currentIndexChanged(int) ), this, SLOT( onViewerChannelsChanged(int) ) );
 
     _imp->zoomCombobox = new ComboBox(_imp->firstSettingsRow);
-    _imp->zoomCombobox->setToolTip( "<p><b>" + tr("Zoom") + ": \n</b></p>"
-                                     + tr("The zoom applied to the image on the viewer.") );
+    _imp->zoomCombobox->setToolTip( "<p><b>" + tr("Zoom:") + "</b></p>"
+                                     + tr("The zoom applied to the image on the viewer.") + "</p>");
     _imp->zoomCombobox->addItem("10%");
     _imp->zoomCombobox->addItem("25%");
     _imp->zoomCombobox->addItem("50%");
@@ -402,6 +498,21 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->zoomCombobox->setMaximumWidthFromText("100000%");
 
     _imp->firstRowLayout->addWidget(_imp->zoomCombobox);
+    
+    QPixmap lockEnabled,lockDisabled;
+    appPTR->getIcon(Natron::NATRON_PIXMAP_LOCKED, &lockEnabled);
+    appPTR->getIcon(Natron::NATRON_PIXMAP_UNLOCKED, &lockDisabled);
+    
+    QIcon lockIcon;
+    lockIcon.addPixmap(lockEnabled, QIcon::Normal, QIcon::On);
+    lockIcon.addPixmap(lockDisabled, QIcon::Normal, QIcon::Off);
+    _imp->syncViewerButton = new Button(lockIcon,"",_imp->firstSettingsRow);
+    _imp->syncViewerButton->setCheckable(true);
+    _imp->syncViewerButton->setToolTip(Natron::convertFromPlainText(tr("When enabled, all viewers will be synchronized to the same portion of the image in the viewport."),Qt::WhiteSpaceNormal));
+    _imp->syncViewerButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->syncViewerButton->setFocusPolicy(Qt::NoFocus);
+    QObject::connect(_imp->syncViewerButton, SIGNAL(clicked(bool)), this,SLOT(onSyncViewersButtonPressed(bool)));
+    _imp->firstRowLayout->addWidget(_imp->syncViewerButton);
 
     _imp->centerViewerButton = new Button(_imp->firstSettingsRow);
     _imp->centerViewerButton->setFocusPolicy(Qt::NoFocus);
@@ -428,19 +539,19 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->refreshButton = new Button(_imp->firstSettingsRow);
     _imp->refreshButton->setFocusPolicy(Qt::NoFocus);
     _imp->refreshButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->refreshButton->setToolTip(tr("Forces a new render of the current frame.") +
-                                     "<p><b>" + tr("Keyboard shortcut") + ": U</b></p>");
+    _imp->refreshButton->setToolTip("<p>" + tr("Forces a new render of the current frame.") +
+                                     "</p><p><b>" + tr("Keyboard shortcut:") + " U</b></p>");
     _imp->firstRowLayout->addWidget(_imp->refreshButton);
 
     _imp->activateRenderScale = new Button(_imp->firstSettingsRow);
     _imp->activateRenderScale->setFocusPolicy(Qt::NoFocus);
     _imp->activateRenderScale->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence rsKs(Qt::CTRL + Qt::Key_P);
-    _imp->activateRenderScale->setToolTip("<p><b>" + tr("Proxy mode") + "</b></p>" + tr(
-                                               "Activates the downscaling by the amount indicated by the value on the right. \n"
-                                               "The rendered images are degraded and as a result of this the whole rendering pipeline \n"
+    _imp->activateRenderScale->setToolTip("<p><b>" + tr("Proxy mode:") + "</b></p><p>" + tr(
+                                               "Activates the downscaling by the amount indicated by the value on the right. "
+                                               "The rendered images are degraded and as a result of this the whole rendering pipeline "
                                                "is much faster.") +
-                                           "<p><b>" + tr("Keyboard shortcut") + ": " + rsKs.toString(QKeySequence::NativeText) + "</b></p>");
+                                           "</p><p><b>" + tr("Keyboard shortcut:") + " " + rsKs.toString(QKeySequence::NativeText) + "</b></p>");
     _imp->activateRenderScale->setCheckable(true);
     _imp->activateRenderScale->setChecked(false);
     _imp->activateRenderScale->setDown(false);
@@ -448,8 +559,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
 
     _imp->renderScaleCombo = new ComboBox(_imp->firstSettingsRow);
     _imp->renderScaleCombo->setFocusPolicy(Qt::NoFocus);
-    _imp->renderScaleCombo->setToolTip( tr("When proxy mode is activated, it scales down the rendered image by this factor \n"
-                                            "to accelerate the rendering.") );
+    _imp->renderScaleCombo->setToolTip(Natron::convertFromPlainText(tr("When proxy mode is activated, it scales down the rendered image by this factor \n"
+                                            "to accelerate the rendering."), Qt::WhiteSpaceNormal));
     
     QAction* proxy2 = new ActionWithShortcut(kShortcutGroupViewer,kShortcutIDActionProxyLevel2,kShortcutDescActionProxyLevel2,
                                              _imp->renderScaleCombo);
@@ -470,7 +581,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
 
     _imp->firstRowLayout->addStretch();
 
-    _imp->firstInputLabel = new QLabel("A:",_imp->firstSettingsRow);
+    _imp->firstInputLabel = new Natron::Label("A:",_imp->firstSettingsRow);
     _imp->firstRowLayout->addWidget(_imp->firstInputLabel);
 
     _imp->firstInputImage = new ComboBox(_imp->firstSettingsRow);
@@ -488,7 +599,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->compositingOperator->addItem("Wipe",QIcon(),QKeySequence(),"Wipe betweens A and B");
     _imp->firstRowLayout->addWidget(_imp->compositingOperator);
 
-    _imp->secondInputLabel = new QLabel("B:",_imp->firstSettingsRow);
+    _imp->secondInputLabel = new Natron::Label("B:",_imp->firstSettingsRow);
     _imp->firstRowLayout->addWidget(_imp->secondInputLabel);
 
     _imp->secondInputImage = new ComboBox(_imp->firstSettingsRow);
@@ -505,24 +616,39 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->secondRowLayout->setSpacing(0);
     _imp->secondRowLayout->setContentsMargins(0, 0, 0, 0);
     _imp->mainLayout->addWidget(_imp->secondSettingsRow);
-
+    
+    QPixmap gainEnabled,gainDisabled;
+    appPTR->getIcon(NATRON_PIXMAP_VIEWER_GAIN_ENABLED,&gainEnabled);
+    appPTR->getIcon(NATRON_PIXMAP_VIEWER_GAIN_DISABLED,&gainDisabled);
+    QIcon gainIc;
+    gainIc.addPixmap(gainEnabled,QIcon::Normal,QIcon::On);
+    gainIc.addPixmap(gainDisabled,QIcon::Normal,QIcon::Off);
+    _imp->toggleGainButton = new Button(gainIc,"",_imp->secondSettingsRow);
+    _imp->toggleGainButton->setCheckable(true);
+    _imp->toggleGainButton->setChecked(false);
+    _imp->toggleGainButton->setDown(false);
+    _imp->toggleGainButton->setFocusPolicy(Qt::NoFocus);
+    _imp->toggleGainButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->toggleGainButton->setToolTip(Natron::convertFromPlainText(tr("Switch between \"neutral\" 1.0 gain f-stop and the previous setting."), Qt::WhiteSpaceNormal));
+    _imp->secondRowLayout->addWidget(_imp->toggleGainButton);
+    QObject::connect(_imp->toggleGainButton, SIGNAL(clicked(bool)), this, SLOT(onGainToggled(bool)));
+    
     _imp->gainBox = new SpinBox(_imp->secondSettingsRow,SpinBox::eSpinBoxTypeDouble);
-    _imp->gainBox->setToolTip( "<p><b>" + tr("Gain") + ": \n</b></p>" + tr(
-                                    "Multiplies the image by \nthis amount before display.") );
+    QString gainTt =  "<p><b>" + tr("Gain:") + "</b></p><p>" + tr("Gain is shown as f-stops. The image is multipled by pow(2,value) before display.") + "</p>";
+    _imp->gainBox->setToolTip(gainTt);
     _imp->gainBox->setIncrement(0.1);
-    _imp->gainBox->setValue(1.0);
-    _imp->gainBox->setMinimum(0.0);
+    _imp->gainBox->setValue(0.0);
     _imp->secondRowLayout->addWidget(_imp->gainBox);
 
 
-    _imp->gainSlider = new ScaleSliderQWidget(0, 64,1.0,ScaleSliderQWidget::eDataTypeDouble,Natron::eScaleTypeLinear,_imp->secondSettingsRow);
-    _imp->gainSlider->setToolTip( "<p><b>" + tr("Gain") + ": \n</b></p>" + tr(
-                                       "Multiplies the image by \nthis amount before display.") );
+    _imp->gainSlider = new ScaleSliderQWidget(-6, 6, 0.0,ScaleSliderQWidget::eDataTypeDouble,_imp->gui,Natron::eScaleTypeLinear,_imp->secondSettingsRow);
+    QObject::connect(_imp->gainSlider, SIGNAL(editingFinished(bool)), this, SLOT(onGainSliderEditingFinished(bool)));
+    _imp->gainSlider->setToolTip(gainTt);
     _imp->secondRowLayout->addWidget(_imp->gainSlider);
 
-    QString autoContrastToolTip( "<p><b>" + tr("Auto-contrast") + ": \n</b></p>" + tr(
-                                     "Automatically adjusts the gain and the offset applied \n"
-                                     "to the colors of the visible image portion on the viewer.") );
+    QString autoContrastToolTip( "<p><b>" + tr("Auto-contrast:") + "</b></p><p>" + tr(
+                                     "Automatically adjusts the gain and the offset applied "
+                                     "to the colors of the visible image portion on the viewer.") + "</p>");
     _imp->autoConstrastLabel = new ClickableLabel(tr("Auto-contrast:"),_imp->secondSettingsRow);
     _imp->autoConstrastLabel->setToolTip(autoContrastToolTip);
     _imp->secondRowLayout->addWidget(_imp->autoConstrastLabel);
@@ -531,13 +657,42 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->autoContrast->setAttribute(Qt::WA_LayoutUsesWidgetRect);
     _imp->autoContrast->setToolTip(autoContrastToolTip);
     _imp->secondRowLayout->addWidget(_imp->autoContrast);
+    
+    QPixmap gammaEnabled,gammaDisabled;
+    appPTR->getIcon(NATRON_PIXMAP_VIEWER_GAMMA_ENABLED,&gammaEnabled);
+    appPTR->getIcon(NATRON_PIXMAP_VIEWER_GAMMA_DISABLED,&gammaDisabled);
+    QIcon gammaIc;
+    gammaIc.addPixmap(gammaEnabled,QIcon::Normal,QIcon::On);
+    gammaIc.addPixmap(gammaDisabled,QIcon::Normal,QIcon::Off);
+    _imp->toggleGammaButton = new Button(gammaIc,"",_imp->secondSettingsRow);
+    QObject::connect(_imp->toggleGammaButton, SIGNAL(clicked(bool)), this,SLOT(onGammaToggled(bool)));
+    _imp->toggleGammaButton->setCheckable(true);
+    _imp->toggleGammaButton->setChecked(false);
+    _imp->toggleGammaButton->setDown(false);
+    _imp->toggleGammaButton->setFocusPolicy(Qt::NoFocus);
+    _imp->toggleGammaButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->toggleGammaButton->setToolTip(Natron::convertFromPlainText(tr("Switch between gamma at 1.0 and the previous setting"), Qt::WhiteSpaceNormal));
+    _imp->secondRowLayout->addWidget(_imp->toggleGammaButton);
+    
+    _imp->gammaBox = new SpinBox(_imp->secondSettingsRow, SpinBox::eSpinBoxTypeDouble);
+    QString gammaTt = Natron::convertFromPlainText(tr("Gamma correction. It is applied after gain and before colorspace correction"), Qt::WhiteSpaceNormal);
+    _imp->gammaBox->setToolTip(gammaTt);
+    QObject::connect(_imp->gammaBox,SIGNAL(valueChanged(double)), this, SLOT(onGammaSpinBoxValueChanged(double)));
+    _imp->gammaBox->setValue(1.0);
+    _imp->secondRowLayout->addWidget(_imp->gammaBox);
+    
+    _imp->gammaSlider = new ScaleSliderQWidget(0,4,1.0,ScaleSliderQWidget::eDataTypeDouble,_imp->gui,Natron::eScaleTypeLinear,_imp->secondSettingsRow);
+    QObject::connect(_imp->gammaSlider, SIGNAL(editingFinished(bool)), this, SLOT(onGammaSliderEditingFinished(bool)));
+    _imp->gammaSlider->setToolTip(gammaTt);
+    QObject::connect(_imp->gammaSlider,SIGNAL(positionChanged(double)), this, SLOT(onGammaSliderValueChanged(double)));
+    _imp->secondRowLayout->addWidget(_imp->gammaSlider);
 
     _imp->viewerColorSpace = new ComboBox(_imp->secondSettingsRow);
-    _imp->viewerColorSpace->setToolTip( "<p><b>" + tr("Viewer color process") + ": \n</b></p>" + tr(
-                                             "The operation applied to the image before it is displayed\n"
-                                             "on screen. All the color pipeline \n"
-                                             "is linear,thus the process converts from linear\n"
-                                             "to your monitor's colorspace.") );
+    _imp->viewerColorSpace->setToolTip( "<p><b>" + tr("Viewer color process:") + "</b></p><p>" + tr(
+                                             "The operation applied to the image before it is displayed "
+                                             "on screen. All the color pipeline "
+                                             "is linear, thus the process converts from linear "
+                                             "to your monitor's colorspace.") + "</p>");
     _imp->secondRowLayout->addWidget(_imp->viewerColorSpace);
 
     _imp->viewerColorSpace->addItem("Linear(None)");
@@ -556,14 +711,14 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->checkerboardButton->setCheckable(true); 
     _imp->checkerboardButton->setChecked(false);
     _imp->checkerboardButton->setDown(false);
-    _imp->checkerboardButton->setToolTip(tr("When checked the viewer will draw a checkerboard instead of black "
-                                             "in transparant areas (within the project window only)."));
+    _imp->checkerboardButton->setToolTip(Natron::convertFromPlainText(tr("If checked, the viewer draws a checkerboard under the image instead of black "
+                                                                     "(within the project window only)."), Qt::WhiteSpaceNormal));
     _imp->checkerboardButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QObject::connect(_imp->checkerboardButton,SIGNAL(clicked(bool)),this,SLOT(onCheckerboardButtonClicked()));
     _imp->secondRowLayout->addWidget(_imp->checkerboardButton);
 
     _imp->viewsComboBox = new ComboBox(_imp->secondSettingsRow);
-    _imp->viewsComboBox->setToolTip( "<p><b>" + tr("Active view") + ": \n</b></p>" + tr(
+    _imp->viewsComboBox->setToolTip( "<p><b>" + tr("Active view:") + "</b></p>" + tr(
                                           "Tells the viewer what view should be displayed.") );
     _imp->secondRowLayout->addWidget(_imp->viewsComboBox);
     _imp->viewsComboBox->hide();
@@ -631,8 +786,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->firstFrame_Button->setFocusPolicy(Qt::NoFocus);
     _imp->firstFrame_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence firstFrameKey(Qt::CTRL + Qt::Key_Left);
-    QString tooltip = "First frame";
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    QString tooltip = "<p>" + tr("First frame") + "</p>";
+    tooltip.append("<p><b>" + tr("Keyboard shortcut:") + " ");
     tooltip.append( firstFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->firstFrame_Button->setToolTip(tooltip);
@@ -643,8 +798,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->previousKeyFrame_Button->setFocusPolicy(Qt::NoFocus);
     _imp->previousKeyFrame_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence previousKeyFrameKey(Qt::CTRL + Qt::SHIFT +  Qt::Key_Left);
-    tooltip = tr("Previous keyframe");
-    tooltip.append( tr("<p><b>Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Previous keyframe") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( previousKeyFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->previousKeyFrame_Button->setToolTip(tooltip);
@@ -654,8 +809,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->play_Backward_Button->setFocusPolicy(Qt::NoFocus);
     _imp->play_Backward_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence playbackFrameKey(Qt::Key_J);
-    tooltip = tr("Play backward");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Play backward") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( playbackFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->play_Backward_Button->setToolTip(tooltip);
@@ -668,8 +823,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->previousFrame_Button->setFocusPolicy(Qt::NoFocus);
     _imp->previousFrame_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence previousFrameKey(Qt::Key_Left);
-    tooltip = tr("Previous frame");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Previous frame") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( previousFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->previousFrame_Button->setToolTip(tooltip);
@@ -680,8 +835,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->stop_Button->setFocusPolicy(Qt::NoFocus);
     _imp->stop_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence stopKey(Qt::Key_K);
-    tooltip = tr("Stop");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Stop") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( stopKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->stop_Button->setToolTip(tooltip);
@@ -692,8 +847,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->nextFrame_Button->setFocusPolicy(Qt::NoFocus);
     _imp->nextFrame_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence nextFrameKey(Qt::Key_Right);
-    tooltip = tr("Next frame");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Next frame") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( nextFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->nextFrame_Button->setToolTip(tooltip);
@@ -704,8 +859,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->play_Forward_Button->setFocusPolicy(Qt::NoFocus);
     _imp->play_Forward_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence playKey(Qt::Key_L);
-    tooltip = tr("Play forward");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Play forward") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( playKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->play_Forward_Button->setToolTip(tooltip);
@@ -718,8 +873,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->nextKeyFrame_Button->setFocusPolicy(Qt::NoFocus);
     _imp->nextKeyFrame_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence nextKeyFrameKey(Qt::CTRL + Qt::SHIFT +  Qt::Key_Right);
-    tooltip = tr("Next keyframe");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Next keyframe") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( nextKeyFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->nextKeyFrame_Button->setToolTip(tooltip);
@@ -729,8 +884,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->lastFrame_Button->setFocusPolicy(Qt::NoFocus);
     _imp->lastFrame_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence lastFrameKey(Qt::CTRL + Qt::Key_Right);
-    tooltip = tr("Last frame");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Last frame") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( lastFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->lastFrame_Button->setToolTip(tooltip);
@@ -748,8 +903,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->previousIncrement_Button->setFocusPolicy(Qt::NoFocus);
     _imp->previousIncrement_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence previousIncrFrameKey(Qt::SHIFT + Qt::Key_Left);
-    tooltip = tr("Previous increment");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Previous increment") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( previousIncrFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->previousIncrement_Button->setToolTip(tooltip);
@@ -758,7 +913,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
 
     _imp->incrementSpinBox = new SpinBox(_imp->playerButtonsContainer);
     _imp->incrementSpinBox->setValue(10);
-    _imp->incrementSpinBox->setToolTip( "<p><b>" + tr("Frame increment") + ": \n</b></p>" + tr(
+    _imp->incrementSpinBox->setToolTip( "<p><b>" + tr("Frame increment:") + "</b></p>" + tr(
                                             "The previous/next increment buttons step"
                                             " with this increment.") );
     _imp->playerLayout->addWidget(_imp->incrementSpinBox);
@@ -768,8 +923,8 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->nextIncrement_Button->setFocusPolicy(Qt::NoFocus);
     _imp->nextIncrement_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     QKeySequence nextIncrFrameKey(Qt::SHIFT + Qt::Key_Right);
-    tooltip = tr("Next increment");
-    tooltip.append( "<p><b>" + tr("Keyboard shortcut: ") );
+    tooltip = "<p>" + tr("Next increment") + "</p>";
+    tooltip.append( "<p><b>" + tr("Keyboard shortcut:") + " " );
     tooltip.append( nextIncrFrameKey.toString(QKeySequence::NativeText) );
     tooltip.append("</b></p>");
     _imp->nextIncrement_Button->setToolTip(tooltip);
@@ -778,22 +933,22 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->playbackMode_Button = new Button(_imp->playerButtonsContainer);
     _imp->playbackMode_Button->setFocusPolicy(Qt::NoFocus);
     _imp->playbackMode_Button->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->playbackMode_Button->setToolTip( tr("Behaviour to adopt when the playback\n hit the end of the range: loop,bounce or stop.") );
+    _imp->playbackMode_Button->setToolTip(Natron::convertFromPlainText(tr("Behaviour to adopt when the playback\n hit the end of the range: loop,bounce or stop."), Qt::WhiteSpaceNormal));
     _imp->playerLayout->addWidget(_imp->playbackMode_Button);
 
 
     _imp->playerLayout->addStretch();
     
-    QFont font(appFont,appFontSize);
+    //QFont font(appFont,appFontSize);
     
-    _imp->canEditFrameRangeLabel = new ClickableLabel(tr("Frame-range"),_imp->playerButtonsContainer);
-    _imp->canEditFrameRangeLabel->setFont(font);
+    _imp->canEditFrameRangeLabel = new ClickableLabel(tr("Frame range"),_imp->playerButtonsContainer);
+    //_imp->canEditFrameRangeLabel->setFont(font);
     
     _imp->playerLayout->addWidget(_imp->canEditFrameRangeLabel);
 
     _imp->frameRangeEdit = new LineEdit(_imp->playerButtonsContainer);
     QObject::connect( _imp->frameRangeEdit,SIGNAL( editingFinished() ),this,SLOT( onFrameRangeEditingFinished() ) );
-    _imp->frameRangeEdit->setToolTip( Qt::convertFromPlainText(tr("Define here the timeline bounds in which the cursor will playback. Alternatively"
+    _imp->frameRangeEdit->setToolTip( Natron::convertFromPlainText(tr("Define here the timeline bounds in which the cursor will playback. Alternatively"
                                                                   " you can drag the red markers on the timeline. The frame range of the project "
                                                                   "is the part coloured in grey on the timeline."),
                                                                Qt::WhiteSpaceNormal) );
@@ -807,10 +962,10 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
 
     _imp->canEditFpsBox = new QCheckBox(_imp->playerButtonsContainer);
     
-    QString canEditFpsBoxTT = Qt::convertFromPlainText(tr("When unchecked, the frame rate will be automatically set by "
+    QString canEditFpsBoxTT = Natron::convertFromPlainText(tr("When unchecked, the frame rate will be automatically set by "
                                                           " the informations of the input stream of the Viewer.  "
                                                           "When checked, you're free to set the frame rate of the Viewer.")
-                                                       ,Qt::WhiteSpaceNormal);
+                                                       , Qt::WhiteSpaceNormal);
     
     _imp->canEditFpsBox->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     _imp->canEditFpsBox->setToolTip(canEditFpsBoxTT);
@@ -820,7 +975,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->canEditFpsLabel = new ClickableLabel(tr("fps"),_imp->playerButtonsContainer);
     QObject::connect(_imp->canEditFpsLabel, SIGNAL(clicked(bool)),this,SLOT(onCanSetFPSLabelClicked(bool)));
     _imp->canEditFpsLabel->setToolTip(canEditFpsBoxTT);
-    _imp->canEditFpsLabel->setFont(font);
+    //_imp->canEditFpsLabel->setFont(font);
     
     _imp->playerLayout->addWidget(_imp->canEditFpsBox);
     _imp->playerLayout->addWidget(_imp->canEditFpsLabel);
@@ -830,7 +985,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->fpsBox->decimals(1);
     _imp->fpsBox->setValue(24.0);
     _imp->fpsBox->setIncrement(0.1);
-    _imp->fpsBox->setToolTip( "<p><b>" + tr("fps") + ": \n</b></p>" + tr(
+    _imp->fpsBox->setToolTip( "<p><b>" + tr("fps:") + "</b></p>" + tr(
                                   "Enter here the desired playback rate.") );
     
     _imp->playerLayout->addWidget(_imp->fpsBox);
@@ -845,7 +1000,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->turboButton->setCheckable(true);
     _imp->turboButton->setChecked(false);
     _imp->turboButton->setDown(false);
-    _imp->turboButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->turboButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
     _imp->turboButton->setToolTip("<p><b>" + tr("Turbo mode:") + "</p></b><p>" +
                                   tr("When checked, everything besides the viewer will not be refreshed in the user interface "
                                                                                               "for maximum efficiency during playback.") + "</p>");
@@ -942,20 +1097,20 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     _imp->activateRenderScale->setIcon(icViewerRs);
 
 
-    _imp->centerViewerButton->setToolTip(tr("Scales the image so it doesn't exceed the size of the viewer and centers it.") +
-                                          "<p><b>" + tr("Keyboard shortcut") + ": F</b></p>");
+    _imp->centerViewerButton->setToolTip("<p>" + tr("Scales the image so it doesn't exceed the size of the viewer and centers it.") +
+                                          "</p><p><b>" + tr("Keyboard shortcut:") + " F</b></p>");
 
     _imp->clipToProjectFormatButton->setToolTip("<p>" + tr("Clips the portion of the image displayed "
                                                             "on the viewer to the project format. "
                                                             "When off, everything in the union of all nodes "
-                                                            "region of definition will be displayed.") + "</p>"
-                                                 "<p><b>" + tr("Keyboard shortcut") + ": " + QKeySequence(Qt::SHIFT + Qt::Key_C).toString() +
+                                                            "region of definition will be displayed.") +
+                                                 "</p><p><b>" + tr("Keyboard shortcut:") + " " + QKeySequence(Qt::SHIFT + Qt::Key_C).toString() +
                                                  "</b></p>");
 
     QKeySequence enableViewerKey(Qt::SHIFT + Qt::Key_W);
     _imp->enableViewerRoI->setToolTip("<p>" + tr("When active, enables the region of interest that will limit"
-                                                  " the portion of the viewer that is kept updated.") + "</p>"
-                                       "<p><b>" + tr("Keyboard shortcut:") + enableViewerKey.toString() + "</b></p>");
+                                                  " the portion of the viewer that is kept updated.") +
+                                       "</p><p><b>" + tr("Keyboard shortcut:") + " " + enableViewerKey.toString() + "</b></p>");
     /*=================================================*/
 
     /*frame seeker*/
@@ -979,17 +1134,15 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     
     boost::shared_ptr<Node> wrapperNode = _imp->viewerNode->getNode();
     QObject::connect( wrapperNode.get(),SIGNAL( inputChanged(int) ),this,SLOT( onInputChanged(int) ) );
-    QObject::connect( wrapperNode.get(),SIGNAL( inputNameChanged(int,QString) ),this,SLOT( onInputNameChanged(int,QString) ) );
+    QObject::connect( wrapperNode.get(),SIGNAL( inputLabelChanged(int,QString) ),this,SLOT( onInputNameChanged(int,QString) ) );
     QObject::connect( _imp->viewerNode,SIGNAL(clipPreferencesChanged()), this, SLOT(onClipPreferencesChanged()));
     QObject::connect( _imp->viewerNode,SIGNAL( activeInputsChanged() ),this,SLOT( onActiveInputsChanged() ) );
     QObject::connect( _imp->viewerColorSpace, SIGNAL( currentIndexChanged(int) ), this,
                       SLOT( onColorSpaceComboBoxChanged(int) ) );
     QObject::connect( _imp->zoomCombobox, SIGNAL( currentIndexChanged(QString) ),_imp->viewer, SLOT( zoomSlot(QString) ) );
     QObject::connect( _imp->viewer, SIGNAL( zoomChanged(int) ), this, SLOT( updateZoomComboBox(int) ) );
-    QObject::connect( _imp->gainBox, SIGNAL( valueChanged(double) ), this,SLOT( onGainSliderChanged(double) ) );
-    QObject::connect( _imp->gainSlider, SIGNAL( positionChanged(double) ), _imp->gainBox, SLOT( setValue(double) ) );
+    QObject::connect( _imp->gainBox, SIGNAL( valueChanged(double) ), this,SLOT( onGainSpinBoxValueChanged(double) ) );
     QObject::connect( _imp->gainSlider, SIGNAL( positionChanged(double) ), this, SLOT( onGainSliderChanged(double) ) );
-    QObject::connect( _imp->gainBox, SIGNAL( valueChanged(double) ), _imp->gainSlider, SLOT( seekScalePosition(double) ) );
     QObject::connect( _imp->currentFrameBox, SIGNAL( valueChanged(double) ), this, SLOT( onCurrentTimeSpinBoxChanged(double) ) );
 
     QObject::connect( _imp->play_Forward_Button,SIGNAL( clicked(bool) ),this,SLOT( startPause(bool) ) );
@@ -1011,6 +1164,7 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     QObject::connect( _imp->fpsBox, SIGNAL( valueChanged(double) ), this, SLOT( onSpinboxFpsChanged(double) ) );
 
     QObject::connect( _imp->viewerNode->getRenderEngine(),SIGNAL( renderFinished(int) ),this,SLOT( onEngineStopped() ) );
+    QObject::connect( _imp->viewerNode->getRenderEngine(),SIGNAL( renderStarted(bool) ),this,SLOT( onEngineStarted(bool) ) );
     manageSlotsForInfoWidget(0,true);
 
     QObject::connect( _imp->clipToProjectFormatButton,SIGNAL( clicked(bool) ),this,SLOT( onClipToProjectButtonToggle(bool) ) );
@@ -1042,6 +1196,27 @@ ViewerTab::ViewerTab(const std::list<NodeGui*> & existingRotoNodes,
     }
 
     setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    
+    _imp->viewerNode->setUiContext(getViewer());
+    
+    refreshLayerAndAlphaChannelComboBox();
+    
+    QTimer::singleShot(25, _imp->timeLineGui, SLOT(recenterOnBounds()));
+    
+    
+    //Refresh the viewport lock state
+    const std::list<ViewerTab*>& viewers = _imp->gui->getViewersList();
+    if (!viewers.empty()) {
+        ViewerTab* other = viewers.front();
+        if (other->isViewersSynchroEnabled()) {
+            double left,bottom,factor,par;
+            other->getViewer()->getProjection(&left, &bottom, &factor, &par);
+            _imp->viewer->setProjection(left, bottom, factor, par);
+            _imp->syncViewerButton->setDown(true);
+            _imp->syncViewerButton->setChecked(true);
+        }
+    }
+
 }
 
 void
@@ -1051,9 +1226,9 @@ ViewerTab::onColorSpaceComboBoxChanged(int v)
 
     if (v == 0) {
         colorspace = Natron::eViewerColorSpaceLinear;
-    } else if (1) {
+    } else if (v == 1) {
         colorspace = Natron::eViewerColorSpaceSRGB;
-    } else if (2) {
+    } else if (v == 2) {
         colorspace = Natron::eViewerColorSpaceRec709;
     } else {
         assert(false);
@@ -1111,6 +1286,39 @@ ViewerTab::getCurrentView() const
 }
 
 void
+ViewerTab::setPlaybackMode(Natron::PlaybackModeEnum mode)
+{
+    QPixmap pix;
+    switch (mode) {
+        case Natron::ePlaybackModeLoop:
+            appPTR->getIcon(NATRON_PIXMAP_PLAYER_LOOP_MODE, &pix);
+            break;
+        case Natron::ePlaybackModeBounce:
+            appPTR->getIcon(NATRON_PIXMAP_PLAYER_BOUNCE, &pix);
+            break;
+        case Natron::ePlaybackModeOnce:
+            appPTR->getIcon(NATRON_PIXMAP_PLAYER_PLAY_ONCE, &pix);
+            break;
+        default:
+            break;
+    }
+    {
+        QMutexLocker k(&_imp->playbackModeMutex);
+        _imp->playbackMode = mode;
+    }
+    _imp->playbackMode_Button->setIcon(QIcon(pix));
+    _imp->viewerNode->getRenderEngine()->setPlaybackMode(mode);
+
+}
+
+Natron::PlaybackModeEnum
+ViewerTab::getPlaybackMode() const
+{
+    QMutexLocker k(&_imp->playbackModeMutex);
+    return _imp->playbackMode;
+}
+
+void
 ViewerTab::togglePlaybackMode()
 {
     Natron::PlaybackModeEnum mode = _imp->viewerNode->getRenderEngine()->getPlaybackMode();
@@ -1128,6 +1336,10 @@ ViewerTab::togglePlaybackMode()
             break;
         default:
             break;
+    }
+    {
+        QMutexLocker k(&_imp->playbackModeMutex);
+        _imp->playbackMode = mode;
     }
     _imp->playbackMode_Button->setIcon(QIcon(pix));
     _imp->viewerNode->getRenderEngine()->setPlaybackMode(mode);
@@ -1160,12 +1372,6 @@ ViewerTab::startPause(bool b)
     abortRendering();
     if (b) {
         _imp->gui->getApp()->setLastViewerUsingTimeline(_imp->viewerNode->getNode());
-        _imp->play_Forward_Button->setDown(true);
-        _imp->play_Forward_Button->setChecked(true);
-        if (appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
-            _imp->gui->onFreezeUIButtonClicked(true);
-        }
-        boost::shared_ptr<TimeLine> timeline = _imp->timeLineGui->getTimeline();
         _imp->viewerNode->getRenderEngine()->renderFromCurrentFrame(OutputSchedulerThread::eRenderDirectionForward);
     }
 }
@@ -1173,21 +1379,49 @@ ViewerTab::startPause(bool b)
 void
 ViewerTab::abortRendering()
 {
-    _imp->play_Forward_Button->setDown(false);
-    _imp->play_Backward_Button->setDown(false);
-    _imp->play_Forward_Button->setChecked(false);
-    _imp->play_Backward_Button->setChecked(false);
-    if (_imp->gui->isGUIFrozen() && appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
+    if (_imp->play_Forward_Button) {
+        _imp->play_Forward_Button->setDown(false);
+        _imp->play_Forward_Button->setChecked(false);
+    }
+    if (_imp->play_Backward_Button) {
+        _imp->play_Backward_Button->setDown(false);
+        _imp->play_Backward_Button->setChecked(false);
+    }
+    if (_imp->gui && _imp->gui->isGUIFrozen() && appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
         _imp->gui->onFreezeUIButtonClicked(false);
     }
-    ///Abort all viewers because they are all synchronised.
-    const std::list<boost::shared_ptr<NodeGui> > & activeNodes = _imp->gui->getNodeGraph()->getAllActiveNodes();
+    if (_imp->gui) {
+        ///Abort all viewers because they are all synchronised.
+        const std::list<ViewerTab*> & activeNodes = _imp->gui->getViewersList();
 
-    for (std::list<boost::shared_ptr<NodeGui> >::const_iterator it = activeNodes.begin(); it != activeNodes.end(); ++it) {
-        ViewerInstance* isViewer = dynamic_cast<ViewerInstance*>( (*it)->getNode()->getLiveInstance() );
-        if (isViewer) {
-            isViewer->getRenderEngine()->abortRendering(true);
+        for (std::list<ViewerTab*>::const_iterator it = activeNodes.begin(); it != activeNodes.end(); ++it) {
+            ViewerInstance* viewer = (*it)->getInternalNode();
+            if (viewer) {
+                viewer->getRenderEngine()->abortRendering(true);
+            }
         }
+    }
+}
+
+void
+ViewerTab::onEngineStarted(bool forward)
+{
+    if (!_imp->gui) {
+        return;
+    }
+    
+    if (_imp->play_Forward_Button) {
+        _imp->play_Forward_Button->setDown(forward);
+        _imp->play_Forward_Button->setChecked(forward);
+    }
+
+    if (_imp->play_Backward_Button) {
+        _imp->play_Backward_Button->setDown(!forward);
+        _imp->play_Backward_Button->setChecked(!forward);
+    }
+
+    if (_imp->gui && !_imp->gui->isGUIFrozen() && appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
+        _imp->gui->onFreezeUIButtonClicked(true);
     }
 }
 
@@ -1197,11 +1431,17 @@ ViewerTab::onEngineStopped()
     if (!_imp->gui) {
         return;
     }
-    _imp->play_Forward_Button->setDown(false);
-    _imp->play_Backward_Button->setDown(false);
-    _imp->play_Forward_Button->setChecked(false);
-    _imp->play_Backward_Button->setChecked(false);
-    if (_imp->gui->isGUIFrozen() && appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
+    
+    if (_imp->play_Forward_Button && _imp->play_Forward_Button->isDown()) {
+        _imp->play_Forward_Button->setDown(false);
+        _imp->play_Forward_Button->setChecked(false);
+    }
+    
+    if (_imp->play_Backward_Button && _imp->play_Backward_Button->isDown()) {
+        _imp->play_Backward_Button->setDown(false);
+        _imp->play_Backward_Button->setChecked(false);
+    }
+    if (_imp->gui && _imp->gui->isGUIFrozen() && appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
         _imp->gui->onFreezeUIButtonClicked(false);
     }
 }
@@ -1212,12 +1452,6 @@ ViewerTab::startBackward(bool b)
     abortRendering();
     if (b) {
         _imp->gui->getApp()->setLastViewerUsingTimeline(_imp->viewerNode->getNode());
-        _imp->play_Backward_Button->setDown(true);
-        _imp->play_Backward_Button->setChecked(true);
-        if (appPTR->getCurrentSettings()->isAutoTurboEnabled()) {
-            _imp->gui->onFreezeUIButtonClicked(true);
-        }
-        boost::shared_ptr<TimeLine> timeline = _imp->timeLineGui->getTimeline();
         _imp->viewerNode->getRenderEngine()->renderFromCurrentFrame(OutputSchedulerThread::eRenderDirectionBackward);
 
     }
@@ -1316,12 +1550,28 @@ ViewerTab::refresh()
 ViewerTab::~ViewerTab()
 {
     if (_imp->gui) {
+        NodeGraph* graph = 0;
         if (_imp->viewerNode) {
+            boost::shared_ptr<NodeCollection> collection = _imp->viewerNode->getNode()->getGroup();
+            if (collection) {
+                NodeGroup* isGrp = dynamic_cast<NodeGroup*>(collection.get());
+                if (isGrp) {
+                    NodeGraphI* graph_i = isGrp->getNodeGraph();
+                    if (graph_i) {
+                        graph = dynamic_cast<NodeGraph*>(graph_i);
+                        assert(graph);
+                    }
+                } else {
+                    graph = _imp->gui->getNodeGraph();
+                }
+            }
             _imp->viewerNode->invalidateUiContext();
+        } else {
+            graph = _imp->gui->getNodeGraph();
         }
-        if ( _imp->app && !_imp->app->isClosing() && (_imp->gui->getLastSelectedViewer() == this) ) {
-            assert(_imp->gui);
-            _imp->gui->setLastSelectedViewer(NULL);
+        assert(graph);
+        if ( _imp->app && !_imp->app->isClosing() && (graph->getLastSelectedViewer() == this) ) {
+            graph->setLastSelectedViewer(0);
         }
     }
     for (std::map<NodeGui*,RotoGui*>::iterator it = _imp->rotoNodes.begin(); it != _imp->rotoNodes.end(); ++it) {
@@ -1433,39 +1683,33 @@ ViewerTab::keyPressEvent(QKeyEvent* e)
 } // keyPressEvent
 
 
-void
-ViewerTab::onGainSliderChanged(double v)
-{
-    _imp->viewer->setGain(v);
-    _imp->viewerNode->onGainChanged(v);
-}
 
 void
 ViewerTab::onViewerChannelsChanged(int i)
 {
-    ViewerInstance::DisplayChannelsEnum channels;
+    Natron::DisplayChannelsEnum channels;
 
     switch (i) {
     case 0:
-        channels = ViewerInstance::eDisplayChannelsY;
+        channels = Natron::eDisplayChannelsY;
         break;
     case 1:
-        channels = ViewerInstance::eDisplayChannelsRGB;
+        channels = Natron::eDisplayChannelsRGB;
         break;
     case 2:
-        channels = ViewerInstance::eDisplayChannelsR;
+        channels = Natron::eDisplayChannelsR;
         break;
     case 3:
-        channels = ViewerInstance::eDisplayChannelsG;
+        channels = Natron::eDisplayChannelsG;
         break;
     case 4:
-        channels = ViewerInstance::eDisplayChannelsB;
+        channels = Natron::eDisplayChannelsB;
         break;
     case 5:
-        channels = ViewerInstance::eDisplayChannelsA;
+        channels = Natron::eDisplayChannelsA;
         break;
     default:
-        channels = ViewerInstance::eDisplayChannelsRGB;
+        channels = Natron::eDisplayChannelsRGB;
         break;
     }
     _imp->viewerNode->setDisplayChannels(channels);
@@ -1477,7 +1721,10 @@ ViewerTab::eventFilter(QObject *target,
 {
     if (e->type() == QEvent::MouseButtonPress) {
         if (_imp->gui && _imp->app) {
-            _imp->gui->selectNode( _imp->app->getNodeGui( _imp->viewerNode->getNode() ) );
+            boost::shared_ptr<NodeGuiI> gui_i = _imp->viewerNode->getNode()->getNodeGui();
+            assert(gui_i);
+            boost::shared_ptr<NodeGui> gui = boost::dynamic_pointer_cast<NodeGui>(gui_i);
+            _imp->gui->selectNode(gui);
         }
     }
 
@@ -1512,26 +1759,65 @@ ViewerTab::sizeHint() const
 void
 ViewerTab::showView(int view)
 {
-    QMutexLocker l(&_imp->currentViewMutex);
-
-    _imp->currentViewIndex = view;
+    {
+        QMutexLocker l(&_imp->currentViewMutex);
+        
+        _imp->currentViewIndex = view;
+    }
     abortRendering();
     _imp->viewerNode->renderCurrentFrame(true);
 }
+
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+//OpenGL is column-major for matrixes
+static void transformToOpenGLMatrix(const Transform::Matrix3x3& mat,GLdouble* oglMat)
+{
+    oglMat[0] = mat.a; oglMat[4] = mat.b; oglMat[8]  = 0; oglMat[12] = mat.c;
+    oglMat[1] = mat.d; oglMat[5] = mat.e; oglMat[9]  = 0; oglMat[13] = mat.f;
+    oglMat[2] = 0;     oglMat[6] = 0;     oglMat[10] = 1; oglMat[14] = 0;
+    oglMat[3] = mat.g; oglMat[7] = mat.h; oglMat[11] = 0; oglMat[15] = mat.i;
+}
+#endif
 
 void
 ViewerTab::drawOverlays(double scaleX,
                         double scaleY) const
 {
-    if ( !_imp->app || !_imp->viewer ||  _imp->app->isClosing() || isFileDialogViewer() || _imp->gui->isGUIFrozen()) {
+
+    if ( !_imp->app ||
+        !_imp->viewer ||
+        _imp->app->isClosing() ||
+        isFileDialogViewer() ||
+        !_imp->gui ||
+        (_imp->gui->isGUIFrozen() && !_imp->app->getIsUserPainting())) {
         return;
     }
-
+    
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+    int time = _imp->app->getTimeLine()->currentFrame();
+    int view = getCurrentView();
+#endif
+    
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
     
-    ///Draw overlays in reverse order of appearance
+    ///Draw overlays in reverse order of appearance so that the first (top) panel is drawn on top of everything else
     for (std::list<boost::shared_ptr<Natron::Node> >::reverse_iterator it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+        Transform::Matrix3x3 mat(1,0,0,0,1,0,0,0,1);
+        bool ok = _imp->getOverlayTransform(time, view, *it, getInternalNode(), &mat);
+        GLfloat oldMat[16];
+        if (ok) {
+            //Ok we've got a transform here, apply it to the OpenGL model view matrix
+            
+            GLdouble oglMat[16];
+            transformToOpenGLMatrix(mat,oglMat);
+            glMatrixMode(GL_MODELVIEW);
+            glGetFloatv (GL_MODELVIEW_MATRIX, oldMat);
+            glMultMatrixd(oglMat);
+        }
+#endif
         
         if (_imp->currentRoto.first && (*it) == _imp->currentRoto.first->getNode()) {
             if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
@@ -1545,20 +1831,111 @@ ViewerTab::drawOverlays(double scaleX,
             
             Natron::EffectInstance* effect = (*it)->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays(_imp->viewer);
+            effect->setCurrentViewportForOverlays_public(_imp->viewer);
             effect->drawOverlay_public(scaleX,scaleY);
         }
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+        if (ok) {
+            glMatrixMode(GL_MODELVIEW);
+            glLoadMatrixf(oldMat);
+        }
+#endif
     }
+}
+
+bool
+ViewerTab::notifyOverlaysPenDown_internal(const boost::shared_ptr<Natron::Node>& node,
+                                          double scaleX,
+                                          double scaleY,
+                                          Natron::PenType pen,
+                                          bool isTabletEvent,
+                                          const QPointF & viewportPos,
+                                          const QPointF & pos,
+                                          double pressure,
+                                          double timestamp,
+                                          QMouseEvent* e)
+{
+
+    QPointF transformViewportPos;
+    QPointF transformPos;
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+    int time = _imp->app->getTimeLine()->currentFrame();
+    int view = getCurrentView();
+    Transform::Matrix3x3 mat(1,0,0,0,1,0,0,0,1);
+    bool ok = _imp->getOverlayTransform(time, view, node, getInternalNode(), &mat);
+    if (!ok) {
+        transformViewportPos = viewportPos;
+        transformPos = pos;
+    } else {
+        mat = Transform::matInverse(mat);
+        {
+            Transform::Point3D p;
+            p.x = viewportPos.x();
+            p.y = viewportPos.y();
+            p.z = 1;
+            p = Transform::matApply(mat, p);
+            transformViewportPos.rx() = p.x / p.z;
+            transformViewportPos.ry() = p.y / p.z;
+        }
+        {
+            Transform::Point3D p;
+            p.x = pos.x();
+            p.y = pos.y();
+            p.z = 1;
+            p = Transform::matApply(mat, p);
+            transformPos.rx() = p.x / p.z;
+            transformPos.ry() = p.y / p.z;
+        }
+    }
+#else
+    transformViewportPos = viewportPos;
+    transformPos = pos;
+#endif
+    
+    if (_imp->currentRoto.first && node == _imp->currentRoto.first->getNode()) {
+        if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentRoto.second->penDown(scaleX, scaleY, pen, isTabletEvent, transformViewportPos, transformPos, pressure, timestamp, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+    } else if (_imp->currentTracker.first && node == _imp->currentTracker.first->getNode()) {
+        if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentTracker.second->penDown(scaleX, scaleY, transformViewportPos, transformPos, pressure, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+    } else {
+        
+        Natron::EffectInstance* effect = node->getLiveInstance();
+        assert(effect);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
+        bool didSmthing = effect->onOverlayPenDown_public(scaleX, scaleY, transformViewportPos, transformPos, pressure);
+        if (didSmthing) {
+            //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
+            // if the instance returns kOfxStatOK, the host should not pass the pen motion
+            
+            // to any other interactive object it may own that shares the same view.
+            _imp->lastOverlayNode = node;
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 bool
 ViewerTab::notifyOverlaysPenDown(double scaleX,
                                  double scaleY,
+                                 Natron::PenType pen,
+                                 bool isTabletEvent,
                                  const QPointF & viewportPos,
                                  const QPointF & pos,
+                                 double pressure,
+                                 double timestamp,
                                  QMouseEvent* e)
 {
-    bool didSomething = false;
 
     if ( !_imp->app || _imp->app->isClosing() ) {
         return false;
@@ -1567,43 +1944,35 @@ ViewerTab::notifyOverlaysPenDown(double scaleX,
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
     
-    for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-       
-        
-        if (_imp->currentRoto.first && (*it) == _imp->currentRoto.first->getNode()) {
-            if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentRoto.second->penDown(scaleX, scaleY,viewportPos,pos,e) ) {
-                    return true;
-                }
-            }
-        } else if (_imp->currentTracker.first && (*it) == _imp->currentTracker.first->getNode()) {
-            if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentTracker.second->penDown(scaleX, scaleY,viewportPos,pos,e) ) {
-                    return true;
-                }
-            }
-        } else {
-            
-            Natron::EffectInstance* effect = (*it)->getLiveInstance();
-            assert(effect);
-            effect->setCurrentViewportForOverlays(_imp->viewer);
-            bool didSmthing = effect->onOverlayPenDown_public(scaleX,scaleY,viewportPos, pos);
-            if (didSmthing) {
-                //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
-                // if the instance returns kOfxStatOK, the host should not pass the pen motion
+    
+    boost::shared_ptr<Natron::Node> lastOverlay = _imp->lastOverlayNode.lock();
+    if (lastOverlay) {
+        for (std::list<boost::shared_ptr<Natron::Node> >::iterator it = nodes.begin(); it != nodes.end(); ++it) {
+            if (*it == lastOverlay) {
                 
-                // to any other interactive object it may own that shares the same view.
-                return true;
+                if (notifyOverlaysPenDown_internal(*it, scaleX, scaleY, pen, isTabletEvent, viewportPos, pos, pressure, timestamp, e)) {
+                    return true;
+                } else {
+                    nodes.erase(it);
+                    break;
+                }
             }
         }
     }
+    
+    for (std::list<boost::shared_ptr<Natron::Node> >::reverse_iterator it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        if (notifyOverlaysPenDown_internal(*it, scaleX, scaleY, pen, isTabletEvent, viewportPos, pos, pressure, timestamp, e)) {
+            return true;
+        }
+    }
 
-
-
- 
-
-    return didSomething;
+    if (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
+    return false;
 }
+
 
 bool
 ViewerTab::notifyOverlaysPenDoubleClick(double scaleX,
@@ -1615,19 +1984,157 @@ ViewerTab::notifyOverlaysPenDoubleClick(double scaleX,
     if ( !_imp->app || _imp->app->isClosing() ) {
         return false;
     }
-
-    if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
-        if ( _imp->currentRoto.second->penDoubleClicked(scaleX, scaleY, viewportPos, pos, e) ) {
-            return true;
+    
+    std::list<boost::shared_ptr<Natron::Node> >  nodes;
+    getGui()->getNodesEntitledForOverlays(nodes);
+    
+    boost::shared_ptr<Natron::Node> lastOverlay = _imp->lastOverlayNode.lock();
+    if (lastOverlay) {
+        for (std::list<boost::shared_ptr<Natron::Node> >::iterator it = nodes.begin(); it != nodes.end(); ++it) {
+            if (*it == lastOverlay) {
+#pragma message WARN("FIXME: why would a double click translate to a pen motion? please comment and fix")
+                //if (notifyOverlaysPenMotion_internal(*it, scaleX, scaleY, viewportPos, pos, pressure, timestamp, e)) {
+                //    return true;
+                //} else {
+                    nodes.erase(it);
+                    break;
+                //}
+            }
         }
     }
 
-    if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
-        if ( _imp->currentTracker.second->penDoubleClicked(scaleX, scaleY, viewportPos, pos, e) ) {
-            return true;
+
+    for (std::list<boost::shared_ptr<Natron::Node> >::reverse_iterator it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        QPointF transformViewportPos;
+        QPointF transformPos;
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+        int time = _imp->app->getTimeLine()->currentFrame();
+        int view = getCurrentView();
+        Transform::Matrix3x3 mat(1,0,0,0,1,0,0,0,1);
+        bool ok = _imp->getOverlayTransform(time, view, *it, getInternalNode(), &mat);
+        if (!ok) {
+            transformViewportPos = viewportPos;
+            transformPos = pos;
+        } else {
+            mat = Transform::matInverse(mat);
+            {
+                Transform::Point3D p;
+                p.x = viewportPos.x();
+                p.y = viewportPos.y();
+                p.z = 1;
+                p = Transform::matApply(mat, p);
+                transformViewportPos.rx() = p.x / p.z;
+                transformViewportPos.ry() = p.y / p.z;
+            }
+            {
+                Transform::Point3D p;
+                p.x = pos.x();
+                p.y = pos.y();
+                p.z = 1;
+                p = Transform::matApply(mat, p);
+                transformPos.rx() = p.x / p.z;
+                transformPos.ry() = p.y / p.z;
+            }
+        }
+#else
+        transformViewportPos = viewportPos;
+        transformPos = pos;
+#endif
+        
+        if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentRoto.second->penDoubleClicked(scaleX, scaleY, transformViewportPos, transformPos, e) ) {
+                _imp->lastOverlayNode = _imp->currentRoto.first->getNode();
+                return true;
+            }
+        }
+        
+        if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentTracker.second->penDoubleClicked(scaleX, scaleY, transformViewportPos, transformPos, e) ) {
+                _imp->lastOverlayNode = _imp->currentRoto.first->getNode();
+                return true;
+            }
         }
     }
 
+    return false;
+}
+
+bool
+ViewerTab::notifyOverlaysPenMotion_internal(const boost::shared_ptr<Natron::Node>& node,
+                                            double scaleX,
+                                            double scaleY,
+                                            const QPointF & viewportPos,
+                                            const QPointF & pos,
+                                            double pressure,
+                                            double timestamp,
+                                            QInputEvent* e)
+{
+    
+    QPointF transformViewportPos;
+    QPointF transformPos;
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+    int time = _imp->app->getTimeLine()->currentFrame();
+    int view = getCurrentView();
+    Transform::Matrix3x3 mat(1,0,0,0,1,0,0,0,1);
+    bool ok = _imp->getOverlayTransform(time, view, node, getInternalNode(), &mat);
+    if (!ok) {
+        transformViewportPos = viewportPos;
+        transformPos = pos;
+    } else {
+        mat = Transform::matInverse(mat);
+        {
+            Transform::Point3D p;
+            p.x = viewportPos.x();
+            p.y = viewportPos.y();
+            p.z = 1;
+            p = Transform::matApply(mat, p);
+            transformViewportPos.rx() = p.x / p.z;
+            transformViewportPos.ry() = p.y / p.z;
+        }
+        {
+            Transform::Point3D p;
+            p.x = pos.x();
+            p.y = pos.y();
+            p.z = 1;
+            p = Transform::matApply(mat, p);
+            transformPos.rx() = p.x / p.z;
+            transformPos.ry() = p.y / p.z;
+        }
+    }
+#else
+    transformViewportPos = viewportPos;
+    transformPos = pos;
+#endif
+    
+    if (_imp->currentRoto.first && node == _imp->currentRoto.first->getNode()) {
+        if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentRoto.second->penMotion(scaleX, scaleY, transformViewportPos, transformPos, pressure, timestamp, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+    } else if (_imp->currentTracker.first && node == _imp->currentTracker.first->getNode()) {
+        if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentTracker.second->penMotion(scaleX, scaleY, transformViewportPos, transformPos, pressure, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+    } else {
+        
+        Natron::EffectInstance* effect = node->getLiveInstance();
+        assert(effect);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
+        bool didSmthing = effect->onOverlayPenMotion_public(scaleX, scaleY, transformViewportPos, transformPos, pressure);
+        if (didSmthing) {
+            //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
+            // if the instance returns kOfxStatOK, the host should not pass the pen motion
+            
+            // to any other interactive object it may own that shares the same view.
+            _imp->lastOverlayNode = node;
+            return true;
+        }
+    }
     return false;
 }
 
@@ -1636,7 +2143,9 @@ ViewerTab::notifyOverlaysPenMotion(double scaleX,
                                    double scaleY,
                                    const QPointF & viewportPos,
                                    const QPointF & pos,
-                                   QMouseEvent* e)
+                                   double pressure,
+                                   double timestamp,
+                                   QInputEvent* e)
 {
     bool didSomething = false;
 
@@ -1646,38 +2155,34 @@ ViewerTab::notifyOverlaysPenMotion(double scaleX,
     
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
-    for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-        
-        if (_imp->currentRoto.first && (*it) == _imp->currentRoto.first->getNode()) {
-            if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentRoto.second->penMotion(scaleX, scaleY, viewportPos, pos, e) ) {
+    
+    
+    boost::shared_ptr<Natron::Node> lastOverlay = _imp->lastOverlayNode.lock();
+    if (lastOverlay) {
+        for (std::list<boost::shared_ptr<Natron::Node> >::iterator it = nodes.begin(); it != nodes.end(); ++it) {
+            if (*it == lastOverlay) {
+                if (notifyOverlaysPenMotion_internal(*it, scaleX, scaleY, viewportPos, pos, pressure, timestamp, e)) {
                     return true;
+                } else {
+                    nodes.erase(it);
+                    break;
                 }
-            }
-        } else if (_imp->currentTracker.first && (*it) == _imp->currentTracker.first->getNode()) {
-            if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentTracker.second->penMotion(scaleX, scaleY, viewportPos, pos, e) ) {
-                    return true;
-                }
-            }
-        } else {
-            
-            Natron::EffectInstance* effect = (*it)->getLiveInstance();
-            assert(effect);
-            effect->setCurrentViewportForOverlays(_imp->viewer);
-            bool didSmthing = effect->onOverlayPenMotion_public(scaleX,scaleY,viewportPos, pos);
-            if (didSmthing) {
-                //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
-                // if the instance returns kOfxStatOK, the host should not pass the pen motion
-                
-                // to any other interactive object it may own that shares the same view.
-                return true;
             }
         }
     }
 
-   
+    
+    for (std::list<boost::shared_ptr<Natron::Node> >::reverse_iterator it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        if (notifyOverlaysPenMotion_internal(*it, scaleX, scaleY, viewportPos, pos, pressure, timestamp, e)) {
+            return true;
+        }
+    }
 
+   
+    if (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
    
 
     return didSomething;
@@ -1688,6 +2193,8 @@ ViewerTab::notifyOverlaysPenUp(double scaleX,
                                double scaleY,
                                const QPointF & viewportPos,
                                const QPointF & pos,
+                               double pressure,
+                               double timestamp,
                                QMouseEvent* e)
 {
     bool didSomething = false;
@@ -1696,35 +2203,117 @@ ViewerTab::notifyOverlaysPenUp(double scaleX,
         return false;
     }
     
+    _imp->lastOverlayNode.reset();
+    
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
     for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
         
+        
+        QPointF transformViewportPos;
+        QPointF transformPos;
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+        int time = _imp->app->getTimeLine()->currentFrame();
+        int view = getCurrentView();
+        Transform::Matrix3x3 mat(1,0,0,0,1,0,0,0,1);
+        bool ok = _imp->getOverlayTransform(time, view, *it, getInternalNode(), &mat);
+        if (!ok) {
+            transformViewportPos = viewportPos;
+            transformPos = pos;
+        } else {
+            mat = Transform::matInverse(mat);
+            {
+                Transform::Point3D p;
+                p.x = viewportPos.x();
+                p.y = viewportPos.y();
+                p.z = 1;
+                p = Transform::matApply(mat, p);
+                transformViewportPos.rx() = p.x / p.z;
+                transformViewportPos.ry() = p.y / p.z;
+            }
+            {
+                Transform::Point3D p;
+                p.x = pos.x();
+                p.y = pos.y();
+                p.z = 1;
+                p = Transform::matApply(mat, p);
+                transformPos.rx() = p.x / p.z;
+                transformPos.ry() = p.y / p.z;
+            }
+        }
+#else
+        transformViewportPos = viewportPos;
+        transformPos = pos;
+#endif
+        
+        
         if (_imp->currentRoto.first && (*it) == _imp->currentRoto.first->getNode()) {
             
             if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
-                didSomething |= _imp->currentRoto.second->penUp(scaleX, scaleY, viewportPos, pos, e);
+                didSomething |= _imp->currentRoto.second->penUp(scaleX, scaleY, transformViewportPos, transformPos, pressure, timestamp, e);
             }
         }
         if (_imp->currentTracker.first && (*it) == _imp->currentTracker.first->getNode()) {
             if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
-                didSomething |=  _imp->currentTracker.second->penUp(scaleX, scaleY, viewportPos, pos, e)  ;
+                didSomething |=  _imp->currentTracker.second->penUp(scaleX, scaleY, transformViewportPos, transformPos, pressure, e)  ;
             }
         }
         
         Natron::EffectInstance* effect = (*it)->getLiveInstance();
         assert(effect);
-        effect->setCurrentViewportForOverlays(_imp->viewer);
-        didSomething |= effect->onOverlayPenUp_public(scaleX,scaleY,viewportPos, pos);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
+        didSomething |= effect->onOverlayPenUp_public(scaleX, scaleY, transformViewportPos, transformPos, pressure);
         
         
     }
 
    
-
+    if (!didSomething && getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
     
 
     return didSomething;
+}
+
+bool
+ViewerTab::notifyOverlaysKeyDown_internal(const boost::shared_ptr<Natron::Node>& node,double scaleX,double scaleY,QKeyEvent* e,
+                                          Natron::Key k,
+                                          Natron::KeyboardModifiers km)
+{
+    if (_imp->currentRoto.first && node == _imp->currentRoto.first->getNode()) {
+        
+        if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentRoto.second->keyDown(scaleX, scaleY, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+    } else if (_imp->currentTracker.first && node == _imp->currentTracker.first->getNode()) {
+        if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentTracker.second->keyDown(scaleX, scaleY, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+        
+    } else {
+        
+        Natron::EffectInstance* effect = node->getLiveInstance();
+        assert(effect);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
+        bool didSmthing = effect->onOverlayKeyDown_public(scaleX,scaleY,k,km);
+        if (didSmthing) {
+            //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
+            // if the instance returns kOfxStatOK, the host should not pass the pen motion
+            
+            // to any other interactive object it may own that shares the same view.
+            _imp->lastOverlayNode = node;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool
@@ -1743,40 +2332,34 @@ ViewerTab::notifyOverlaysKeyDown(double scaleX,
     
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
-    for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin();
-         it != nodes.end();
-         ++it) {
-        
-        if (_imp->currentRoto.first && (*it) == _imp->currentRoto.first->getNode()) {
-            
-            if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentRoto.second->keyDown(scaleX, scaleY, e) ) {
+    
+    boost::shared_ptr<Natron::Node> lastOverlay = _imp->lastOverlayNode.lock();
+    if (lastOverlay) {
+        for (std::list<boost::shared_ptr<Natron::Node> >::iterator it = nodes.begin(); it != nodes.end(); ++it) {
+            if (*it == lastOverlay) {
+                if (notifyOverlaysKeyDown_internal(*it, scaleX, scaleY, e, natronKey, natronMod)) {
                     return true;
+                } else {
+                    nodes.erase(it);
+                    break;
                 }
-            }
-        } else if (_imp->currentTracker.first && (*it) == _imp->currentTracker.first->getNode()) {
-            if ( _imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentTracker.second->keyDown(scaleX, scaleY, e) ) {
-                    return true;
-                }
-            }
-            
-        } else {
-            
-            Natron::EffectInstance* effect = (*it)->getLiveInstance();
-            assert(effect);
-            effect->setCurrentViewportForOverlays(_imp->viewer);
-            bool didSmthing = effect->onOverlayKeyDown_public(scaleX,scaleY,natronKey,natronMod);
-            if (didSmthing) {
-                //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
-                // if the instance returns kOfxStatOK, the host should not pass the pen motion
-                
-                // to any other interactive object it may own that shares the same view.
-                return true;
             }
         }
     }
 
+    
+    for (std::list<boost::shared_ptr<Natron::Node> >::reverse_iterator it = nodes.rbegin();
+         it != nodes.rend();
+         ++it) {
+        if (notifyOverlaysKeyDown_internal(*it, scaleX, scaleY, e, natronKey, natronMod)) {
+            return true;
+        }
+    }
+
+    if (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
 
     return didSomething;
 }
@@ -1791,6 +2374,8 @@ ViewerTab::notifyOverlaysKeyUp(double scaleX,
     if ( !_imp->app || _imp->app->isClosing() ) {
         return false;
     }
+    
+    _imp->lastOverlayNode.reset();
 
 
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
@@ -1810,17 +2395,54 @@ ViewerTab::notifyOverlaysKeyUp(double scaleX,
             }
         }
         
-        effect->setCurrentViewportForOverlays(_imp->viewer);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
         didSomething |= effect->onOverlayKeyUp_public( scaleX,scaleY,
                                             QtEnumConvert::fromQtKey( (Qt::Key)e->key() ),QtEnumConvert::fromQtModifiers( e->modifiers() ) );
         
     }
     
    
-
+    if (!didSomething && getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
     
 
     return didSomething;
+}
+
+bool
+ViewerTab::notifyOverlaysKeyRepeat_internal(const boost::shared_ptr<Natron::Node>& node,double scaleX,double scaleY,QKeyEvent* e,Natron::Key k,
+                                      Natron::KeyboardModifiers km)
+{
+    if (_imp->currentRoto.first && node == _imp->currentRoto.first->getNode()) {
+        
+        if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
+            if ( _imp->currentRoto.second->keyRepeat(scaleX, scaleY, e) ) {
+                _imp->lastOverlayNode = node;
+                return true;
+            }
+        }
+    } else {
+        //if (_imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible()) {
+        //    if (_imp->currentTracker.second->loseFocus(scaleX, scaleY,e)) {
+        //        return true;
+        //    }
+        //}
+        Natron::EffectInstance* effect = node->getLiveInstance();
+        assert(effect);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
+        bool didSmthing = effect->onOverlayKeyRepeat_public( scaleX,scaleY,k,km);
+        if (didSmthing) {
+            //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
+            // if the instance returns kOfxStatOK, the host should not pass the pen motion
+            
+            // to any other interactive object it may own that shares the same view.
+            _imp->lastOverlayNode = node;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool
@@ -1832,41 +2454,38 @@ ViewerTab::notifyOverlaysKeyRepeat(double scaleX,
         return false;
     }
     
+    Natron::Key natronKey = QtEnumConvert::fromQtKey( (Qt::Key)e->key() );
+    Natron::KeyboardModifiers natronMod = QtEnumConvert::fromQtModifiers( e->modifiers() );
+    
     std::list<boost::shared_ptr<Natron::Node> >  nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
-    for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-        Natron::EffectInstance* effect = (*it)->getLiveInstance();
-        assert(effect);
-        
-        if (_imp->currentRoto.first && (*it) == _imp->currentRoto.first->getNode()) {
-            
-            if ( _imp->currentRoto.second && _imp->currentRoto.first->isSettingsPanelVisible() ) {
-                if ( _imp->currentRoto.second->keyRepeat(scaleX, scaleY, e) ) {
+    
+    boost::shared_ptr<Natron::Node> lastOverlay = _imp->lastOverlayNode.lock();
+    if (lastOverlay) {
+        for (std::list<boost::shared_ptr<Natron::Node> >::iterator it = nodes.begin(); it != nodes.end(); ++it) {
+            if (*it == lastOverlay) {
+                if (notifyOverlaysKeyRepeat_internal(*it, scaleX, scaleY, e, natronKey, natronMod)) {
                     return true;
+                } else {
+                    nodes.erase(it);
+                    break;
                 }
             }
-        } else {
-            //if (_imp->currentTracker.second && _imp->currentTracker.first->isSettingsPanelVisible()) {
-            //    if (_imp->currentTracker.second->loseFocus(scaleX, scaleY,e)) {
-            //        return true;
-            //    }
-            //}
-            
-            effect->setCurrentViewportForOverlays(_imp->viewer);
-            bool didSmthing = effect->onOverlayKeyRepeat_public( scaleX,scaleY,
-                                                                QtEnumConvert::fromQtKey( (Qt::Key)e->key() ),QtEnumConvert::fromQtModifiers( e->modifiers() ) );
-            if (didSmthing) {
-                //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
-                // if the instance returns kOfxStatOK, the host should not pass the pen motion
-                
-                // to any other interactive object it may own that shares the same view.
-                return true;
-            }
         }
-        
+    }
+    
+
+    
+    for (std::list<boost::shared_ptr<Natron::Node> >::reverse_iterator it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        if (notifyOverlaysKeyRepeat_internal(*it, scaleX, scaleY, e, natronKey, natronMod)) {
+            return true;
+        }
     }
 
-   
+    if (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
 
 
     return false;
@@ -1886,13 +2505,18 @@ ViewerTab::notifyOverlaysFocusGained(double scaleX,
         Natron::EffectInstance* effect = (*it)->getLiveInstance();
         assert(effect);
         
-        effect->setCurrentViewportForOverlays(_imp->viewer);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
         bool didSmthing = effect->onOverlayFocusGained_public(scaleX,scaleY);
         if (didSmthing) {
             ret = true;
         }
         
     }
+    
+    if (!ret && getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
 
     return ret;
 }
@@ -1926,7 +2550,7 @@ ViewerTab::notifyOverlaysFocusLost(double scaleX,
         Natron::EffectInstance* effect = (*it)->getLiveInstance();
         assert(effect);
         
-        effect->setCurrentViewportForOverlays(_imp->viewer);
+        effect->setCurrentViewportForOverlays_public(_imp->viewer);
         bool didSmthing = effect->onOverlayFocusLost_public(scaleX,scaleY);
         if (didSmthing) {
             ret = true;
@@ -1934,7 +2558,10 @@ ViewerTab::notifyOverlaysFocusLost(double scaleX,
     }
     
     
-
+    if (!ret && getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
+        getGui()->getApp()->redrawAllViewers();
+    }
+    getGui()->getApp()->clearOverlayRedrawRequests();
 
     return ret;
 }
@@ -1988,6 +2615,10 @@ ViewerTab::setAutoContrastEnabled(bool b)
     _imp->autoContrast->setChecked(b);
     _imp->gainSlider->setEnabled(!b);
     _imp->gainBox->setEnabled(!b);
+    _imp->toggleGainButton->setEnabled(!b);
+    _imp->gammaSlider->setEnabled(!b);
+    _imp->gammaBox->setEnabled(!b);
+    _imp->toggleGammaButton->setEnabled(!b);
     _imp->viewerNode->onAutoContrastChanged(b,true);
 }
 
@@ -2013,18 +2644,42 @@ ViewerTab::setColorSpace(const std::string & colorSpaceName)
     }
 }
 
+
 void
 ViewerTab::setGain(double d)
 {
-    _imp->gainBox->setValue(d);
-    _imp->gainSlider->seekScalePosition(d);
+    double fstop = std::log(d) / M_LN2;
+    _imp->gainBox->setValue(fstop);
+    _imp->gainSlider->seekScalePosition(fstop);
+    _imp->viewer->setGain(d);
     _imp->viewerNode->onGainChanged(d);
+    _imp->toggleGainButton->setDown(d != 1.);
+    _imp->toggleGainButton->setChecked(d != 1.);
+    _imp->lastFstopValue = fstop;
 }
 
 double
 ViewerTab::getGain() const
 {
     return _imp->viewerNode->getGain();
+}
+
+void
+ViewerTab::setGamma(double gamma)
+{
+    _imp->gammaBox->setValue(gamma);
+    _imp->gammaSlider->seekScalePosition(gamma);
+    _imp->viewerNode->onGammaChanged(gamma);
+    _imp->viewer->setGamma(gamma);
+    _imp->toggleGammaButton->setDown(gamma != 1.);
+    _imp->toggleGammaButton->setChecked(gamma != 1.);
+    _imp->lastGammaValue = gamma;
+}
+
+double
+ViewerTab::getGamma() const
+{
+    return _imp->viewerNode->getGamma();
 }
 
 void
@@ -2067,35 +2722,46 @@ ViewerTab::getZoomOrPannedSinceLastFit() const
     return _imp->viewer->getZoomOrPannedSinceLastFit();
 }
 
+Natron::DisplayChannelsEnum
+ViewerTab::getChannels() const
+{
+    return _imp->viewerNode->getChannels();
+}
+
+std::string
+ViewerTab::getChannelsString(Natron::DisplayChannelsEnum c)
+{
+    switch (c) {
+        case Natron::eDisplayChannelsRGB:
+            
+            return "RGB";
+        case Natron::eDisplayChannelsR:
+            
+            return "R";
+        case Natron::eDisplayChannelsG:
+            
+            return "G";
+        case Natron::eDisplayChannelsB:
+            
+            return "B";
+        case Natron::eDisplayChannelsA:
+            
+            return "A";
+        case Natron::eDisplayChannelsY:
+            
+            return "Luminance";
+            break;
+        default:
+            
+            return "";
+    }
+}
+
 std::string
 ViewerTab::getChannelsString() const
 {
-    ViewerInstance::DisplayChannelsEnum c = _imp->viewerNode->getChannels();
-
-    switch (c) {
-    case ViewerInstance::eDisplayChannelsRGB:
-
-        return "RGB";
-    case ViewerInstance::eDisplayChannelsR:
-
-        return "R";
-    case ViewerInstance::eDisplayChannelsG:
-
-        return "G";
-    case ViewerInstance::eDisplayChannelsB:
-
-        return "B";
-    case ViewerInstance::eDisplayChannelsA:
-
-        return "A";
-    case ViewerInstance::eDisplayChannelsY:
-
-        return "Luminance";
-        break;
-    default:
-
-        return "";
-    }
+    Natron::DisplayChannelsEnum c = _imp->viewerNode->getChannels();
+    return getChannelsString(c);
 }
 
 void
@@ -2138,9 +2804,14 @@ ViewerTab::onAutoContrastChanged(bool b)
 {
     _imp->gainSlider->setEnabled(!b);
     _imp->gainBox->setEnabled(!b);
+    _imp->toggleGainButton->setEnabled(!b);
     _imp->viewerNode->onAutoContrastChanged(b,b);
+    _imp->gammaBox->setEnabled(!b);
+    _imp->gammaSlider->setEnabled(!b);
+    _imp->toggleGammaButton->setEnabled(!b);
     if (!b) {
-        _imp->viewerNode->onGainChanged( _imp->gainBox->value() );
+        _imp->viewerNode->onGainChanged( std::pow(2,_imp->gainBox->value()) );
+        _imp->viewerNode->onGammaChanged(_imp->gammaBox->value());
     }
 }
 
@@ -2182,6 +2853,11 @@ ViewerTab::createTrackerInterface(NodeGui* n)
     if (!multiPanel) {
         return;
     }
+    std::map<NodeGui*,TrackerGui*>::iterator found = _imp->trackerNodes.find(n);
+    if (found != _imp->trackerNodes.end()) {
+        return;
+    }
+    
     boost::shared_ptr<TrackerPanel> trackPanel = boost::dynamic_pointer_cast<TrackerPanel>(multiPanel);
 
     assert(trackPanel);
@@ -2449,15 +3125,22 @@ ViewerTab::onRotoRoleChanged(int previousRole,
         assert(roto == _imp->currentRoto.second);
 
         ///Remove the previous buttons bar
-        int buttonsBarIndex = _imp->mainLayout->indexOf( _imp->currentRoto.second->getButtonsBar( (RotoGui::RotoRoleEnum)previousRole ) );
+        QWidget* previousBar = _imp->currentRoto.second->getButtonsBar( (RotoGui::RotoRoleEnum)previousRole ) ;
+        assert(previousBar);
+        int buttonsBarIndex = _imp->mainLayout->indexOf(previousBar);
         assert(buttonsBarIndex >= 0);
         _imp->mainLayout->removeItem( _imp->mainLayout->itemAt(buttonsBarIndex) );
+        previousBar->hide();
 
 
         ///Set the new buttons bar
         int viewerIndex = _imp->mainLayout->indexOf(_imp->viewerContainer);
         assert(viewerIndex >= 0);
-        _imp->mainLayout->insertWidget( viewerIndex, _imp->currentRoto.second->getButtonsBar( (RotoGui::RotoRoleEnum)newRole ) );
+        QWidget* currentBar = _imp->currentRoto.second->getButtonsBar( (RotoGui::RotoRoleEnum)newRole );
+        assert(currentBar);
+        _imp->mainLayout->insertWidget( viewerIndex, currentBar);
+        currentBar->show();
+        assert(_imp->mainLayout->itemAt(viewerIndex)->widget() == currentBar);
     }
 }
 
@@ -2526,6 +3209,34 @@ ViewerTab::notifyAppClosing()
     _imp->gui = 0;
     _imp->timeLineGui->discardGuiPointer();
     _imp->app = 0;
+    
+    for (std::map<NodeGui*,RotoGui*>::iterator it = _imp->rotoNodes.begin() ; it!=_imp->rotoNodes.end(); ++it) {
+        it->second->notifyGuiClosing();
+    }
+}
+
+void
+ViewerTab::onCompositingOperatorChangedInternal(Natron::ViewerCompositingOperatorEnum oldOp,Natron::ViewerCompositingOperatorEnum newOp)
+{
+    if ( (oldOp == eViewerCompositingOperatorNone) && (newOp != eViewerCompositingOperatorNone) ) {
+        _imp->viewer->resetWipeControls();
+    }
+    
+    _imp->secondInputImage->setEnabled_natron(newOp != eViewerCompositingOperatorNone);
+    if (newOp == eViewerCompositingOperatorNone) {
+        _imp->secondInputImage->setCurrentIndex_no_emit(0);
+        _imp->viewerNode->setInputB(-1);
+    }
+    
+    if (newOp == eViewerCompositingOperatorNone || !_imp->secondInputImage->getEnabled_natron()  || _imp->secondInputImage->activeIndex() == 0) {
+        manageSlotsForInfoWidget(1, false);
+        _imp->infoWidget[1]->hide();
+    } else if (newOp != eViewerCompositingOperatorNone) {
+        manageSlotsForInfoWidget(1, true);
+        _imp->infoWidget[1]->show();
+    }
+    
+    _imp->viewer->updateGL();
 }
 
 void
@@ -2560,24 +3271,7 @@ ViewerTab::onCompositingOperatorIndexChanged(int index)
         newOp = _imp->compOperator;
     }
 
-    if ( (oldOp == eViewerCompositingOperatorNone) && (newOp != eViewerCompositingOperatorNone) ) {
-        _imp->viewer->resetWipeControls();
-    }
-
-    if ( (_imp->compOperator != eViewerCompositingOperatorNone) && !_imp->secondInputImage->isEnabled() ) {
-        _imp->secondInputImage->setEnabled_natron(true);
-        manageSlotsForInfoWidget(1, true);
-        _imp->infoWidget[1]->show();
-    } else if (_imp->compOperator == eViewerCompositingOperatorNone) {
-        _imp->secondInputImage->setEnabled_natron(false);
-        manageSlotsForInfoWidget(1, false);
-        _imp->infoWidget[1]->hide();
-    } else {
-        _imp->secondInputImage->setEnabled_natron(true);
-    }
-
-
-    _imp->viewer->updateGL();
+    onCompositingOperatorChangedInternal(oldOp, newOp);
 }
 
 void
@@ -2604,12 +3298,18 @@ ViewerTab::setCompositingOperator(Natron::ViewerCompositingOperatorEnum op)
     default:
         break;
     }
+    Natron::ViewerCompositingOperatorEnum oldOp;
     {
         QMutexLocker l(&_imp->compOperatorMutex);
+        oldOp = _imp->compOperator;
         _imp->compOperator = op;
+        
     }
     _imp->compositingOperator->setCurrentIndex_no_emit(comboIndex);
-    _imp->viewer->updateGL();
+    onCompositingOperatorChangedInternal(oldOp, op);
+    
+    
+
 }
 
 ViewerCompositingOperatorEnum
@@ -2618,6 +3318,41 @@ ViewerTab::getCompositingOperator() const
     QMutexLocker l(&_imp->compOperatorMutex);
 
     return _imp->compOperator;
+}
+
+void
+ViewerTab::setInputA(int index)
+{
+    InputNamesMap::iterator found = _imp->inputNamesMap.find(index);
+    if (found == _imp->inputNamesMap.end()) {
+        return;
+    }
+    
+    int comboboxIndex = _imp->firstInputImage->itemIndex(found->second.name);
+    if (comboboxIndex == -1) {
+        return;
+    }
+    _imp->firstInputImage->setCurrentIndex(comboboxIndex);
+    _imp->viewerNode->setInputA(index);
+    _imp->viewerNode->renderCurrentFrame(true);
+    
+}
+
+void
+ViewerTab::setInputB(int index)
+{
+    InputNamesMap::iterator found = _imp->inputNamesMap.find(index);
+    if (found == _imp->inputNamesMap.end()) {
+        return;
+    }
+    
+    int comboboxIndex = _imp->secondInputImage->itemIndex(found->second.name);
+    if (comboboxIndex == -1) {
+        return;
+    }
+    _imp->secondInputImage->setCurrentIndex(comboboxIndex);
+    _imp->viewerNode->setInputB(index);
+    _imp->viewerNode->renderCurrentFrame(true);
 }
 
 ///Called when the user change the combobox choice
@@ -2678,10 +3413,15 @@ ViewerTab::onActiveInputsChanged()
     if ( foundA != _imp->inputNamesMap.end() ) {
         int indexInA = _imp->firstInputImage->itemIndex(foundA->second.name);
         assert(indexInA != -1);
-        _imp->firstInputImage->setCurrentIndex_no_emit(indexInA);
+        if (indexInA != -1) {
+            _imp->firstInputImage->setCurrentIndex_no_emit(indexInA);
+        }
     } else {
         _imp->firstInputImage->setCurrentIndex_no_emit(0);
     }
+
+    Natron::ViewerCompositingOperatorEnum op = getCompositingOperator();
+    _imp->secondInputImage->setEnabled_natron(op != Natron::eViewerCompositingOperatorNone);
 
     InputNamesMap::iterator foundB = _imp->inputNamesMap.find(activeInputs[1]);
     if ( foundB != _imp->inputNamesMap.end() ) {
@@ -2689,29 +3429,29 @@ ViewerTab::onActiveInputsChanged()
 
         assert(indexInB != -1);
         _imp->secondInputImage->setCurrentIndex_no_emit(indexInB);
-        if ( !_imp->infoWidget[1]->isVisible() ) {
-            _imp->infoWidget[1]->show();
-            _imp->secondInputImage->setEnabled_natron(true);
-            manageSlotsForInfoWidget(1, true);
-        }
     } else {
         _imp->secondInputImage->setCurrentIndex_no_emit(0);
-        setCompositingOperator(Natron::eViewerCompositingOperatorNone);
-        manageSlotsForInfoWidget(1, false);
-        _imp->infoWidget[1]->hide();
-        //_imp->secondInputImage->setEnabled_natron(false);
     }
 
+    if (op == eViewerCompositingOperatorNone || !_imp->secondInputImage->getEnabled_natron()  || _imp->secondInputImage->activeIndex() == 0) {
+        manageSlotsForInfoWidget(1, false);
+        _imp->infoWidget[1]->hide();
+    } else if (op != eViewerCompositingOperatorNone) {
+        manageSlotsForInfoWidget(1, true);
+        _imp->infoWidget[1]->show();
+    }
+    
     bool autoWipe = appPTR->getCurrentSettings()->isAutoWipeEnabled();
     
-    if ( ( (activeInputs[0] == -1) || (activeInputs[1] == -1) ) //only 1 input is valid
-         && ( getCompositingOperator() != eViewerCompositingOperatorNone) ) {
+    /*if ( ( (activeInputs[0] == -1) || (activeInputs[1] == -1) ) //only 1 input is valid
+         && ( op != eViewerCompositingOperatorNone) ) {
         //setCompositingOperator(eViewerCompositingOperatorNone);
         _imp->infoWidget[1]->hide();
         manageSlotsForInfoWidget(1, false);
         // _imp->secondInputImage->setEnabled_natron(false);
-    } else if ( autoWipe && (activeInputs[0] != -1) && (activeInputs[1] != -1) && (activeInputs[0] != activeInputs[1])
-                && ( getCompositingOperator() == eViewerCompositingOperatorNone) ) {
+    }
+    else*/ if ( autoWipe && (activeInputs[0] != -1) && (activeInputs[1] != -1) && (activeInputs[0] != activeInputs[1])
+                && (op == eViewerCompositingOperatorNone) ) {
         _imp->viewer->resetWipeControls();
         setCompositingOperator(Natron::eViewerCompositingOperatorWipe);
     }
@@ -2740,30 +3480,41 @@ ViewerTab::onClipPreferencesChanged()
         }
         onSpinboxFpsChanged(_imp->fpsBox->value());
     }
-
+    refreshLayerAndAlphaChannelComboBox();
 }
 
 void
 ViewerTab::onInputChanged(int inputNb)
 {
     ///rebuild the name maps
-    EffectInstance* inp = _imp->viewerNode->getInput(inputNb);
+    NodePtr inp;
+    std::vector<boost::shared_ptr<Natron::Node> > inputs  = _imp->viewerNode->getNode()->getInputs_mt_safe();
+    if (inputNb >= 0 && inputNb < (int)inputs.size()) {
+        if (inputs[inputNb]) {
+            inp = inputs[inputNb];
+        }
+    }
+    
 
     if (inp) {
         InputNamesMap::iterator found = _imp->inputNamesMap.find(inputNb);
         if ( found != _imp->inputNamesMap.end() ) {
-            const std::string & curInputName = found->second.input->getName();
+            NodePtr input = found->second.input.lock();
+            if (!input) {
+                return;
+            }
+            const std::string & curInputName = input->getLabel();
             found->second.input = inp;
             int indexInA = _imp->firstInputImage->itemIndex( curInputName.c_str() );
             int indexInB = _imp->secondInputImage->itemIndex( curInputName.c_str() );
             assert(indexInA != -1 && indexInB != -1);
-            found->second.name = inp->getName().c_str();
+            found->second.name = inp->getLabel().c_str();
             _imp->firstInputImage->setItemText(indexInA, found->second.name);
             _imp->secondInputImage->setItemText(indexInB, found->second.name);
         } else {
             InputName inpName;
             inpName.input = inp;
-            inpName.name = inp->getName().c_str();
+            inpName.name = inp->getLabel().c_str();
             _imp->inputNamesMap.insert( std::make_pair(inputNb,inpName) );
             _imp->firstInputImage->addItem(inpName.name);
             _imp->secondInputImage->addItem(inpName.name);
@@ -2773,7 +3524,12 @@ ViewerTab::onInputChanged(int inputNb)
 
         ///The input has been disconnected
         if ( found != _imp->inputNamesMap.end() ) {
-            const std::string & curInputName = found->second.input->getName();
+            
+            NodePtr input = found->second.input.lock();
+            if (!input) {
+                return;
+            }
+            const std::string & curInputName = input->getLabel();
             _imp->firstInputImage->blockSignals(true);
             _imp->secondInputImage->blockSignals(true);
             _imp->firstInputImage->removeItem( curInputName.c_str() );
@@ -2783,6 +3539,8 @@ ViewerTab::onInputChanged(int inputNb)
             _imp->inputNamesMap.erase(found);
         }
     }
+    
+    //refreshLayerAndAlphaChannelComboBox();
 }
 
 void
@@ -2817,7 +3575,7 @@ ViewerTab::manageSlotsForInfoWidget(int textureIndex,
 }
 
 void
-ViewerTab::setImageFormat(int textureIndex,Natron::ImageComponentsEnum components,Natron::ImageBitDepthEnum depth)
+ViewerTab::setImageFormat(int textureIndex,const Natron::ImageComponents& components,Natron::ImageBitDepthEnum depth)
 {
     _imp->infoWidget[textureIndex]->setImageFormat(components,depth);
 }
@@ -3217,8 +3975,12 @@ void
 ViewerTab::onVideoEngineStopped()
 {
     ///Refresh knobs
-    if (_imp->gui->isGUIFrozen()) {
-        _imp->gui->getNodeGraph()->refreshNodesKnobsAtTime(_imp->timeLineGui->getTimeline()->currentFrame());
+    if (_imp->gui && _imp->gui->isGUIFrozen()) {
+        NodeGraph* graph = _imp->gui->getNodeGraph();
+        if (graph && _imp->timeLineGui) {
+            boost::shared_ptr<TimeLine> timeline = _imp->timeLineGui->getTimeline();
+            graph->refreshNodesKnobsAtTime(timeline->currentFrame());
+        }
     }
 }
 
@@ -3277,6 +4039,18 @@ ViewerTab::setDesiredFps(double fps)
 }
 
 void
+ViewerTab::setProjection(double zoomLeft, double zoomBottom, double zoomFactor, double zoomAspectRatio)
+{
+    
+    _imp->viewer->setProjection(zoomLeft, zoomBottom, zoomFactor, zoomAspectRatio);
+    QString str = QString::number(std::floor(zoomFactor * 100 + 0.5));
+    str.append( QChar('%') );
+    str.prepend("  ");
+    str.append("  ");
+    _imp->zoomCombobox->setCurrentText_no_emit(str);
+}
+
+void
 ViewerTab::onViewerRenderingStarted()
 {
     
@@ -3325,4 +4099,497 @@ void
 ViewerTab::setFrameRangeEdited(bool edited)
 {
     _imp->timeLineGui->setFrameRangeEdited(edited);
+}
+
+
+void
+ViewerTab::setFrameRange(int left,int right)
+{
+    setTimelineBounds(left, right);
+    onTimelineBoundariesChanged(left, right);
+    _imp->timeLineGui->recenterOnBounds();
+}
+
+void
+ViewerTab::onInternalNodeLabelChanged(const QString& name)
+{
+    TabWidget* parent = dynamic_cast<TabWidget*>(parentWidget() );
+    if (parent) {
+        setLabel(name.toStdString());
+        parent->setTabLabel(this, name);
+    }
+}
+
+void
+ViewerTab::onInternalNodeScriptNameChanged(const QString& /*name*/)
+{
+    // always running in the main thread
+    std::string newName = _imp->viewerNode->getNode()->getFullyQualifiedName();
+    std::string oldName = getScriptName();
+    
+    for (std::size_t i = 0; i < newName.size(); ++i) {
+        if (newName[i] == '.') {
+            newName[i] = '_';
+        }
+    }
+
+    
+    assert( qApp && qApp->thread() == QThread::currentThread() );
+    getGui()->unregisterTab(this);
+    setScriptName(newName);
+    getGui()->registerTab(this,this);
+    TabWidget* parent = dynamic_cast<TabWidget*>(parentWidget() );
+    if (parent) {
+        parent->onTabScriptNameChanged(this, oldName, newName);
+    }
+}
+
+#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+bool
+ViewerTabPrivate::getOverlayTransform(int time,
+                                      int view,
+                                      const boost::shared_ptr<Natron::Node>& target,
+                                      Natron::EffectInstance* currentNode,
+                                      Transform::Matrix3x3* transform) const
+{
+    if (currentNode == target->getLiveInstance()) {
+        return true;
+    }
+    RenderScale s;
+    s.x = s.y = 1.;
+    Natron::EffectInstance* input = 0;
+    Natron::StatusEnum stat = eStatusReplyDefault;
+    Transform::Matrix3x3 mat;
+    if (!currentNode->getNode()->isNodeDisabled() && currentNode->getCanTransform()) {
+        stat = currentNode->getTransform_public(time, s, view, &input, &mat);
+    }
+    if (stat == eStatusFailed) {
+        return false;
+    } else if (stat == eStatusReplyDefault) {
+        //No transfo matrix found, pass to the input...
+        
+        ///Test all inputs recursively, going from last to first, preferring non optional inputs.
+        std::list<Natron::EffectInstance*> nonOptionalInputs;
+        std::list<Natron::EffectInstance*> optionalInputs;
+        int maxInp = currentNode->getMaxInputCount();
+        
+        ///We cycle in reverse by default. It should be a setting of the application.
+        ///In this case it will return input B instead of input A of a merge for example.
+        for (int i = maxInp - 1; i >= 0; --i) {
+            Natron::EffectInstance* inp = currentNode->getInput(i);
+            bool optional = currentNode->isInputOptional(i);
+            if (inp) {
+                if (optional) {
+                    optionalInputs.push_back(inp);
+                } else {
+                    nonOptionalInputs.push_back(inp);
+                }
+            }
+        }
+        
+        if (nonOptionalInputs.empty() && optionalInputs.empty()) {
+            return false;
+        }
+        
+        ///Cycle through all non optional inputs first
+        for (std::list<Natron::EffectInstance*> ::iterator it = nonOptionalInputs.begin(); it != nonOptionalInputs.end(); ++it) {
+            mat = Transform::Matrix3x3(1,0,0,0,1,0,0,0,1);
+            bool isOk = getOverlayTransform(time, view, target, *it, &mat);
+            if (isOk) {
+                *transform = Transform::matMul(*transform, mat);
+                return true;
+            }
+        }
+        
+        ///Cycle through optional inputs...
+        for (std::list<Natron::EffectInstance*> ::iterator it = optionalInputs.begin(); it != optionalInputs.end(); ++it) {
+            mat = Transform::Matrix3x3(1,0,0,0,1,0,0,0,1);
+            bool isOk = getOverlayTransform(time, view, target, *it, &mat);
+            if (isOk) {
+                *transform = Transform::matMul(*transform, mat);
+                return true;
+            }
+            
+        }
+        return false;
+    } else {
+        
+        assert(input);
+        double par = input->getPreferredAspectRatio();
+        
+        //The mat is in pixel coordinates, though
+        mat = Transform::matMul(Transform::matPixelToCanonical(par, 1, 1, false),mat);
+        mat = Transform::matMul(mat,Transform::matCanonicalToPixel(par, 1, 1, false));
+        *transform = Transform::matMul(*transform, mat);
+        bool isOk = getOverlayTransform(time, view, target, input, transform);
+        return isOk;
+    }
+    return false;
+
+}
+#endif
+
+void
+ViewerTabPrivate::getComponentsAvailabel(std::set<ImageComponents>* comps) const
+{
+    int activeInputIdx[2];
+    viewerNode->getActiveInputs(activeInputIdx[0], activeInputIdx[1]);
+    EffectInstance* activeInput[2] = {0, 0};
+    for (int i = 0; i < 2; ++i) {
+        activeInput[i] = viewerNode->getInput(activeInputIdx[i]);
+        if (activeInput[i]) {
+            EffectInstance::ComponentsAvailableMap compsAvailable;
+            activeInput[i]->getComponentsAvailable(gui->getApp()->getTimeLine()->currentFrame(), &compsAvailable);
+            for (EffectInstance::ComponentsAvailableMap::iterator it = compsAvailable.begin(); it != compsAvailable.end(); ++it) {
+                if (it->second.lock()) {
+                    comps->insert(it->first);
+                }
+            }
+        }
+    }
+
+}
+
+void
+ViewerTab::refreshLayerAndAlphaChannelComboBox()
+{
+    if (!_imp->viewerNode) {
+        return;
+    }
+    
+    QString layerCurChoice = _imp->layerChoice->getCurrentIndexText();
+    QString alphaCurChoice = _imp->alphaChannelChoice->getCurrentIndexText();
+    
+    std::set<ImageComponents> components;
+    _imp->getComponentsAvailabel(&components);
+    
+    _imp->layerChoice->clear();
+    _imp->alphaChannelChoice->clear();
+    
+    _imp->layerChoice->addItem("-");
+    _imp->alphaChannelChoice->addItem("-");
+    
+    std::set<ImageComponents>::iterator foundColorIt = components.end();
+    std::set<ImageComponents>::iterator foundOtherIt = components.end();
+    std::set<ImageComponents>::iterator foundCurIt = components.end();
+    std::set<ImageComponents>::iterator foundCurAlphaIt = components.end();
+    std::string foundAlphaChannel;
+    
+    for (std::set<ImageComponents>::iterator it = components.begin(); it != components.end(); ++it) {
+        QString layerName(it->getLayerName().c_str());
+        QString itemName = layerName + '.' + QString(it->getComponentsGlobalName().c_str());
+        _imp->layerChoice->addItem(itemName);
+        
+        if (itemName == layerCurChoice) {
+            foundCurIt = it;
+        }
+        
+        if (layerName == kNatronColorPlaneName) {
+            foundColorIt = it;
+        } else {
+            foundOtherIt = it;
+        }
+        
+        const std::vector<std::string>& channels = it->getComponentsNames();
+        for (U32 i = 0; i < channels.size(); ++i) {
+            QString itemName = layerName + '.' + QString(channels[i].c_str());
+            if (itemName == alphaCurChoice) {
+                foundCurAlphaIt = it;
+                foundAlphaChannel = channels[i];
+            }
+            _imp->alphaChannelChoice->addItem(itemName);
+        }
+        
+        if (layerName == kNatronColorPlaneName) {
+            //There's RGBA or alpha, set it to A
+            std::string alphaChoice;
+            if (channels.size() == 4) {
+                alphaChoice = channels[3];
+            } else if (channels.size() == 1) {
+                alphaChoice = channels[0];
+            }
+            if (!alphaChoice.empty()) {
+                _imp->alphaChannelChoice->setCurrentIndex_no_emit(_imp->alphaChannelChoice->count() - 1);
+            } else {
+                alphaCurChoice = _imp->alphaChannelChoice->itemText(0);
+            }
+            
+            _imp->viewerNode->setAlphaChannel(*it, alphaChoice, false);
+        }
+        
+        
+    }
+    
+    int layerIdx;
+    if (foundCurIt == components.end()) {
+        layerCurChoice = "-";
+    }
+
+    
+    
+    if (layerCurChoice == "-") {
+        
+        ///Try to find color plane, otherwise fallback on any other layer
+        if (foundColorIt != components.end()) {
+            layerCurChoice = QString(foundColorIt->getLayerName().c_str())
+            + '.' + QString(foundColorIt->getComponentsGlobalName().c_str());
+            foundCurIt = foundColorIt;
+            
+        } else if (foundOtherIt != components.end()) {
+            layerCurChoice = QString(foundOtherIt->getLayerName().c_str())
+            + '.' + QString(foundOtherIt->getComponentsGlobalName().c_str());
+            foundCurIt = foundOtherIt;
+        } else {
+            layerCurChoice = "-";
+            foundCurIt = components.end();
+        }
+        
+        
+    }
+    layerIdx = _imp->layerChoice->itemIndex(layerCurChoice);
+    assert(layerIdx != -1);
+
+    
+    
+    _imp->layerChoice->setCurrentIndex_no_emit(layerIdx);
+    if (foundCurIt == components.end()) {
+        _imp->viewerNode->setActiveLayer(ImageComponents::getNoneComponents(), false);
+    } else {
+        _imp->viewerNode->setActiveLayer(*foundCurIt, false);
+    }
+    
+    int alphaIdx;
+    if (foundCurAlphaIt == components.end() || foundAlphaChannel.empty()) {
+        alphaCurChoice = "-";
+    }
+    
+    if (alphaCurChoice == "-") {
+        
+        ///Try to find color plane, otherwise fallback on any other layer
+        if (foundColorIt != components.end() && foundColorIt->getComponentsNames().size() == 4) {
+            alphaCurChoice = QString(foundColorIt->getLayerName().c_str())
+            + '.' + QString(foundColorIt->getComponentsNames()[3].c_str());
+            foundAlphaChannel = foundColorIt->getComponentsNames()[3];
+            foundCurAlphaIt = foundColorIt;
+            
+            
+        } else {
+            alphaCurChoice = "-";
+            foundCurAlphaIt = components.end();
+        }
+        
+        
+    }
+    
+    alphaIdx = _imp->alphaChannelChoice->itemIndex(alphaCurChoice);
+    if (alphaIdx == -1) {
+        alphaIdx = 0;
+    }
+    
+    _imp->alphaChannelChoice->setCurrentIndex_no_emit(alphaIdx);
+    if (foundCurAlphaIt != components.end()) {
+        _imp->viewerNode->setAlphaChannel(*foundCurAlphaIt, foundAlphaChannel, false);
+    } else {
+        _imp->viewerNode->setAlphaChannel(ImageComponents::getNoneComponents(), std::string(), false);
+    }
+}
+
+void
+ViewerTab::onAlphaChannelComboChanged(int index)
+{
+    std::set<ImageComponents> components;
+    _imp->getComponentsAvailabel(&components);
+    int i = 1; // because of the "-" choice
+    for (std::set<ImageComponents>::iterator it = components.begin(); it != components.end(); ++it) {
+        
+        const std::vector<std::string>& channels = it->getComponentsNames();
+        if (index >= ((int)channels.size() + i)) {
+            i += channels.size();
+        } else {
+            for (U32 j = 0; j < channels.size(); ++j, ++i) {
+                if (i == index) {
+                    _imp->viewerNode->setAlphaChannel(*it, channels[j], true);
+                    return;
+                }
+            }
+            
+        }
+    }
+    _imp->viewerNode->setAlphaChannel(ImageComponents::getNoneComponents(), std::string(), true);
+}
+
+void
+ViewerTab::onLayerComboChanged(int index)
+{
+    std::set<ImageComponents> components;
+    _imp->getComponentsAvailabel(&components);
+    if (index >= (int)(components.size() + 1) || index < 0) {
+        qDebug() << "ViewerTab::onLayerComboChanged: invalid index";
+        return;
+    }
+    int i = 1; // because of the "-" choice
+    int chanCount = 1; // because of the "-" choice
+    for (std::set<ImageComponents>::iterator it = components.begin(); it != components.end(); ++it, ++i) {
+        
+        chanCount += it->getComponentsNames().size();
+        if (i == index) {
+            _imp->viewerNode->setActiveLayer(*it, true);
+            
+            ///If it has an alpha channel, set it
+            if (it->getComponentsNames().size() == 4) {
+                _imp->alphaChannelChoice->setCurrentIndex_no_emit(chanCount - 1);
+                _imp->viewerNode->setAlphaChannel(*it, it->getComponentsNames()[3], true);
+            }
+            return;
+        }
+    }
+    
+    _imp->alphaChannelChoice->setCurrentIndex_no_emit(0);
+    _imp->viewerNode->setAlphaChannel(ImageComponents::getNoneComponents(), std::string(), false);
+    _imp->viewerNode->setActiveLayer(ImageComponents::getNoneComponents(), true);
+    
+}
+
+void
+ViewerTab::onGainToggled(bool clicked)
+{
+    double value;
+    if (clicked) {
+        value = _imp->lastFstopValue;
+    } else {
+        value = 0;
+    }
+    _imp->toggleGainButton->setDown(clicked);
+    _imp->gainBox->setValue(value);
+    _imp->gainSlider->seekScalePosition(value);
+    
+    double gain = std::pow(2,value);
+    _imp->viewer->setGain(gain);
+    _imp->viewerNode->onGainChanged(gain);
+}
+
+
+void
+ViewerTab::onGainSliderChanged(double v)
+{
+    if (!_imp->toggleGainButton->isChecked()) {
+        _imp->toggleGainButton->setChecked(true);
+        _imp->toggleGainButton->setDown(true);
+    }
+    _imp->gainBox->setValue(v);
+    double gain = std::pow(2,v);
+    _imp->viewer->setGain(gain);
+    _imp->viewerNode->onGainChanged(gain);
+    _imp->lastFstopValue = v;
+}
+
+void
+ViewerTab::onGainSpinBoxValueChanged(double v)
+{
+    if (!_imp->toggleGainButton->isChecked()) {
+        _imp->toggleGainButton->setChecked(true);
+        _imp->toggleGainButton->setDown(true);
+    }
+    _imp->gainSlider->seekScalePosition(v);
+    double gain = std::pow(2,v);
+    _imp->viewer->setGain(gain);
+    _imp->viewerNode->onGainChanged(gain);
+    _imp->lastFstopValue = v;
+}
+
+void
+ViewerTab::onGammaToggled(bool clicked)
+{
+    double value;
+    if (clicked) {
+        value = _imp->lastGammaValue;
+    } else {
+        value = 1.;
+    }
+    _imp->toggleGammaButton->setDown(clicked);
+    _imp->gammaBox->setValue(value);
+    _imp->gammaSlider->seekScalePosition(value);
+    _imp->viewer->setGamma(value);
+    _imp->viewerNode->onGammaChanged(value);
+}
+
+void
+ViewerTab::onGammaSliderValueChanged(double value)
+{
+    if (!_imp->toggleGammaButton->isChecked()) {
+        _imp->toggleGammaButton->setChecked(true);
+        _imp->toggleGammaButton->setDown(true);
+    }
+    _imp->gammaBox->setValue(value);
+    _imp->viewer->setGamma(value);
+    _imp->viewerNode->onGammaChanged(value);
+    _imp->lastGammaValue = value;
+}
+
+void
+ViewerTab::onGammaSpinBoxValueChanged(double value)
+{
+    if (!_imp->toggleGammaButton->isChecked()) {
+        _imp->toggleGammaButton->setChecked(true);
+        _imp->toggleGammaButton->setDown(true);
+    }
+    _imp->gammaSlider->seekScalePosition(value);
+    _imp->viewer->setGamma(value);
+    _imp->viewerNode->onGammaChanged(value);
+    _imp->lastGammaValue = value;
+}
+
+void
+ViewerTab::onGammaSliderEditingFinished(bool hasMovedOnce)
+{
+    bool autoProxyEnabled = appPTR->getCurrentSettings()->isAutoProxyEnabled();
+    if (autoProxyEnabled && hasMovedOnce) {
+        getGui()->renderAllViewers();
+    }
+}
+
+void
+ViewerTab::onGainSliderEditingFinished(bool hasMovedOnce)
+{
+    bool autoProxyEnabled = appPTR->getCurrentSettings()->isAutoProxyEnabled();
+    if (autoProxyEnabled && hasMovedOnce) {
+        getGui()->renderAllViewers();
+    }
+}
+
+bool
+ViewerTab::isViewersSynchroEnabled() const
+{
+    return _imp->syncViewerButton->isDown();
+}
+
+void
+ViewerTab::synchronizeOtherViewersProjection()
+{
+    
+    double left,bottom,factor,par;
+    _imp->viewer->getProjection(&left, &bottom, &factor, &par);
+    const std::list<ViewerTab*>& viewers = _imp->gui->getViewersList();
+    for (std::list<ViewerTab*>::const_iterator it = viewers.begin(); it != viewers.end(); ++it) {
+        if ((*it) != this) {
+            (*it)->getViewer()->setProjection(left, bottom, factor, par);
+            (*it)->getInternalNode()->renderCurrentFrame(false);
+            
+        }
+    }
+    
+}
+
+void
+ViewerTab::onSyncViewersButtonPressed(bool clicked)
+{
+
+    const std::list<ViewerTab*>& viewers = _imp->gui->getViewersList();
+    for (std::list<ViewerTab*>::const_iterator it = viewers.begin(); it != viewers.end(); ++it) {
+        (*it)->_imp->syncViewerButton->setDown(clicked);
+        (*it)->_imp->syncViewerButton->setChecked(clicked);
+    }
+    if (clicked) {
+        synchronizeOtherViewersProjection();
+    }
 }

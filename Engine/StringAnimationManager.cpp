@@ -9,6 +9,9 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "StringAnimationManager.h"
 
@@ -243,6 +246,30 @@ StringAnimationManager::clone(const StringAnimationManager & other)
     _imp->keyframes = other._imp->keyframes;
 }
 
+bool
+StringAnimationManager::cloneAndCheckIfChanged(const StringAnimationManager & other)
+{
+    QMutexLocker l(&_imp->keyframesMutex);
+    QMutexLocker l2(&other._imp->keyframesMutex);
+    bool hasChanged = false;
+    if (_imp->keyframes.size() != other._imp->keyframes.size()) {
+        hasChanged = true;
+    }
+    if (!hasChanged) {
+        Keyframes::const_iterator oit = other._imp->keyframes.begin();
+        for (Keyframes::const_iterator it = _imp->keyframes.begin(); it != _imp->keyframes.end(); ++it,++oit) {
+            if (it->time != oit->time || it->value != oit->value) {
+                hasChanged = true;
+                break;
+            }
+        }
+    }
+    if (hasChanged) {
+        _imp->keyframes = other._imp->keyframes;
+    }
+    return hasChanged;
+}
+
 void
 StringAnimationManager::clone(const StringAnimationManager & other,
                               SequenceTime offset,
@@ -278,6 +305,7 @@ StringAnimationManager::load(const std::map<int,std::string> & keyframes)
         k.value = it->second;
         std::pair<Keyframes::iterator,bool> ret = _imp->keyframes.insert(k);
         assert(ret.second);
+        (void)ret;
     }
 }
 
@@ -289,6 +317,7 @@ StringAnimationManager::save(std::map<int,std::string>* keyframes) const
     for (Keyframes::const_iterator it = _imp->keyframes.begin(); it != _imp->keyframes.end(); ++it) {
         std::pair<std::map<int,std::string>::iterator, bool> success = keyframes->insert( std::make_pair(it->time, it->value) );
         assert(success.second);
+        (void)success;
     }
 }
 

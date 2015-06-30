@@ -13,8 +13,13 @@
 #ifndef FRAMEKEY_H
 #define FRAMEKEY_H
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Engine/KeyHelper.h"
 #include "Engine/TextureRect.h"
+#include "Engine/ImageComponents.h"
 
 namespace Natron {
 class FrameKey
@@ -28,13 +33,17 @@ public:
     FrameKey(SequenceTime time,
              U64 treeVersion,
              double gain,
+             double gamma,
              int lut,
              int bitDepth,
              int channels,
              int view,
              const TextureRect & textureRect,
              const RenderScale & scale,
-             const std::string & inputName);
+             const std::string & inputName,
+             const ImageComponents& layer,
+             const std::string& alphaChannelFullName,
+             bool useShaders);
 
     void fillHash(Hash64* hash) const;
 
@@ -58,6 +67,11 @@ public:
     double getGain() const WARN_UNUSED_RETURN
     {
         return _gain;
+    }
+
+    double getGamma() const WARN_UNUSED_RETURN
+    {
+        return _gamma;
     }
 
     int getLut() const WARN_UNUSED_RETURN
@@ -85,12 +99,18 @@ public:
         return _inputName;
     }
 
+    const TextureRect& getTexRect() const WARN_UNUSED_RETURN
+    {
+    return _textureRect;
+    }
+
 private:
     template<class Archive>
     void serialize(Archive & ar, const unsigned int version);
     SequenceTime _time;
     U64 _treeVersion;
     double _gain;
+    double _gamma;
     int _lut;
     int _bitDepth;
     int _channels;
@@ -98,6 +118,9 @@ private:
     TextureRect _textureRect;     // texture rectangle definition (bounds in the original image + width and height)
     RenderScale _scale;
     std::string _inputName;
+    ImageComponents _layer;
+    std::string _alphaChannelFullName; /// e.g: color.a , only used if _channels if A
+    bool _useShaders;
 };
 }
 

@@ -12,6 +12,10 @@
 #ifndef NATRON_ENGINE_KNOBTYPES_H_
 #define NATRON_ENGINE_KNOBTYPES_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include <string>
 #include <map>
@@ -72,7 +76,7 @@ public:
     const std::vector<int> &getIncrements() const;
 
 
-signals:
+Q_SIGNALS:
 
 
     void incrementChanged(int incr, int index = 0);
@@ -281,14 +285,20 @@ public:
 
     void serializeTracks(std::list<SerializedTrack>* tracks);
 
-    void restoreTracks(const std::list <SerializedTrack> & tracks,const std::vector<boost::shared_ptr<Natron::Node> > & activeNodes);
+    void restoreTracks(const std::list <SerializedTrack> & tracks,const std::list<boost::shared_ptr<Natron::Node> > & activeNodes);
 
-public slots:
+    void setHasNativeOverlayHandle(bool handle);
+    
+    bool getHasNativeOverlayHandle() const;
+    
+    virtual bool useNativeOverlayHandle() const { return getHasNativeOverlayHandle(); }
+    
+public Q_SLOTS:
 
     void onNodeDeactivated();
     void onNodeActivated();
 
-signals:
+Q_SIGNALS:
 
     void incrementChanged(double incr, int index = 0);
 
@@ -317,6 +327,7 @@ private:
     ///This tells us that only the default value is stored normalized.
     ///This SHOULD NOT bet set for old deprecated < OpenFX 1.2 normalized parameters.
     bool _defaultStoredNormalized;
+    bool _hasNativeOverlayHandle;
     static const std::string _typeNameStr;
 };
 
@@ -403,6 +414,8 @@ public:
     std::vector<std::string> getEntries_mt_safe() const;
     std::vector<std::string> getEntriesHelp_mt_safe() const;
     std::string getActiveEntryText_mt_safe() const;
+    
+    int getNumEntries() const;
 
     /// Can this type be animated?
     /// ChoiceParam animation may not be quite perfect yet,
@@ -416,8 +429,25 @@ public:
     std::string getHintToolTipFull() const;
     
     void choiceRestoration(Choice_Knob* knob,const ChoiceExtraData* data);
+    
+    /**
+     * @brief When set the menu will have a "New" entry which the user can select to create a new entry on its own.
+     **/
+    void setHostCanAddOptions(bool add);
+    
+    bool getHostCanAddOptions() const;
 
-signals:
+    void setCascading(bool cascading)
+    {
+        _isCascading = cascading;
+    }
+    
+    bool isCascading() const
+    {
+        return _isCascading;
+    }
+    
+Q_SIGNALS:
 
     void populated();
 
@@ -426,13 +456,14 @@ private:
 
     virtual bool canAnimate() const OVERRIDE FINAL;
     virtual const std::string & typeName() const OVERRIDE FINAL;
-    virtual void deepCloneExtraData(KnobI* other) OVERRIDE FINAL;
 private:
     
     mutable QMutex _entriesMutex;
     std::vector<std::string> _entries;
     std::vector<std::string> _entriesHelp;
+    bool _addNewChoice;
     static const std::string _typeNameStr;
+    bool _isCascading;
 };
 
 /******************************SEPARATOR_KNOB**************************************/
@@ -500,30 +531,27 @@ public:
 
     void activateAllDimensions()
     {
-        emit mustActivateAllDimensions();
+        Q_EMIT mustActivateAllDimensions();
     }
 
     void setPickingEnabled(bool enabled)
     {
-        emit pickingEnabled(enabled);
+        Q_EMIT pickingEnabled(enabled);
     }
 
+    
     /**
-     * @brief Convenience function for RGB color params
+     * @brief When simplified, the GUI of the knob should not have any spinbox and sliders but just a label to click and openup a color dialog
      **/
-    void setValues(double r,double g,double b);
+    void setSimplified(bool simp);
+    bool isSimplified() const;
+    
 
-
-    /**
-     * @brief Convenience function for RGBA color params
-     **/
-    void setValues(double r,double g,double b,double a);
-
-public slots:
+public Q_SLOTS:
 
     void onDimensionSwitchToggled(bool b);
 
-signals:
+Q_SIGNALS:
 
     void pickingEnabled(bool);
 
@@ -541,6 +569,7 @@ private:
 
 private:
     bool _allDimensionsEnabled;
+    bool _simplifiedMode;
     static const std::string _typeNameStr;
 };
 
@@ -619,6 +648,12 @@ public:
     {
         return _isCustom;
     }
+    
+    /**
+     * @brief Relevant for multi-lines with rich text enables. It tells if
+     * the string has content without the html tags
+     **/
+    bool hasContentWithoutHtmlTags() const;
 
 private:
 
@@ -639,7 +674,7 @@ class Group_Knob
 {
     Q_OBJECT
 
-    std::vector< boost::shared_ptr<KnobI> > _children;
+    std::vector< boost::weak_ptr<KnobI> > _children;
     bool _isTab;
 
 public:
@@ -658,8 +693,14 @@ public:
                bool declaredByPlugin);
 
     void addKnob(boost::shared_ptr<KnobI> k);
+    void removeKnob(KnobI* k);
+    
+    void moveOneStepUp(KnobI* k);
+    void moveOneStepDown(KnobI* k);
+    
+    void insertKnob(int index, const boost::shared_ptr<KnobI>& k);
 
-    const std::vector< boost::shared_ptr<KnobI> > &getChildren() const;
+    std::vector< boost::shared_ptr<KnobI> > getChildren() const;
 
     void setAsTab();
 
@@ -701,10 +742,15 @@ public:
 
     void addKnob(const boost::shared_ptr<KnobI>& k);
     
-    const std::vector< boost::shared_ptr<KnobI> > & getChildren() const
-    {
-        return _children;
-    }
+
+    void moveOneStepUp(KnobI* k);
+    void moveOneStepDown(KnobI* k);
+    
+    void removeKnob(KnobI* k);
+    
+    void insertKnob(int index, const boost::shared_ptr<KnobI>& k);
+
+    std::vector< boost::shared_ptr<KnobI> >  getChildren() const;
 
     static const std::string & typeNameStatic();
 
@@ -714,7 +760,7 @@ private:
 
 private:
 
-    std::vector< boost::shared_ptr<KnobI> > _children;
+    std::vector< boost::weak_ptr<KnobI> > _children;
     static const std::string _typeNameStr;
 };
 
@@ -754,16 +800,32 @@ public:
     std::pair<double,double> getParametricRange() const WARN_UNUSED_RETURN;
     boost::shared_ptr<Curve> getParametricCurve(int dimension) const;
     Natron::StatusEnum addControlPoint(int dimension,double key,double value) WARN_UNUSED_RETURN;
-    Natron::StatusEnum getValue(int dimension,double parametricPosition,double *returnValue) WARN_UNUSED_RETURN;
-    Natron::StatusEnum getNControlPoints(int dimension,int *returnValue) WARN_UNUSED_RETURN;
+    Natron::StatusEnum addHorizontalControlPoint(int dimension,double key,double value) WARN_UNUSED_RETURN;
+    Natron::StatusEnum getValue(int dimension,double parametricPosition,double *returnValue) const WARN_UNUSED_RETURN;
+    Natron::StatusEnum getNControlPoints(int dimension,int *returnValue) const WARN_UNUSED_RETURN;
     Natron::StatusEnum getNthControlPoint(int dimension,
                                       int nthCtl,
                                       double *key,
-                                      double *value) WARN_UNUSED_RETURN;
+                                      double *value) const WARN_UNUSED_RETURN;
+    Natron::StatusEnum getNthControlPoint(int dimension,
+                                          int nthCtl,
+                                          double *key,
+                                          double *value,
+                                          double *leftDerivative,
+                                          double *rightDerivative) const WARN_UNUSED_RETURN;
     Natron::StatusEnum setNthControlPoint(int dimension,
                                       int nthCtl,
                                       double key,
                                       double value) WARN_UNUSED_RETURN;
+    
+    Natron::StatusEnum setNthControlPoint(int dimension,
+                                          int nthCtl,
+                                          double key,
+                                          double value,
+                                          double leftDerivative,
+                                          double rightDerivative) WARN_UNUSED_RETURN;
+
+    
     Natron::StatusEnum deleteControlPoint(int dimension, int nthCtl) WARN_UNUSED_RETURN;
     Natron::StatusEnum deleteAllControlPoints(int dimension) WARN_UNUSED_RETURN;
     static const std::string & typeNameStatic() WARN_UNUSED_RETURN;
@@ -772,24 +834,24 @@ public:
 
     void loadParametricCurves(const std::list< Curve > & curves);
 
-public slots:
+public Q_SLOTS:
 
     virtual void drawCustomBackground()
     {
-        emit customBackgroundRequested();
+        Q_EMIT customBackgroundRequested();
     }
 
     virtual void initializeOverlayInteract(OverlaySupport* widget)
     {
-        emit mustInitializeOverlayInteract(widget);
+        Q_EMIT mustInitializeOverlayInteract(widget);
     }
 
     virtual void resetToDefault(const QVector<int> & dimensions)
     {
-        emit mustResetToDefault(dimensions);
+        Q_EMIT mustResetToDefault(dimensions);
     }
 
-signals:
+Q_SIGNALS:
 
     //emitted by drawCustomBackground()
     //if you can't overload drawCustomBackground()
@@ -802,6 +864,7 @@ signals:
 
     void mustResetToDefault(QVector<int>);
 
+    void curveColorChanged(int);
 private:
 
     virtual void resetExtraToDefaultValue(int dimension) OVERRIDE FINAL;
@@ -809,6 +872,7 @@ private:
     virtual bool canAnimate() const OVERRIDE FINAL;
     virtual const std::string & typeName() const OVERRIDE FINAL;
     virtual void cloneExtraData(KnobI* other,int dimension = -1) OVERRIDE FINAL;
+    virtual bool cloneExtraDataAndCheckIfChanged(KnobI* other,int dimension = -1) OVERRIDE FINAL;
     virtual void cloneExtraData(KnobI* other, SequenceTime offset, const RangeD* range,int dimension = -1) OVERRIDE FINAL;
     static const std::string _typeNameStr;
 };

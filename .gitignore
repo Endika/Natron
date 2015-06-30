@@ -5,10 +5,15 @@
 moc*.cpp
 *moc
 build
+build32
+build64
+sed*
 *latex*
 DerivedData
 Natron.xcodeproj
 NatronRenderer.xcodeproj
+NatronCrashReporter.xcodeproj
+CrashReporter/NatronCrashReporter
 Tests.xcodeproj
 HostSupport.xcodeproj
 Gui.xcodeproj
@@ -50,7 +55,7 @@ x64/
 build/
 [Bb]in/
 [Oo]bj/
-
+*autobuild*
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
@@ -201,6 +206,7 @@ Tests/Plugins
 pch
 *.filters
 
-Renderer/NatronRenderer
-
+# Python
 *.pyc
+
+Renderer/NatronRenderer

@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "PluginMemory.h"
 
 #include <stdexcept>
@@ -19,7 +23,7 @@ CLANG_DIAG_OFF(deprecated)
 #include <QMutex>
 CLANG_DIAG_ON(deprecated)
 #include "Engine/EffectInstance.h"
-
+#include "Engine/CacheEntry.h"
 
 struct PluginMemory::Implementation
 {
@@ -31,7 +35,7 @@ struct PluginMemory::Implementation
     {
     }
 
-    std::vector<char> data;
+    Natron::RamBuffer<char> data;
     int locked;
     QMutex mutex;
     Natron::EffectInstance* effect;
@@ -85,9 +89,9 @@ PluginMemory::getPtr()
 {
     QMutexLocker l(&_imp->mutex);
 
-    assert(_imp->data.size() == 0 || (_imp->data.size() > 0 && &_imp->data.front()));
+    assert(_imp->data.size() == 0 || (_imp->data.size() > 0 && _imp->data.getData()));
 
-    return (void*)( &_imp->data.front() );
+    return (void*)( _imp->data.getData() );
 }
 
 void

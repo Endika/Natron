@@ -6,12 +6,16 @@
  * contact: immarespond at gmail dot com
  */
 
-
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "FileSystemModel.h"
 
 #include <vector>
 
+CLANG_DIAG_OFF(deprecated)
+CLANG_DIAG_OFF(uninitialized)
 #include <QtCore/QMutex>
 #include <QtCore/QWaitCondition>
 #include <QtCore/QFileSystemWatcher>
@@ -21,6 +25,8 @@
 #include <QtCore/QDebug>
 #include <QtCore/QUrl>
 #include <QtCore/QMimeData>
+CLANG_DIAG_ON(deprecated)
+CLANG_DIAG_ON(uninitialized)
 
 #include <SequenceParsing.h>
 
@@ -229,6 +235,42 @@ FileSystemItem::addChild(const boost::shared_ptr<FileSystemItem>& child)
 }
 
 void
+FileSystemItem::addChild(const boost::shared_ptr<SequenceParsing::SequenceFromFiles>& sequence,
+              const QFileInfo& info)
+{
+    QMutexLocker l(&_imp->childrenMutex);
+    ///Does the child exist already ?
+    QString filename = sequence ? sequence->generateUserFriendlySequencePattern().c_str() : info.fileName();
+    
+    for (std::vector<boost::shared_ptr<FileSystemItem> >::iterator it = _imp->children.begin(); it!=_imp->children.end();++it) {
+        if ((*it)->fileName() == filename) {
+            _imp->children.erase(it);
+            break;
+        }
+    }
+    
+    
+    bool isDir = sequence ? false : info.isDir();
+    qint64 size;
+    if (sequence) {
+        size = sequence->getEstimatedTotalSize();
+    } else {
+        size = isDir ? 0 : info.size();
+    }
+    
+    
+    ///Create the child
+    boost::shared_ptr<FileSystemItem> child( new FileSystemItem(isDir,
+                                                                filename,
+                                                                sequence,
+                                                                info.lastModified(),
+                                                                size,
+                                                                this) );
+    _imp->children.push_back(child);
+    
+}
+
+void
 FileSystemItem::clearChildren()
 {
     QMutexLocker l(&_imp->childrenMutex);
@@ -243,7 +285,7 @@ FileSystemItem::matchPath(const QStringList& path, int startIndex) const
 {
     const QString& pathBit = path.at(startIndex);
 
-    for (U32 i = 0; i < _imp->children.size();++i) {
+    for (U32 i = 0; i < _imp->children.size(); ++i) {
         
         const boost::shared_ptr<FileSystemItem>& child = _imp->children[i];
         
@@ -690,7 +732,9 @@ FileSystemModel::generateRegexpFilterFromFileExtensions(const QStringList& exten
     QString ret;
     
     for (int i = 0; i < extensions.size(); ++i) {
-        ret.append("*.");
+        if (extensions[i] != "*") {
+            ret.append("*.");
+        }
         ret.append( extensions[i] );
         if (i < extensions.size() - 1) {
             ret.append(" ");
@@ -887,10 +931,10 @@ FileSystemModel::setRootPath(const QString& path)
         
         _imp->populateItem(item);
     } else {
-        emit directoryLoaded(path);
+        Q_EMIT directoryLoaded(path);
     }
     
-    emit rootPathChanged(path);
+    Q_EMIT rootPathChanged(path);
 }
 
 
@@ -949,7 +993,7 @@ FileSystemModel::onDirectoryLoadedByGatherer(const QString& directory)
     }
     
     ///Finally notify the client that the directory is ready for use
-    emit directoryLoaded(directory);
+    Q_EMIT directoryLoaded(directory);
 }
 
 void
@@ -1208,42 +1252,18 @@ FileGathererThread::run()
     }
 }
 
-static void addChildToItem(FileSystemItem* parent,const boost::shared_ptr<SequenceParsing::SequenceFromFiles>& sequence,
-                           const QFileInfo& info)
+
+static bool isVideoFileExtension(const std::string& ext)
 {
-    ///Does the child exist already ?
-    QString filename = sequence ? sequence->generateUserFriendlySequencePattern().c_str() : info.fileName();
-    
-    bool found = false;
-    for (int j = 0; j < parent->childCount(); ++j) {
-        if (parent->childAt(j)->fileName() == filename) {
-            found = true;
-            break;
-        }
+    if (ext == "mov" ||
+        ext == "avi" ||
+        ext == "mp4" ||
+        ext == "mpeg" ||
+        ext == "flv" ||
+        ext == "mkv") {
+        return true;
     }
-    
-    if (!found) {
-        
-        bool isDir = sequence ? false : info.isDir();
-        qint64 size;
-        if (sequence) {
-            size = sequence->getEstimatedTotalSize();
-        } else {
-            size = isDir ? 0 : info.size();
-        }
-
-        
-        ///Create the child
-        boost::shared_ptr<FileSystemItem> child( new FileSystemItem(isDir,
-                                                                    filename,
-                                                                    sequence,
-                                                                    info.lastModified(),
-                                                                    size,
-                                                                    parent) );
-        parent->addChild(child);
-        
-    }
-
+    return false;
 }
 
 typedef std::list< std::pair< boost::shared_ptr<SequenceParsing::SequenceFromFiles> ,QFileInfo > > FileSequences;
@@ -1267,31 +1287,33 @@ FileGathererThread::gatheringKernel(const boost::shared_ptr<FileSystemItem>& ite
     
     Qt::SortOrder viewOrder = _imp->model->sortIndicatorOrder();
     FileSystemModel::Sections sortSection = (FileSystemModel::Sections)_imp->model->sortIndicatorSection();
+    QDir::SortFlags sort;
     switch (sortSection) {
         case FileSystemModel::Name:
-            dir.setSorting(QDir::Name);
+            sort = QDir::Name;
             break;
         case FileSystemModel::Size:
-            dir.setSorting(QDir::Size);
+            sort = QDir::Size;
             break;
         case FileSystemModel::Type:
-            dir.setSorting(QDir::Type);
+            sort = QDir::Type;
             break;
         case FileSystemModel::DateModified:
-            dir.setSorting(QDir::Time);
+            sort = QDir::Time;
             break;
         default:
             break;
     }
+    sort |= QDir::IgnoreCase;
     
     ///All entries in the directory
-    QFileInfoList all = dir.entryInfoList(_imp->model->filter());
+    QFileInfoList all = dir.entryInfoList(_imp->model->filter(), sort);
     
     ///List of all possible file sequences in the directory or directories
     FileSequences sequences;
     
-    int start;
-    int end;
+    int start = 0;
+    int end = 0;
     switch (viewOrder) {
         case Qt::AscendingOrder:
             start = 0;
@@ -1310,7 +1332,7 @@ FileGathererThread::gatheringKernel(const boost::shared_ptr<FileSystemItem>& ite
         if ( _imp->checkForAbort() ) {
             return;
         }
-        
+                
         if ( all[i].isDir() ) {
             ///This is a directory
             sequences.push_back(std::make_pair(boost::shared_ptr<SequenceParsing::SequenceFromFiles>(), all[i]));
@@ -1341,19 +1363,20 @@ FileGathererThread::gatheringKernel(const boost::shared_ptr<FileSystemItem>& ite
             /// to create a new one
             SequenceParsing::FileNameContent fileContent(absoluteFilePath);
             
-            ///Note that we use a reverse iterator because we have more chance to find a match in the last recently added entries
-            for (FileSequences::reverse_iterator it = sequences.rbegin(); it != sequences.rend(); ++it) {
-                
-                if ( it->first && it->first->tryInsertFile(fileContent,false) ) {
+            if (!isVideoFileExtension(fileContent.getExtension())) {
+                ///Note that we use a reverse iterator because we have more chance to find a match in the last recently added entries
+                for (FileSequences::reverse_iterator it = sequences.rbegin(); it != sequences.rend(); ++it) {
                     
-                    foundMatchingSequence = true;
-                    break;
+                    if ( it->first && it->first->tryInsertFile(fileContent,false) ) {
+                        
+                        foundMatchingSequence = true;
+                        break;
+                    }
+                    
                 }
-                
             }
             
             if (!foundMatchingSequence) {
-                
                 boost::shared_ptr<SequenceParsing::SequenceFromFiles> newSequence( new SequenceParsing::SequenceFromFiles(fileContent,true) );
                 sequences.push_back(std::make_pair(newSequence, all[i]));
 
@@ -1365,10 +1388,10 @@ FileGathererThread::gatheringKernel(const boost::shared_ptr<FileSystemItem>& ite
     
     ///Now iterate through the sequences and create the children as necessary
     for (FileSequences::iterator it = sequences.begin(); it != sequences.end(); ++it) {
-        addChildToItem(item.get(), it->first, it->second);
+        item->addChild(it->first, it->second);
     }
     
-    emit directoryLoaded( item->absoluteFilePath() );
+    Q_EMIT directoryLoaded( item->absoluteFilePath() );
 }
 
 void

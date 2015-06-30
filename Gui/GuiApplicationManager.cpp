@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "GuiApplicationManager.h"
 
 ///gui
@@ -50,6 +54,11 @@ CLANG_DIAG_ON(uninitialized)
 #include "Gui/GuiAppInstance.h"
 #include "Gui/CurveWidget.h"
 #include "Gui/ActionShortcuts.h"
+CLANG_DIAG_OFF(mismatched-tags)
+GCC_DIAG_OFF(unused-parameter)
+#include "NatronGui/natrongui_python.h"
+CLANG_DIAG_ON(mismatched-tags)
+GCC_DIAG_ON(unused-parameter)
 
 /**
  * @macro Registers a keybind to the application.
@@ -84,7 +93,7 @@ CLANG_DIAG_ON(uninitialized)
 
 //Increment this when making change to default shortcuts or changes that would break expected default shortcuts
 //in a way. This way the user will get prompted to restore default shortcuts on next launch
-#define NATRON_SHORTCUTS_DEFAULT_VERSION 2
+#define NATRON_SHORTCUTS_DEFAULT_VERSION 4
 
 using namespace Natron;
 
@@ -96,7 +105,13 @@ struct KnobsClipBoard
     std::map<int,std::string> stringAnimation; //< for animating string knobs
     bool isEmpty; //< is the clipboard empty
     bool copyAnimation; //< should we copy all the animation or not
+    
+    std::string appID;
+    std::string nodeFullyQualifiedName;
+    std::string paramName;
 };
+
+
 
 struct GuiApplicationManagerPrivate
 {
@@ -117,18 +132,24 @@ struct GuiApplicationManagerPrivate
     QString _fontFamily;
     int _fontSize;
     
+    NodeClipBoard _nodeCB;
+    
+    std::list<PythonUserCommand> pythonCommands;
+    
     GuiApplicationManagerPrivate(GuiApplicationManager* publicInterface)
         :   _publicInterface(publicInterface)
-          , _topLevelToolButtons()
-          , _knobsClipBoard(new KnobsClipBoard)
-          , _knobGuiFactory( new KnobGuiFactory() )
-          , _colorPickerCursor(NULL)
-          , _splashScreen(NULL)
-          , _openFileRequest()
-          , _actionShortcuts()
-          , _shortcutsChangedVersion(false)
-          , _fontFamily()
-          , _fontSize(0)
+    , _topLevelToolButtons()
+    , _knobsClipBoard(new KnobsClipBoard)
+    , _knobGuiFactory( new KnobGuiFactory() )
+    , _colorPickerCursor(NULL)
+    , _splashScreen(NULL)
+    , _openFileRequest()
+    , _actionShortcuts()
+    , _shortcutsChangedVersion(false)
+    , _fontFamily()
+    , _fontSize(0)
+    , _nodeCB()
+    , pythonCommands()
     {
     }
 
@@ -155,7 +176,8 @@ struct GuiApplicationManagerPrivate
                                                                      const QString & name,
                                                                      const QString & iconPath,
                                                                      int major,
-                                                                     int minor);
+                                                                     int minor,
+                                                                     bool isUserCreatable);
 };
 
 GuiApplicationManager::GuiApplicationManager()
@@ -674,8 +696,261 @@ GuiApplicationManager::getIcon(Natron::PixmapEnum e,
                 img.load(NATRON_IMAGES_PATH "zebra_off.png");
                 *pix = QPixmap::fromImage(img);
                 break;
+            case NATRON_PIXMAP_VIEWER_GAMMA_ENABLED:
+                img.load(NATRON_IMAGES_PATH "gammaON.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_VIEWER_GAMMA_DISABLED:
+                img.load(NATRON_IMAGES_PATH "gammaOFF.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_VIEWER_GAIN_ENABLED:
+                img.load(NATRON_IMAGES_PATH "expoON.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_VIEWER_GAIN_DISABLED:
+                img.load(NATRON_IMAGES_PATH "expoOFF.png");
+                *pix = QPixmap::fromImage(img);
+                break;
             case NATRON_PIXMAP_ADD_TRACK:
                 img.load(NATRON_IMAGES_PATH "addTrack.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_CLEAR_OUTPUT:
+                img.load(NATRON_IMAGES_PATH "clearOutput.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_EXEC_SCRIPT:
+                img.load(NATRON_IMAGES_PATH "execScript.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_LOAD_EXEC_SCRIPT:
+                img.load(NATRON_IMAGES_PATH "loadAndExecScript.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_LOAD_SCRIPT:
+                img.load(NATRON_IMAGES_PATH "loadScript.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_NEXT_SCRIPT:
+                img.load(NATRON_IMAGES_PATH "nextScript.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_OUTPUT_PANE_ACTIVATED:
+                img.load(NATRON_IMAGES_PATH "outputPanelActivated.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_OUTPUT_PANE_DEACTIVATED:
+                img.load(NATRON_IMAGES_PATH "outputPanelDeactivated.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_PREVIOUS_SCRIPT:
+                img.load(NATRON_IMAGES_PATH "previousScript.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_SCRIPT_SAVE_SCRIPT:
+                img.load(NATRON_IMAGES_PATH "saveScript.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+                
+            case NATRON_PIXMAP_MERGE_ATOP:
+                img.load(NATRON_IMAGES_PATH "merge_atop.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_AVERAGE:
+                img.load(NATRON_IMAGES_PATH "merge_average.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_COLOR_BURN:
+                img.load(NATRON_IMAGES_PATH "merge_color_burn.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_COLOR_DODGE:
+                img.load(NATRON_IMAGES_PATH "merge_color_dodge.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_CONJOINT_OVER:
+                img.load(NATRON_IMAGES_PATH "merge_conjoint_over.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_COPY:
+                img.load(NATRON_IMAGES_PATH "merge_copy.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_DIFFERENCE:
+                img.load(NATRON_IMAGES_PATH "merge_difference.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_DISJOINT_OVER:
+                img.load(NATRON_IMAGES_PATH "merge_disjoint_over.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_DIVIDE:
+                img.load(NATRON_IMAGES_PATH "merge_divide.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_EXCLUSION:
+                img.load(NATRON_IMAGES_PATH "merge_exclusion.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_FREEZE:
+                img.load(NATRON_IMAGES_PATH "merge_freeze.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_FROM:
+                img.load(NATRON_IMAGES_PATH "merge_from.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_GEOMETRIC:
+                img.load(NATRON_IMAGES_PATH "merge_geometric.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_HARD_LIGHT:
+                img.load(NATRON_IMAGES_PATH "merge_hard_light.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_HYPOT:
+                img.load(NATRON_IMAGES_PATH "merge_hypot.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_IN:
+                img.load(NATRON_IMAGES_PATH "merge_in.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_INTERPOLATED:
+                img.load(NATRON_IMAGES_PATH "merge_interpolated.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_MASK:
+                img.load(NATRON_IMAGES_PATH "merge_mask.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_MATTE:
+                img.load(NATRON_IMAGES_PATH "merge_matte.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_MAX:
+                img.load(NATRON_IMAGES_PATH "merge_max.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_MIN:
+                img.load(NATRON_IMAGES_PATH "merge_min.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_MINUS:
+                img.load(NATRON_IMAGES_PATH "merge_minus.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_MULTIPLY:
+                img.load(NATRON_IMAGES_PATH "merge_multiply.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_OUT:
+                img.load(NATRON_IMAGES_PATH "merge_out.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_OVER:
+                img.load(NATRON_IMAGES_PATH "merge_over.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_OVERLAY:
+                img.load(NATRON_IMAGES_PATH "merge_overlay.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_PINLIGHT:
+                img.load(NATRON_IMAGES_PATH "merge_pinlight.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_PLUS:
+                img.load(NATRON_IMAGES_PATH "merge_plus.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_REFLECT:
+                img.load(NATRON_IMAGES_PATH "merge_reflect.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_SCREEN:
+                img.load(NATRON_IMAGES_PATH "merge_screen.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_SOFT_LIGHT:
+                img.load(NATRON_IMAGES_PATH "merge_soft_light.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_STENCIL:
+                img.load(NATRON_IMAGES_PATH "merge_stencil.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_UNDER:
+                img.load(NATRON_IMAGES_PATH "merge_under.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_MERGE_XOR:
+                img.load(NATRON_IMAGES_PATH "merge_xor.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_LINK_CURSOR:
+                img.load(NATRON_IMAGES_PATH "linkCursor.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ENTER_GROUP:
+                img.load(NATRON_IMAGES_PATH "enter_group.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_BUILDUP_ENABLED:
+                img.load(NATRON_IMAGES_PATH "rotopaint_buildup_on.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_BUILDUP_DISABLED:
+                img.load(NATRON_IMAGES_PATH "rotopaint_buildup_off.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_BLUR:
+                img.load(NATRON_IMAGES_PATH "rotopaint_blur.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_BURN:
+                img.load(NATRON_IMAGES_PATH "rotopaint_burn.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_CLONE:
+                img.load(NATRON_IMAGES_PATH "rotopaint_clone.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_DODGE:
+                img.load(NATRON_IMAGES_PATH "rotopaint_dodge.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_ERASER:
+                img.load(NATRON_IMAGES_PATH "rotopaint_eraser.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_PRESSURE_ENABLED:
+                img.load(NATRON_IMAGES_PATH "rotopaint_pressure_on.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_PRESSURE_DISABLED:
+                img.load(NATRON_IMAGES_PATH "rotopaint_pressure_off.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_REVEAL:
+                img.load(NATRON_IMAGES_PATH "rotopaint_reveal.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_SHARPEN:
+                img.load(NATRON_IMAGES_PATH "rotopaint_sharpen.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_SMEAR:
+                img.load(NATRON_IMAGES_PATH "rotopaint_smear.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTOPAINT_SOLID:
+                img.load(NATRON_IMAGES_PATH "rotopaint_solid.png");
+                *pix = QPixmap::fromImage(img);
+                break;
+            case NATRON_PIXMAP_ROTO_NODE_ICON:
+                img.load(NATRON_IMAGES_PATH "rotoNodeIcon.png");
                 *pix = QPixmap::fromImage(img);
                 break;
             default:
@@ -700,6 +975,61 @@ GuiApplicationManager::getColorPickerCursor() const
 void
 GuiApplicationManager::initGui()
 {
+    QSettings settings(NATRON_ORGANIZATION_NAME,NATRON_APPLICATION_NAME);
+
+    //load custom fonts
+    QString fontResource = QString(":/Resources/Fonts/%1.ttf");
+    QStringList fontFilenames;
+    fontFilenames << fontResource.arg("DroidSans");
+    fontFilenames << fontResource.arg("DroidSans-Bold");
+    Q_FOREACH (QString fontFilename, fontFilenames) {
+        int fontID = QFontDatabase::addApplicationFont(fontFilename);
+        qDebug() << "fontID=" << fontID << "families=" << QFontDatabase::applicationFontFamilies(fontID);
+    }
+    QString fontFamily(NATRON_FONT);
+    int fontSize = NATRON_FONT_SIZE_11;
+    
+    
+    ///Do not load old font stored in the setting "systemFont" on Natron < 2 because it might contain a crappy font.
+    if (settings.contains(kQSettingsSoftwareMajorVersionSettingName) && settings.value(kQSettingsSoftwareMajorVersionSettingName).toInt() >= 2) {
+        if (settings.contains("systemFont")) {
+            fontFamily = settings.value("systemFont").toString();
+        }
+    }
+    
+    
+    if (settings.contains("fontSize")) {
+        fontSize = settings.value("fontSize").toInt();
+    }
+    //fontFamily = "Courier"; fontSize = 24; // for debugging purposes
+    qDebug() << "Setting application font to " << fontFamily << fontSize;
+    {
+        QFontDatabase database;
+        Q_FOREACH (const QString &family, database.families()) {
+            if (family == fontFamily) {
+                qDebug() << "... found" << fontFamily << "available styles:";
+                Q_FOREACH (const QString &style, database.styles(family)) {
+                    qDebug() << family << style;
+                }
+            }
+        }
+        QFont font(fontFamily, fontSize);
+        if (!font.exactMatch()) {
+            QFontInfo fi(font);
+            qDebug() << "Not an exact match, got: " << fi.family() << fi.pointSize();
+        }
+        QApplication::setFont(font);
+#ifdef Q_OS_MAC
+        // https://bugreports.qt.io/browse/QTBUG-32789
+        QFont::insertSubstitution(".Lucida Grande UI", fontFamily/*"Lucida Grande"*/);
+        // https://bugreports.qt.io/browse/QTBUG-40833
+        QFont::insertSubstitution(".Helvetica Neue DeskInterface", fontFamily/*"Helvetica Neue"*/);
+        // there are lots of remaining bugs on Yosemite in 4.8.6, to be fixed in 4.8.7&
+#endif
+    }
+    _imp->_fontFamily = fontFamily;
+    _imp->_fontSize = fontSize;
+
     /*Display a splashscreen while we wait for the engine to load*/
     QString filename(NATRON_IMAGES_PATH "splashscreen.png");
 
@@ -709,21 +1039,9 @@ GuiApplicationManager::initGui()
     appPTR->getIcon(Natron::NATRON_PIXMAP_APP_ICON, &appIcPixmap);
     QIcon appIc(appIcPixmap);
     qApp->setWindowIcon(appIc);
-    //load custom fonts
-    QString fontResource = QString(":/Resources/Fonts/%1.ttf");
-    QStringList fontFilenames;
-    fontFilenames << fontResource.arg("DroidSans");
-    fontFilenames << fontResource.arg("DroidSans-Bold");
-    foreach(QString fontFilename, fontFilenames) {
-        _imp->_splashScreen->updateText("Loading font " + fontFilename);
-        //qDebug() << "attempting to load" << fontFilename;
-        int fontID = QFontDatabase::addApplicationFont(fontFilename);
-        qDebug() << "fontID=" << fontID << "families=" << QFontDatabase::applicationFontFamilies(fontID);
-    }
     
-    QSettings settings(NATRON_ORGANIZATION_NAME,NATRON_APPLICATION_NAME);
     QFontDatabase db;
-    QStringList families = db.families();
+    QStringList families = db.families(QFontDatabase::Latin); // We need a Latin font for the UI
     std::vector<std::string> systemFonts(families.size());
     for (int i = 0; i < families.size(); ++i) {
         systemFonts[i] = families[i].toStdString();
@@ -741,7 +1059,7 @@ GuiApplicationManager::onPluginLoaded(Natron::Plugin* plugin)
     QString shortcutGrouping(kShortcutGroupNodes);
     const QStringList & groups = plugin->getGrouping();
     const QString & pluginID = plugin->getPluginID();
-    const QString & pluginLabel = plugin->getPluginLabel();
+    const QString  pluginLabel = plugin->getLabelWithoutSuffix();
     const QString & pluginIconPath = plugin->getIconFilePath();
     const QString & groupIconPath = plugin->getGroupIconFilePath();
 
@@ -752,7 +1070,8 @@ GuiApplicationManager::onPluginLoaded(Natron::Plugin* plugin)
                                                                             groupIconPath,
                                                                             pluginIconPath,
                                                                             plugin->getMajorVersion(),
-                                                                            plugin->getMinorVersion());
+                                                                            plugin->getMinorVersion(),
+                                                                            plugin->getIsUserCreatable());
     for (int i = 0; i < groups.size(); ++i) {
        
         shortcutGrouping.push_back('/');
@@ -766,8 +1085,10 @@ GuiApplicationManager::onPluginLoaded(Natron::Plugin* plugin)
     /*These are the plug-ins which have a default shortcut. Other plug-ins can have a user-assigned shortcut.*/
     if (pluginID == PLUGINID_OFX_TRANSFORM) {
         symbol = Qt::Key_T;
-    } else if (pluginID == PLUGINID_OFX_ROTO) {
+    } else if (pluginID == PLUGINID_NATRON_ROTO) {
         symbol = Qt::Key_O;
+    } else if (pluginID == PLUGINID_NATRON_ROTOPAINT) {
+        symbol = Qt::Key_P;
     } else if (pluginID == PLUGINID_OFX_MERGE) {
         symbol = Qt::Key_M;
     } else if (pluginID == PLUGINID_OFX_GRADE) {
@@ -776,11 +1097,18 @@ GuiApplicationManager::onPluginLoaded(Natron::Plugin* plugin)
         symbol = Qt::Key_C;
     } else if (pluginID == PLUGINID_OFX_BLURCIMG) {
         symbol = Qt::Key_B;
+    } else if (pluginID == PLUGINID_NATRON_DOT) {
+        symbol = Qt::Key_Period;
+        modifiers |= Qt::ShiftModifier;
     } else {
         hasShortcut = false;
     }
     plugin->setHasShortcut(hasShortcut);
-    _imp->addKeybind(shortcutGrouping, pluginID, pluginLabel, modifiers, symbol);
+    
+    if (plugin->getIsUserCreatable()) {
+        _imp->addKeybind(shortcutGrouping, pluginID, pluginLabel, modifiers, symbol);
+    }
+    
 }
 
 void
@@ -849,7 +1177,8 @@ GuiApplicationManagerPrivate::findPluginToolButtonInternal(const boost::shared_p
                                                            const QString & name,
                                                            const QString & iconPath,
                                                            int major,
-                                                           int minor)
+                                                           int minor,
+                                                           bool isUserCreatable)
 {
     assert(grouping.size() > 0);
     
@@ -863,7 +1192,7 @@ GuiApplicationManagerPrivate::findPluginToolButtonInternal(const boost::shared_p
                 for (int i = 1; i < grouping.size(); ++i) {
                     newGrouping.push_back(grouping[i]);
                 }
-                return findPluginToolButtonInternal(*it, newGrouping, name, iconPath, major,minor);
+                return findPluginToolButtonInternal(*it, newGrouping, name, iconPath, major,minor, isUserCreatable);
             }
             if (major == (*it)->getMajorVersion()) {
                 return *it;
@@ -872,7 +1201,7 @@ GuiApplicationManagerPrivate::findPluginToolButtonInternal(const boost::shared_p
             }
         }
     }
-    boost::shared_ptr<PluginGroupNode> ret(new PluginGroupNode(grouping[0],grouping.size() == 1 ? name : grouping[0],iconPath,major,minor));
+    boost::shared_ptr<PluginGroupNode> ret(new PluginGroupNode(grouping[0],grouping.size() == 1 ? name : grouping[0],iconPath,major,minor, isUserCreatable));
     parent->tryAddChild(ret);
     ret->setParent(parent);
     
@@ -881,7 +1210,7 @@ GuiApplicationManagerPrivate::findPluginToolButtonInternal(const boost::shared_p
         for (int i = 1; i < grouping.size(); ++i) {
             newGrouping.push_back(grouping[i]);
         }
-        return findPluginToolButtonInternal(ret, newGrouping, name, iconPath, major,minor);
+        return findPluginToolButtonInternal(ret, newGrouping, name, iconPath, major,minor, isUserCreatable);
     }
     return ret;
 }
@@ -892,7 +1221,8 @@ GuiApplicationManager::findPluginToolButtonOrCreate(const QStringList & grouping
                                                     const QString& groupIconPath,
                                                     const QString & iconPath,
                                                     int major,
-                                                    int minor)
+                                                    int minor,
+                                                    bool isUserCreatable)
 {
     assert(grouping.size() > 0);
     
@@ -904,7 +1234,7 @@ GuiApplicationManager::findPluginToolButtonOrCreate(const QStringList & grouping
                 for (int i = 1; i < grouping.size(); ++i) {
                     newGrouping.push_back(grouping[i]);
                 }
-                return _imp->findPluginToolButtonInternal(*it, newGrouping, name, iconPath, major , minor);
+                return _imp->findPluginToolButtonInternal(*it, newGrouping, name, iconPath, major , minor, isUserCreatable);
             }
             if (major == (*it)->getMajorVersion()) {
                 return *it;
@@ -914,7 +1244,7 @@ GuiApplicationManager::findPluginToolButtonOrCreate(const QStringList & grouping
         }
     }
     
-    boost::shared_ptr<PluginGroupNode> ret(new PluginGroupNode(grouping[0],grouping.size() == 1 ? name : grouping[0],iconPath,major,minor));
+    boost::shared_ptr<PluginGroupNode> ret(new PluginGroupNode(grouping[0],grouping.size() == 1 ? name : grouping[0],iconPath,major,minor, isUserCreatable));
     _imp->_topLevelToolButtons.push_back(ret);
     if (grouping.size() > 1) {
         ret->setIconPath(groupIconPath);
@@ -922,7 +1252,7 @@ GuiApplicationManager::findPluginToolButtonOrCreate(const QStringList & grouping
         for (int i = 1; i < grouping.size(); ++i) {
             newGrouping.push_back(grouping[i]);
         }
-        return _imp->findPluginToolButtonInternal(ret, newGrouping, name, iconPath, major,minor);
+        return _imp->findPluginToolButtonInternal(ret, newGrouping, name, iconPath, major,minor, isUserCreatable);
     }
     return ret;
 }
@@ -930,12 +1260,21 @@ GuiApplicationManager::findPluginToolButtonOrCreate(const QStringList & grouping
 void
 GuiApplicationManagerPrivate::createColorPickerCursor()
 {
-    QPixmap pickerPix;
-
-    appPTR->getIcon(Natron::NATRON_PIXMAP_COLOR_PICKER, &pickerPix);
-    pickerPix = pickerPix.scaled(16, 16);
-    pickerPix.setMask( pickerPix.createHeuristicMask() );
-    _colorPickerCursor = new QCursor( pickerPix,0,pickerPix.height() );
+    QImage originalImage;
+    originalImage.load(NATRON_IMAGES_PATH "color_picker.png");
+    originalImage = originalImage.scaled(16, 16);
+    QImage dstImage(32,32,QImage::Format_ARGB32);
+    dstImage.fill(QColor(0,0,0,0));
+    
+    int oW = originalImage.width();
+    int oH = originalImage.height();
+    for (int y = 0; y < oH; ++y) {
+        for (int x = 0; x < oW; ++x) {
+            dstImage.setPixel(x + oW, y, originalImage.pixel(x, y));
+        }
+    }
+    QPixmap pix = QPixmap::fromImage(dstImage);
+    _colorPickerCursor = new QCursor(pix);
 }
 
 bool
@@ -965,7 +1304,10 @@ GuiApplicationManager::setKnobClipBoard(bool copyAnimation,
                                         const std::list<Variant> & values,
                                         const std::list<boost::shared_ptr<Curve> > & animation,
                                         const std::map<int,std::string> & stringAnimation,
-                                        const std::list<boost::shared_ptr<Curve> > & parametricCurves)
+                                        const std::list<boost::shared_ptr<Curve> > & parametricCurves,
+                                        const std::string& appID,
+                                        const std::string& nodeFullyQualifiedName,
+                                        const std::string& paramName)
 {
     _imp->_knobsClipBoard->copyAnimation = copyAnimation;
     _imp->_knobsClipBoard->isEmpty = false;
@@ -973,6 +1315,9 @@ GuiApplicationManager::setKnobClipBoard(bool copyAnimation,
     _imp->_knobsClipBoard->curves = animation;
     _imp->_knobsClipBoard->stringAnimation = stringAnimation;
     _imp->_knobsClipBoard->parametricCurves = parametricCurves;
+    _imp->_knobsClipBoard->appID = appID;
+    _imp->_knobsClipBoard->nodeFullyQualifiedName = nodeFullyQualifiedName;
+    _imp->_knobsClipBoard->paramName = paramName;
 }
 
 void
@@ -980,13 +1325,19 @@ GuiApplicationManager::getKnobClipBoard(bool* copyAnimation,
                                         std::list<Variant>* values,
                                         std::list<boost::shared_ptr<Curve> >* animation,
                                         std::map<int,std::string>* stringAnimation,
-                                        std::list<boost::shared_ptr<Curve> >* parametricCurves) const
+                                        std::list<boost::shared_ptr<Curve> >* parametricCurves,
+                                        std::string* appID,
+                                        std::string* nodeFullyQualifiedName,
+                                        std::string* paramName) const
 {
     *copyAnimation = _imp->_knobsClipBoard->copyAnimation;
     *values = _imp->_knobsClipBoard->values;
     *animation = _imp->_knobsClipBoard->curves;
     *stringAnimation = _imp->_knobsClipBoard->stringAnimation;
     *parametricCurves = _imp->_knobsClipBoard->parametricCurves;
+    *appID = _imp->_knobsClipBoard->appID;
+    *nodeFullyQualifiedName = _imp->_knobsClipBoard->nodeFullyQualifiedName;
+    *paramName = _imp->_knobsClipBoard->paramName;
 }
 
 void
@@ -1033,7 +1384,7 @@ GuiApplicationManager::loadBuiltinNodePlugins(std::map<std::string,std::vector< 
         LibraryBinary *readerPlugin = new LibraryBinary(readerFunctions);
         assert(readerPlugin);
         
-        registerPlugin(grouping, reader->getPluginID().c_str(), reader->getPluginLabel().c_str(), "", "", "", false, false, readerPlugin, false, reader->getMajorVersion(), reader->getMinorVersion());
+        registerPlugin(grouping, reader->getPluginID().c_str(), reader->getPluginLabel().c_str(), "", "", false, false, readerPlugin, false, reader->getMajorVersion(), reader->getMinorVersion(), true);
  
         std::vector<std::string> extensions = reader->supportedFileFormats();
         for (U32 k = 0; k < extensions.size(); ++k) {
@@ -1058,7 +1409,7 @@ GuiApplicationManager::loadBuiltinNodePlugins(std::map<std::string,std::vector< 
         LibraryBinary *writerPlugin = new LibraryBinary(writerFunctions);
         assert(writerPlugin);
         
-        registerPlugin(grouping, writer->getPluginID().c_str(), writer->getPluginLabel().c_str(),"", "", "", false, false, writerPlugin, false, writer->getMajorVersion(), writer->getMinorVersion());
+        registerPlugin(grouping, writer->getPluginID().c_str(), writer->getPluginLabel().c_str(),"", "", false, false, writerPlugin, false, writer->getMajorVersion(), writer->getMinorVersion(), true);
         
 
 
@@ -1089,15 +1440,8 @@ GuiApplicationManager::loadBuiltinNodePlugins(std::map<std::string,std::vector< 
         LibraryBinary *viewerPlugin = new LibraryBinary(viewerFunctions);
         assert(viewerPlugin);
         
-        registerPlugin(grouping, viewer->getPluginID().c_str(), viewer->getPluginLabel().c_str(),NATRON_IMAGES_PATH "viewer_icon.png", "", "", false, false, viewerPlugin, false, viewer->getMajorVersion(), viewer->getMinorVersion());
+        registerPlugin(grouping, viewer->getPluginID().c_str(), viewer->getPluginLabel().c_str(),NATRON_IMAGES_PATH "viewer_icon.png", "", false, false, viewerPlugin, false, viewer->getMajorVersion(), viewer->getMinorVersion(), true);
 
-    }
-
-    {
-        QString label(NATRON_BACKDROP_NODE_NAME);
-        QStringList backdropGrouping(PLUGIN_GROUP_OTHER);
-        
-        registerPlugin(backdropGrouping, label, label,NATRON_IMAGES_PATH "backdrop_icon.png", "", "", false, false, NULL, false, 1, 0);
     }
 
     ///Also load the plug-ins of the AppManager
@@ -1148,7 +1492,7 @@ Application::event(QEvent* e)
 {
     switch ( e->type() ) {
     case QEvent::FileOpen: {
-        assert(_app);
+        assert(_app);   
         QFileOpenEvent* foe = dynamic_cast<QFileOpenEvent*>(e);
         assert(foe);
         if (foe) {
@@ -1178,33 +1522,6 @@ GuiApplicationManager::initializeQApp(int &argc,
     app->setQuitOnLastWindowClosed(true);
     Q_INIT_RESOURCE(GuiResources);
     
-    
-    QSettings settings(NATRON_ORGANIZATION_NAME,NATRON_APPLICATION_NAME);
-    
-    
-    QString fontFamily(NATRON_FONT);
-    int fontSize = NATRON_FONT_SIZE_11;
-    
-    if (settings.contains("font")) {
-        QString fontChoiceEntry = settings.value("font").toString();
-        
-        if (fontChoiceEntry == "System fonts...") {
-            
-            if (settings.contains("systemFont")) {
-                fontFamily = settings.value("systemFont").toString();
-            }
-        } else {
-            fontFamily = fontChoiceEntry;
-        }
-    }
-    if (settings.contains("fontSize")) {
-        fontSize = settings.value("fontSize").toInt();
-    }
-    qDebug() << "Setting application font to " << fontFamily << " " << fontSize;
-    app->setFont( QFont(fontFamily, fontSize) );
-    _imp->_fontFamily = fontFamily;
-    _imp->_fontSize = fontSize;
-    
     ///Register all the shortcuts.
     populateShortcuts();
 }
@@ -1227,6 +1544,7 @@ GuiApplicationManager::onAllPluginsLoaded()
 {
     ///Restore user shortcuts only when all plug-ins are populated.
     loadShortcuts();
+    AppManager::onAllPluginsLoaded();
 }
 
 void
@@ -1463,7 +1781,7 @@ GuiApplicationManager::loadShortcuts()
         settingsVersion = settings.value("NATRON_SHORTCUTS_DEFAULT_VERSION").toInt();
     }
     
-    if (settingsExistd && settingsVersion != NATRON_SHORTCUTS_DEFAULT_VERSION) {
+    if (settingsExistd && settingsVersion < NATRON_SHORTCUTS_DEFAULT_VERSION) {
         _imp->_shortcutsChangedVersion = true;
     }
     
@@ -1540,7 +1858,7 @@ GuiApplicationManager::populateShortcuts()
 
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionSaveAndIncrVersion, kShortcutDescActionSaveAndIncrVersion, Qt::ControlModifier | Qt::ShiftModifier |
                     Qt::AltModifier, Qt::Key_S);
-    
+    registerKeybind(kShortcutGroupGlobal, kShortcutIDActionExportProject, kShortcutDescActionExportProject, Qt::NoModifier, (Qt::Key)0);
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionShowAbout, kShortcutDescActionShowAbout, Qt::NoModifier, (Qt::Key)0);
 
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionImportLayout, kShortcutDescActionImportLayout, Qt::NoModifier, (Qt::Key)0);
@@ -1552,7 +1870,8 @@ GuiApplicationManager::populateShortcuts()
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionShowShortcutEditor, kShortcutDescActionShowShortcutEditor, Qt::NoModifier, (Qt::Key)0);
 
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionNewViewer, kShortcutDescActionNewViewer, Qt::ControlModifier, Qt::Key_I);
-    registerKeybind(kShortcutGroupGlobal, kShortcutIDActionFullscreen, kShortcutDescActionFullscreen, Qt::ControlModifier | Qt::AltModifier, Qt::Key_F);
+    registerKeybind(kShortcutGroupGlobal, kShortcutIDActionFullscreen, kShortcutDescActionFullscreen, Qt::AltModifier, Qt::Key_S); // as in Nuke
+    //registerKeybind(kShortcutGroupGlobal, kShortcutIDActionFullscreen, kShortcutDescActionFullscreen, Qt::ControlModifier | Qt::AltModifier, Qt::Key_F);
 
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionClearDiskCache, kShortcutDescActionClearDiskCache, Qt::NoModifier,(Qt::Key)0);
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionClearPlaybackCache, kShortcutDescActionClearPlaybackCache, Qt::NoModifier,(Qt::Key)0);
@@ -1576,6 +1895,8 @@ GuiApplicationManager::populateShortcuts()
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionConnectViewerToInput10, kShortcutDescActionConnectViewerToInput10, Qt::NoModifier, Qt::Key_0);
 
     registerKeybind(kShortcutGroupGlobal, kShortcutIDActionShowPaneFullScreen, kShortcutDescActionShowPaneFullScreen, Qt::NoModifier, Qt::Key_Space);
+    registerKeybind(kShortcutGroupGlobal, kShortcutIDActionNextTab, kShortcutDescActionNextTab, Qt::ControlModifier, Qt::Key_T);
+    registerKeybind(kShortcutGroupGlobal, kShortcutIDActionCloseTab, kShortcutDescActionCloseTab, Qt::ShiftModifier, Qt::Key_Escape);
 
     ///Viewer
     registerKeybind(kShortcutGroupViewer, kShortcutIDActionLuminance, kShortcutDescActionLuminance, Qt::NoModifier, Qt::Key_Y);
@@ -1631,6 +1952,10 @@ GuiApplicationManager::populateShortcuts()
     registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoSelectionTool, kShortcutDescActionRotoSelectionTool, Qt::NoModifier, Qt::Key_Q);
     registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoAddTool, kShortcutDescActionRotoAddTool, Qt::NoModifier, Qt::Key_D);
     registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoEditTool, kShortcutDescActionRotoEditTool, Qt::NoModifier, Qt::Key_V);
+    registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoBrushTool, kShortcutDescActionRotoBrushTool, Qt::NoModifier, Qt::Key_N);
+    registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoCloneTool, kShortcutDescActionRotoCloneTool, Qt::NoModifier, Qt::Key_C);
+    registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoEffectTool, kShortcutDescActionRotoEffectTool, Qt::NoModifier, Qt::Key_X);
+    registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoColorTool, kShortcutDescActionRotoColorTool, Qt::NoModifier, Qt::Key_E);
     registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoNudgeLeft, kShortcutDescActionRotoNudgeLeft, Qt::AltModifier, Qt::Key_Left);
     registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoNudgeBottom, kShortcutDescActionRotoNudgeBottom, Qt::AltModifier, Qt::Key_Down);
     registerKeybind(kShortcutGroupRoto, kShortcutIDActionRotoNudgeRight, kShortcutDescActionRotoNudgeRight, Qt::AltModifier, Qt::Key_Right);
@@ -1677,7 +2002,7 @@ GuiApplicationManager::populateShortcuts()
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphClone, kShortcutDescActionGraphClone, Qt::AltModifier, Qt::Key_K);
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphDeclone, kShortcutDescActionGraphDeclone, Qt::AltModifier | Qt::ShiftModifier, Qt::Key_K);
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphDuplicate, kShortcutDescActionGraphDuplicate, Qt::AltModifier, Qt::Key_C);
-    registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphForcePreview, kShortcutDescActionGraphForcePreview, Qt::NoModifier, Qt::Key_P);
+    registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphForcePreview, kShortcutDescActionGraphForcePreview, Qt::ShiftModifier, Qt::Key_P);
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphTogglePreview, kShortcutDescActionGraphToggleAutoPreview, Qt::AltModifier, Qt::Key_P);
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphToggleAutoPreview, kShortcutDescActionGraphToggleAutoPreview, Qt::NoModifier, (Qt::Key)0);
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphToggleAutoTurbo, kShortcutDescActionGraphToggleAutoTurbo, Qt::NoModifier, (Qt::Key)0);
@@ -1687,7 +2012,11 @@ GuiApplicationManager::populateShortcuts()
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphRenameNode, kShortcutDescActionGraphRenameNode, Qt::NoModifier, Qt::Key_N);
     registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphExtractNode, kShortcutDescActionGraphExtractNode, Qt::ControlModifier | Qt::ShiftModifier,
                     Qt::Key_X);
-
+    registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphMakeGroup, kShortcutDescActionGraphMakeGroup, Qt::ControlModifier | Qt::ShiftModifier,
+                    Qt::Key_G);
+    registerKeybind(kShortcutGroupNodegraph, kShortcutIDActionGraphExpandGroup, kShortcutDescActionGraphExpandGroup, Qt::ControlModifier | Qt::ShiftModifier,
+                    Qt::Key_E);
+    
     ///CurveEditor
     registerKeybind(kShortcutGroupCurveEditor, kShortcutIDActionCurveEditorRemoveKeys, kShortcutDescActionCurveEditorRemoveKeys, Qt::NoModifier,Qt::Key_Backspace);
     registerKeybind(kShortcutGroupCurveEditor, kShortcutIDActionCurveEditorConstant, kShortcutDescActionCurveEditorConstant, Qt::NoModifier, Qt::Key_K);
@@ -1969,6 +2298,82 @@ GuiApplicationManager::clearLastRenderedTextures()
         GuiAppInstance* guiApp = dynamic_cast<GuiAppInstance*>(it->second.app);
         if (guiApp) {
             guiApp->clearAllLastRenderedImages();
+        }
+    }
+}
+
+bool
+GuiApplicationManager::isNodeClipBoardEmpty() const
+{
+    return _imp->_nodeCB.isEmpty();
+}
+
+NodeClipBoard&
+GuiApplicationManager::getNodeClipBoard()
+{
+    return _imp->_nodeCB;
+}
+
+void
+GuiApplicationManager::clearNodeClipBoard()
+{
+    _imp->_nodeCB.nodes.clear();
+    _imp->_nodeCB.nodesUI.clear();
+}
+
+
+///The symbol has been generated by Shiboken in  Engine/NatronEngine/natronengine_module_wrapper.cpp
+extern "C"
+{
+    PyObject* PyInit_NatronGui();
+}
+
+
+void
+GuiApplicationManager::initBuiltinPythonModules()
+{
+    AppManager::initBuiltinPythonModules();
+    
+    int ret = PyImport_AppendInittab(NATRON_GUI_PYTHON_MODULE_NAME,&PyInit_NatronGui);
+    if (ret == -1) {
+        throw std::runtime_error("Failed to initialize built-in Python module.");
+    }
+    
+}
+
+void
+GuiApplicationManager::addCommand(const QString& grouping,const std::string& pythonFunction, Qt::Key key,const Qt::KeyboardModifiers& modifiers)
+{
+    
+    QStringList split = grouping.split('/');
+    if (grouping.isEmpty() || split.isEmpty()) {
+        return;
+    }
+    PythonUserCommand c;
+    c.grouping = grouping;
+    c.pythonFunction = pythonFunction;
+    c.key = key;
+    c.modifiers = modifiers;
+    _imp->pythonCommands.push_back(c);
+    
+    
+    registerKeybind(kShortcutGroupGlobal, split[split.size() -1], split[split.size() - 1], modifiers, key);
+}
+
+
+const std::list<PythonUserCommand>&
+GuiApplicationManager::getUserPythonCommands() const
+{
+    return _imp->pythonCommands;
+}
+void
+GuiApplicationManager::reloadStylesheets()
+{
+    const std::map<int,AppInstanceRef>& instances = getAppInstances();
+    for (std::map<int,AppInstanceRef>::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        GuiAppInstance* guiApp = dynamic_cast<GuiAppInstance*>(it->second.app);
+        if (guiApp) {
+            guiApp->reloadStylesheet();
         }
     }
 }

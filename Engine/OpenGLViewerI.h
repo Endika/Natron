@@ -11,15 +11,22 @@
 
 #ifndef OPENGLVIEWERI_H
 #define OPENGLVIEWERI_H
-#ifndef Q_MOC_RUN
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #endif
 #include "Engine/OverlaySupport.h"
 #include "Engine/Rect.h"
+
 class Format;
 struct TextureRect;
 class QString;
 class TimeLine;
+
 namespace Natron
 {
     class Image;
@@ -30,12 +37,6 @@ class OpenGLViewerI
 {
 public:
 
-    enum BitDepthEnum
-    {
-        eBitDepthByte = 0,
-        eBitDepthHalf,
-        eBitDepthFloat
-    };
 
     OpenGLViewerI()
     {
@@ -71,7 +72,7 @@ public:
     /**
      * @brief Must return the bit depth of the texture used to render. (Byte, half or float)
      **/
-    virtual BitDepthEnum getBitDepth() const = 0;
+    virtual Natron::ImageBitDepthEnum getBitDepth() const = 0;
 
     /**
      * @brief Returns true if the user has enabled the region of interest
@@ -92,15 +93,18 @@ public:
      **/
     virtual void transferBufferFromRAMtoGPU(const unsigned char* ramBuffer,
                                             const boost::shared_ptr<Natron::Image>& image,
+                                            Natron::ImageBitDepthEnum depth,
                                             int time,
                                             const RectD& rod,
                                             size_t bytesCount,
                                             const TextureRect & region,
-                                            double gain, double offset, int lut,
+                                            double gain, double gamma, double offset, int lut,
                                             int pboIndex,
                                             unsigned int mipMapLevel,
                                             Natron::ImagePremultiplicationEnum premult,
-                                            int textureIndex) = 0;
+                                            int textureIndex,
+                                            const RectI& roi,
+                                            bool updateOnlyRoi) = 0;
 
     /**
      * @brief Called when the input of a viewer should render black.
@@ -129,10 +133,6 @@ public:
      **/
     virtual bool supportsGLSL() const = 0;
 
-    /**
-     * @brief Overrides to refresh any gui indicating the name of the underlying node.
-     **/
-    virtual void onViewerNodeNameChanged(const QString & name) = 0;
 
     /**
      * @brief Called when the live instance of the viewer node is killed. (i.e: when the node is deleted).
@@ -160,6 +160,10 @@ public:
      **/
     virtual Natron::ViewerCompositingOperatorEnum getCompositingOperator() const = 0;
 
+    /**
+     * @brief Set the current compositing operator
+     **/
+    virtual void setCompositingOperator(Natron::ViewerCompositingOperatorEnum op) = 0;
     
     /**
      * @brief Must return a pointer to the current timeline used by the Viewer

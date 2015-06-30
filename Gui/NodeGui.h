@@ -12,10 +12,16 @@
 #ifndef NATRON_GUI_NODEGUI_H_
 #define NATRON_GUI_NODEGUI_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <map>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #include <boost/scoped_ptr.hpp>
+#include <boost/weak_ptr.hpp>
+#include <boost/enable_shared_from_this.hpp>
 #endif
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
@@ -23,7 +29,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QtCore/QRectF>
 #include <QtCore/QMutex>
 #include <QGraphicsItem>
-#include <QGradient>
+#include <QDialog>
 #include <QMutex>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
@@ -31,6 +37,7 @@ CLANG_DIAG_ON(uninitialized)
 #include "Global/GlobalDefines.h"
 #include "Engine/NodeGuiI.h"
 
+class DefaultOverlay;
 class Edge;
 class QPainterPath;
 class QScrollArea;
@@ -44,10 +51,14 @@ class KnobI;
 class NodeGuiSerialization;
 class NodeSerialization;
 class KnobGui;
+class Gui;
 class QUndoStack;
 class LinkArrow;
 class MultiInstancePanel;
 class QMenu;
+class NodeGroup;
+class QUndoStack;
+class NodeCollection;
 namespace Natron {
 class ChannelSet;
 class Node;
@@ -58,7 +69,8 @@ class NodeGuiIndicator
 {
 public:
 
-    NodeGuiIndicator(const QString & text,
+    NodeGuiIndicator(int depth,
+                     const QString & text,
                      const QPointF & topLeft,
                      int width,
                      int height,
@@ -101,7 +113,7 @@ public:
     void setAlignment(Qt::Alignment alignment);
     virtual int type() const;
 
-public slots:
+public Q_SLOTS:
 
     void updateGeometry(int, int, int);
     void updateGeometry();
@@ -113,7 +125,7 @@ private:
 };
 
 class NodeGui
-    : public QObject,public QGraphicsItem, public NodeGuiI
+: public QObject,public QGraphicsItem, public NodeGuiI, public boost::enable_shared_from_this<NodeGui>
 {
     Q_OBJECT
     Q_INTERFACES(QGraphicsItem)
@@ -121,16 +133,16 @@ class NodeGui
 public:
     
     
-    typedef std::map<int,Edge*> InputEdgesMap;
+    typedef std::vector<Edge*> InputEdges;
 
     NodeGui(QGraphicsItem *parent = 0);
 
     void initialize(NodeGraph* dag,
-                    const boost::shared_ptr<NodeGui> & thisAsShared,
-                    QVBoxLayout *dockContainer,
-                    const boost::shared_ptr<Natron::Node> & internalNode,
-                    bool requestedByLoad);
+                    const boost::shared_ptr<Natron::Node> & internalNode);
 
+    //Creates panel if needed, might be expensive
+    void ensurePanelCreated();
+    
     /**
      * @brief Called by NodeGraph::clearExceedingUndoRedoEvents when we want to delete a node.
      **/
@@ -149,7 +161,7 @@ public:
 
     boost::shared_ptr<Natron::Node> getNode() const
     {
-        return _internalNode;
+        return _internalNode.lock();
     }
 
     /*Returns a pointer to the dag gui*/
@@ -160,7 +172,20 @@ public:
     
     virtual bool isSettingsPanelOpened() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     
+    virtual bool shouldDrawOverlay() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
     virtual void setPosition(double x,double y) OVERRIDE FINAL;
+    
+    virtual void getPosition(double *x, double* y) const OVERRIDE FINAL;
+ 
+    virtual void getSize(double* w, double* h) const OVERRIDE FINAL;
+    
+    virtual void setSize(double w, double h) OVERRIDE FINAL;
+    
+    virtual void getColor(double* r,double *g, double* b) const OVERRIDE FINAL;
+    
+    virtual void setColor(double r, double g, double b) OVERRIDE FINAL;
+
 
     /*Returns true if the NodeGUI contains the point (in items coordinates)*/
     virtual bool contains(const QPointF &point) const OVERRIDE FINAL;
@@ -186,7 +211,7 @@ public:
 
     /*Returns a ref to the vector of all the input arrows. This can be used
        to query the src and dst of a specific arrow.*/
-    const std::map<int,Edge*> & getInputsArrows() const
+    const std::vector<Edge*> & getInputsArrows() const
     {
         return _inputEdges;
     }
@@ -223,7 +248,7 @@ public:
 
     void markInputNull(Edge* e);
 
-    const std::map<boost::shared_ptr<KnobI>,KnobGui*> & getKnobs() const;
+    const std::map<boost::weak_ptr<KnobI>,KnobGui*> & getKnobs() const;
     static const int DEFAULT_OFFSET_BETWEEN_NODES = 30;
 
 
@@ -245,7 +270,7 @@ public:
 
     void removeSettingsPanel();
 
-    QUndoStack* getUndoStack() const;
+    boost::shared_ptr<QUndoStack> getUndoStack() const;
 
     void removeUndoStack();
 
@@ -276,6 +301,8 @@ public:
     QColor getCurrentColor() const;
 
     void setCurrentColor(const QColor & c);
+    
+    void setOverlayColor(const QColor& c);
 
     void refreshKnobsAfterTimeChange(SequenceTime time);
     
@@ -287,7 +314,7 @@ public:
 
     boost::shared_ptr<NodeGui> getParentMultiInstance() const
     {
-        return _parentMultiInstance;
+        return _parentMultiInstance.lock();
     }
     
     
@@ -297,12 +324,10 @@ public:
      * @brief Serialize this node. If this is a multi-instance node, every instance will
      * be serialized, hence the list.
      **/
-    void serializeInternal(std::list<boost::shared_ptr<NodeSerialization> >& internalSerialization,bool copyKnobs) const;
+    void serializeInternal(std::list<boost::shared_ptr<NodeSerialization> >& internalSerialization) const;
     void restoreInternal(const boost::shared_ptr<NodeGui>& thisShared,
                          const std::list<boost::shared_ptr<NodeSerialization> >& internalSerialization) ;
-    
-    void trySetName(const QString& newName);
-    
+        
     void setMergeHintActive(bool active);
     
     /**
@@ -313,12 +338,76 @@ public:
     
     virtual void refreshStateIndicator();
     
+    virtual void exportGroupAsPythonScript() OVERRIDE FINAL;
+        
+    bool isNearbyNameFrame(const QPointF& pos) const;
     
-public slots:
+    bool isNearbyResizeHandle(const QPointF& pos) const;
+    
+    int getFrameNameHeight() const;
+    
+    virtual bool getOverlayColor(double* r, double* g, double* b) const OVERRIDE FINAL;
+    
+    virtual void addDefaultPositionInteract(const boost::shared_ptr<Double_Knob>& point) OVERRIDE FINAL;
+    
+    boost::shared_ptr<DefaultOverlay> getDefaultOverlay() const WARN_UNUSED_RETURN;
+    
+    virtual void drawDefaultOverlay(double scaleX, double scaleY)  OVERRIDE FINAL;
+    
+    virtual bool onOverlayPenDownDefault(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure)  OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayPenMotionDefault(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure)  OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayPenUpDefault(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure)  OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayKeyDownDefault(double scaleX, double scaleY, Natron::Key key, Natron::KeyboardModifiers modifiers) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayKeyUpDefault(double scaleX, double scaleY, Natron::Key key, Natron::KeyboardModifiers modifiers)  OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayKeyRepeatDefault(double scaleX, double scaleY, Natron::Key key, Natron::KeyboardModifiers modifiers) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayFocusGainedDefault(double scaleX, double scaleY) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual bool onOverlayFocusLostDefault(double scaleX, double scaleY) OVERRIDE FINAL WARN_UNUSED_RETURN;
+
+    virtual bool hasDefaultOverlay() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual void setCurrentViewportForDefaultOverlays(OverlaySupport* viewPort) OVERRIDE FINAL;
+
+    virtual bool hasDefaultOverlayForParam(const KnobI* param) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    virtual void removeDefaultOverlay(KnobI* knob) OVERRIDE FINAL;
+    
+    virtual void setPluginIconFilePath(const std::string& filePath) OVERRIDE FINAL;
+    
+    virtual void setPluginDescription(const std::string& description) OVERRIDE FINAL;
+    
+    virtual void setPluginIDAndVersion(const std::string& pluginLabel,const std::string& pluginID,unsigned int version) OVERRIDE FINAL;
+    
+protected:
+    
+    virtual int getBaseDepth() const { return 20; }
+    
+    virtual bool canResize() { return true; }
+    
+    virtual bool mustFrameName() const { return false; }
+    
+    virtual bool mustAddResizeHandle() const { return false; }
+    
+    virtual void getInitialSize(int *w, int *h) const;
+    
+    void getSizeWithPreview(int *w, int *h) const;
+    
+    virtual void adjustSizeToContent(int *w,int *h,bool adjustToTextSize);
+    
+    virtual void resizeExtraContent(int /*w*/,int /*h*/,bool /*forceResize*/) {}
+    
+public Q_SLOTS:
+
 
     void onSettingsPanelClosed(bool closed);
     
-    void setDefaultColor(const QColor & color);
+    void onSettingsPanelColorChanged(const QColor & color);
 
     void togglePreview();
 
@@ -330,7 +419,9 @@ public slots:
      * @brief Updates the position of the items contained by the node to fit into
      * the new width and height.
      **/
-    void updateShape(int width,int height);
+    void resize(int width,int height, bool forceSize = false, bool adjustToTextSize = false);
+    
+    void refreshSize();
 
     /*Updates the preview image, only if the project is in auto-preview mode*/
     void updatePreviewImage(int time);
@@ -403,9 +494,7 @@ public slots:
     
     void setOptionalInputsVisible(bool visible);
 
-signals:
-
-    void nameChanged(QString);
+Q_SIGNALS:
 
     void positionChanged(int x,int y);
 
@@ -414,8 +503,7 @@ signals:
 protected:
 
     virtual void createGui();
-    virtual void initializeShape();
-    virtual NodeSettingsPanel* createPanel(QVBoxLayout* container,bool requestedByLoad,const boost::shared_ptr<NodeGui> & thisAsShared);
+    virtual NodeSettingsPanel* createPanel(QVBoxLayout* container,const boost::shared_ptr<NodeGui> & thisAsShared);
     virtual bool canMakePreview()
     {
         return true;
@@ -424,6 +512,7 @@ protected:
     virtual void applyBrush(const QBrush & brush);
 
 private:
+    
 
     void refreshPositionEnd(double x,double y);
 
@@ -441,13 +530,14 @@ private:
 
     void refreshCurrentBrush();
     
+    void initializeInputsForInspector();
 
 
     /*pointer to the dag*/
     NodeGraph* _graph;
 
     /*pointer to the internal node*/
-    boost::shared_ptr<Natron::Node> _internalNode;
+    boost::weak_ptr<Natron::Node> _internalNode;
 
     /*true if the node is selected by the user*/
     bool _selected;
@@ -455,7 +545,18 @@ private:
 
     /*A pointer to the graphical text displaying the name.*/
     bool _settingNameFromGui;
+    
+    bool _panelOpenedBeforeDeactivate;
+    
+    QGraphicsPixmapItem* _pluginIcon;
+    QGraphicsRectItem* _pluginIconFrame;
+    
+    QGraphicsPixmapItem* _mergeIcon;
+    
     QGraphicsTextItem *_nameItem;
+    QGraphicsRectItem *_nameFrame;
+    
+    QGraphicsPolygonItem* _resizeHandle;
 
     /*A pointer to the rectangle of the node.*/
     QGraphicsRectItem* _boundingBox;
@@ -473,7 +574,7 @@ private:
     QGraphicsLineItem* _disabledTopLeftBtmRight;
     QGraphicsLineItem* _disabledBtmLeftTopRight;
     /*the graphical input arrows*/
-    std::map<int,Edge*> _inputEdges;
+    std::vector<Edge*> _inputEdges;
     Edge* _outputEdge;
     NodeSettingsPanel* _settingsPanel;
 
@@ -481,25 +582,29 @@ private:
     ///The "real" panel showed on the gui will be the _settingsPanel, but we still need to create
     ///another panel for the main-instance (hidden) knobs to function properly
     NodeSettingsPanel* _mainInstancePanel;
-    QColor _defaultColor;
+    
+    //True when the settings panel has been  created
+    bool _panelCreated;
+    
+    mutable QMutex _currentColorMutex; //< protects _currentColor
+    QColor _currentColor; //< accessed by the serialization thread
+    
     QColor _clonedColor;
     bool _wasBeginEditCalled;
     mutable QMutex positionMutex;
 
     ///This is the garphical red line displayed when the node is a clone
     LinkArrow* _slaveMasterLink;
-    boost::shared_ptr<NodeGui> _masterNodeGui;
+    boost::weak_ptr<NodeGui> _masterNodeGui;
 
     ///For each knob that has a link to another parameter, display an arrow
-    ///This might need to be a multimap in the future if an expression refers to several params
     struct LinkedDim
     {
-        KnobI* knob;
-        int dimension;
+        std::list<std::pair<KnobI*,KnobI*> > knobs;
         LinkArrow* arrow;
     };
 
-    typedef std::list<LinkedDim> KnobGuiLinks;
+    typedef std::map<boost::shared_ptr<Natron::Node>,LinkedDim> KnobGuiLinks;
     KnobGuiLinks _knobsLinks;
     NodeGuiIndicator* _expressionIndicator;
     QPoint _magnecEnabled; //<enabled in X or/and Y
@@ -508,13 +613,20 @@ private:
     QPointF _distanceSinceLastMagnec; //for x and for y
     QPointF _magnecStartingPos; //for x and for y
     QString _nodeLabel;
-    boost::shared_ptr<NodeGui> _parentMultiInstance;
+    boost::weak_ptr<NodeGui> _parentMultiInstance;
     
     int _renderingStartedCount;
     std::map<int,int> _inputNRenderingStartedCount;
     
     bool _optionalInputsVisible;
-      
+    
+    ///For the serialization thread
+    mutable QMutex _mtSafeSizeMutex;
+    int _mtSafeWidth,_mtSafeHeight;
+    
+    boost::shared_ptr<DefaultOverlay> _defaultOverlay;
+    boost::shared_ptr<QUndoStack> _undoStack; /*!< undo/redo stack*/
+
 };
 
 
@@ -529,8 +641,7 @@ private:
 
 
     virtual void createGui() OVERRIDE FINAL;
-    virtual NodeSettingsPanel* createPanel(QVBoxLayout* container,bool requestedByLoad,
-                                           const boost::shared_ptr<NodeGui> & thisAsShared) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual NodeSettingsPanel* createPanel(QVBoxLayout* container, const boost::shared_ptr<NodeGui> & thisAsShared) OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool canMakePreview() OVERRIDE FINAL WARN_UNUSED_RETURN
     {
         return false;
@@ -539,16 +650,37 @@ private:
     virtual void refreshStateIndicator() OVERRIDE FINAL;
     
     virtual void applyBrush(const QBrush & brush) OVERRIDE FINAL;
-
-    ///Doesn't do anything, preview cannot be activated
-    virtual void initializeShape() OVERRIDE FINAL
-    {
-    }
+    
+    virtual bool canResize() OVERRIDE FINAL WARN_UNUSED_RETURN { return false; }
     
     virtual QRectF boundingRect() const OVERRIDE FINAL;
     virtual QPainterPath shape() const OVERRIDE FINAL;
     QGraphicsEllipseItem* diskShape;
     QGraphicsEllipseItem* ellipseIndicator;
+};
+
+struct ExportGroupTemplateDialogPrivate;
+class ExportGroupTemplateDialog : public QDialog
+{
+    Q_OBJECT
+    
+public:
+    
+    ExportGroupTemplateDialog(NodeCollection* group,Gui* gui,QWidget* parent);
+    
+    virtual ~ExportGroupTemplateDialog();
+    
+public Q_SLOTS:
+
+    void onButtonClicked();
+    
+    void onOkClicked();
+    
+    void onLabelEditingFinished();
+    
+private:
+    
+    boost::scoped_ptr<ExportGroupTemplateDialogPrivate> _imp;
 };
 
 #endif // NATRON_GUI_NODEGUI_H_

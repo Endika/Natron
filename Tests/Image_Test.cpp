@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <cstring>
 #include <gtest/gtest.h>
 #include "Engine/Image.h"
@@ -62,10 +66,40 @@ TEST(BitmapTest,SimpleRect) {
     bm.minimalNonMarkedRects(rod, nonRenderedRects);
     ASSERT_TRUE( nonRenderedRects.empty() );
     ASSERT_TRUE( !memchr( map,0,rod.area() ) );
+    
+    ///More complex example where A,B,C,D are not rendered check that both trimap & bitmap yield the same result
+    // BBBBBBBBBBBBBB
+    // BBBBBBBBBBBBBB
+    // CXXXXXXXXXXDDD
+    // CXXXXXXXXXXDDD
+    // CXXXXXXXXXXDDD
+    // CXXXXXXXXXXDDD
+    // AAAAAAAAAAAAAA
+    bm.clear(rod);
+    
+    RectI xBox(20,20,80,80);
+    bm.markForRendered(xBox);
+    nonRenderedRects.clear();
+    bm.minimalNonMarkedRects(rod, nonRenderedRects);
+    EXPECT_TRUE(nonRenderedRects.size() == 4);
+    nonRenderedRects.clear();
+    bool beingRenderedElseWhere = false;
+    bm.minimalNonMarkedRects_trimap(rod, nonRenderedRects, &beingRenderedElseWhere);
+    EXPECT_TRUE(nonRenderedRects.size() == 4);
+    ASSERT_TRUE(beingRenderedElseWhere == false);
+    
+    nonRenderedRects.clear();
+    //Mark the A rectangle as being rendered
+    RectI aBox(0,0,20,20);
+    bm.markForRendering(aBox);
+    bm.minimalNonMarkedRects_trimap(rod, nonRenderedRects, &beingRenderedElseWhere);
+    ASSERT_TRUE(beingRenderedElseWhere == true);
+    EXPECT_TRUE(nonRenderedRects.size() == 3);
 }
 
 TEST(ImageKeyTest,Equality) {
     srand(2000);
+    // coverity[dont_call]
     int randomHashKey1 = rand();
     SequenceTime time1 = 0;
     int view1 = 0;
@@ -86,6 +120,7 @@ TEST(ImageKeyTest,Equality) {
 
 TEST(ImageKeyTest,Difference) {
     srand(2000);
+    // coverity[dont_call]
     int randomHashKey1 = rand() % 100;
     SequenceTime time1 = 0;
     int view1 = 0;
@@ -95,6 +130,7 @@ TEST(ImageKeyTest,Difference) {
 
 
     ///make a second ImageKey different to the first
+    // coverity[dont_call]
     int randomHashKey2 = rand() % 1000  + 150;
     SequenceTime time2 = time1;
     int view2 = view1;

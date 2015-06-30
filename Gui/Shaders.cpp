@@ -9,12 +9,16 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 const char* fragRGB =
     "uniform sampler2D Tex;\n"
     "uniform float gain;\n"
     "uniform float offset;\n"
     "uniform int lut;\n"
+    "uniform float gamma;\n"
     "\n"
     "float linear_to_srgb(float c) {\n"
     "    return (c<=0.0031308) ? (12.92*c) : (((1.0+0.055)*pow(c,1.0/2.4))-0.055);\n"
@@ -27,16 +31,19 @@ const char* fragRGB =
     "    color_tmp.rgb = (color_tmp.rgb * gain) + offset;\n"
     "    if(lut == 0){ // srgb\n"
 // << TO SRGB
-    "       color_tmp.r = linear_to_srgb(color_tmp.r);"
-    "       color_tmp.g = linear_to_srgb(color_tmp.g);"
-    "       color_tmp.b = linear_to_srgb(color_tmp.b);"
+    "       color_tmp.r = linear_to_srgb(color_tmp.r);\n"
+    "       color_tmp.g = linear_to_srgb(color_tmp.g);\n"
+    "       color_tmp.b = linear_to_srgb(color_tmp.b);\n"
 // << END TO SRGB
     "   }\n"
     "   else if( lut == 2){ // Rec 709\n" // << TO REC 709
-    "       color_tmp.r = linear_to_rec709(color_tmp.r);"
-    "       color_tmp.g = linear_to_rec709(color_tmp.g);"
-    "       color_tmp.b = linear_to_rec709(color_tmp.b);"
+    "       color_tmp.r = linear_to_rec709(color_tmp.r);\n"
+    "       color_tmp.g = linear_to_rec709(color_tmp.g);\n"
+    "       color_tmp.b = linear_to_rec709(color_tmp.b);\n"
     "   }\n" // << END TO REC 709
+    "   color_tmp.r = gamma == 0. ? 0. : pow(color_tmp.r,gamma);\n" // gamma is in fact 1. / gamma at this point
+    "   color_tmp.g = gamma == 0. ? 0. : pow(color_tmp.g,gamma);\n"
+    "   color_tmp.b = gamma == 0. ? 0. : pow(color_tmp.b,gamma);\n"
     "	gl_FragColor = color_tmp;\n"
     "}\n"
 ;

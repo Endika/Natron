@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "RenderingProgressDialog.h"
 
 #include <cmath>
@@ -16,12 +20,12 @@
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QVBoxLayout>
-#include <QLabel>
 #include <QProgressBar>
 #include <QFrame>
 #include <QTextBrowser>
 #include <QApplication>
 #include <QThread>
+#include <QKeyEvent>
 #include <QString>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
@@ -31,15 +35,16 @@ CLANG_DIAG_ON(uninitialized)
 #include "Gui/Button.h"
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/Gui.h"
+#include "Gui/Label.h"
 
 struct RenderingProgressDialogPrivate
 {
     Gui* _gui;
     QVBoxLayout* _mainLayout;
-    QLabel* _totalLabel;
+    Natron::Label* _totalLabel;
     QProgressBar* _totalProgress;
     QFrame* _separator;
-    QLabel* _perFrameLabel;
+    Natron::Label* _perFrameLabel;
     QProgressBar* _perFrameProgress;
     Button* _cancelButton;
     QString _sequenceName;
@@ -106,10 +111,6 @@ RenderingProgressDialog::onCurrentFrameProgress(int progress)
 void
 RenderingProgressDialog::onProcessCanceled()
 {
-    if ( isVisible() ) {
-        hide();
-        Natron::informationDialog( tr("Render").toStdString(), tr("Render aborted.").toStdString() );
-    }
 	close();
 }
 
@@ -155,11 +156,10 @@ RenderingProgressDialog::onProcessFinished(int retCode)
         if (showLog) {
             assert(_imp->_process);
             LogWindow log(_imp->_process->getProcessLog(),this);
-            int status = log.exec();
-            assert(status == QDialog::Accepted);
+            ignore_result(log.exec());
         }
     }
-	close();
+    accept();
 }
 
 void
@@ -170,6 +170,36 @@ RenderingProgressDialog::onVideoEngineStopped(int retCode)
     } else {
         onProcessFinished(0);
     }
+}
+
+void
+RenderingProgressDialog::keyPressEvent(QKeyEvent* e)
+{
+    if (e->key() == Qt::Key_Escape) {
+        onCancelButtonClicked();
+    } else {
+        QDialog::keyPressEvent(e);
+    }
+}
+
+void
+RenderingProgressDialog::closeEvent(QCloseEvent* /*e*/)
+{
+    QDialog::DialogCode ret = (QDialog::DialogCode)result();
+    if (ret != QDialog::Accepted) {
+        Q_EMIT canceled();
+        reject();
+        Natron::informationDialog( tr("Render").toStdString(), tr("Render aborted.").toStdString() );
+        
+    }
+    
+}
+
+void
+RenderingProgressDialog::onCancelButtonClicked()
+{
+    Q_EMIT canceled();
+    close();
 }
 
 RenderingProgressDialog::RenderingProgressDialog(Gui* gui,
@@ -192,7 +222,7 @@ RenderingProgressDialog::RenderingProgressDialog(Gui* gui,
     _imp->_mainLayout->setContentsMargins(5, 5, 0, 0);
     _imp->_mainLayout->setSpacing(5);
 
-    _imp->_totalLabel = new QLabel(tr("Total progress:"),this);
+    _imp->_totalLabel = new Natron::Label(tr("Total progress:"),this);
     _imp->_mainLayout->addWidget(_imp->_totalLabel);
     _imp->_totalProgress = new QProgressBar(this);
     _imp->_totalProgress->setRange(0, 100);
@@ -211,7 +241,7 @@ RenderingProgressDialog::RenderingProgressDialog(Gui* gui,
     QString txt("Frame ");
     txt.append( QString::number(firstFrame) );
     txt.append(":");
-    _imp->_perFrameLabel = new QLabel(txt,this);
+    _imp->_perFrameLabel = new Natron::Label(txt,this);
     _imp->_mainLayout->addWidget(_imp->_perFrameLabel);
 
     _imp->_perFrameProgress = new QProgressBar(this);
@@ -223,7 +253,7 @@ RenderingProgressDialog::RenderingProgressDialog(Gui* gui,
     _imp->_cancelButton->setMaximumWidth(50);
     _imp->_mainLayout->addWidget(_imp->_cancelButton);
 
-    QObject::connect( _imp->_cancelButton, SIGNAL( clicked() ), this, SIGNAL( canceled() ) );
+    QObject::connect( _imp->_cancelButton, SIGNAL( clicked() ), this, SLOT( onCancelButtonClicked() ) );
 
 
     if (process) {

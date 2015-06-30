@@ -10,6 +10,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "KnobSerialization.h"
 
 #include <QDebug>
@@ -23,26 +27,36 @@
 
 
 ValueSerialization::ValueSerialization(const boost::shared_ptr<KnobI> & knob,
-                                       TypeExtraData* extraData,
-                                       int dimension,
-                                       bool save)
+                                       int dimension)
     : _knob(knob)
     , _dimension(dimension)
-    , _extraData(extraData)
-
+    , _master()
+    , _expression()
+    , _exprHasRetVar(false)
 {
-    if (save) {
-        std::pair< int, boost::shared_ptr<KnobI> > m = knob->getMaster(dimension);
-        if ( m.second && !knob->isMastersPersistenceIgnored() ) {
-            _master.masterDimension = m.first;
-            NamedKnobHolder* holder = dynamic_cast<NamedKnobHolder*>( m.second->getHolder() );
+}
 
-            _master.masterNodeName = holder ? holder->getName_mt_safe() : "";
-            assert(holder);
-            _master.masterKnobName = m.second->getName();
-        } else {
-            _master.masterDimension = -1;
-        }
+ValueSerialization::ValueSerialization(const boost::shared_ptr<KnobI> & knob,
+                   int dimension,
+                   bool exprHasRetVar,
+                   const std::string& expr)
+: _knob(knob)
+, _dimension(dimension)
+, _master()
+, _expression(expr)
+, _exprHasRetVar(exprHasRetVar)
+{
+    std::pair< int, boost::shared_ptr<KnobI> > m = knob->getMaster(dimension);
+    if ( m.second && !knob->isMastersPersistenceIgnored() ) {
+        _master.masterDimension = m.first;
+        NamedKnobHolder* holder = dynamic_cast<NamedKnobHolder*>( m.second->getHolder() );
+        
+        assert(holder);
+        // coverity[dead_error_line]
+        _master.masterNodeName = holder ? holder->getScriptName_mt_safe() : "";
+        _master.masterKnobName = m.second->getName();
+    } else {
+        _master.masterDimension = -1;
     }
 }
 
@@ -71,6 +85,8 @@ boost::shared_ptr<KnobI> KnobSerialization::createKnob(const std::string & typeN
         ret.reset( new File_Knob(NULL,"",dimension,false) );
     } else if ( typeName == OutputFile_Knob::typeNameStatic() ) {
         ret.reset( new OutputFile_Knob(NULL,"",dimension,false) );
+    } else if ( typeName == Button_Knob::typeNameStatic() ) {
+        ret.reset(new Button_Knob(NULL,"",dimension,false));
     }
     if (ret) {
         ret->populate();
@@ -81,7 +97,7 @@ boost::shared_ptr<KnobI> KnobSerialization::createKnob(const std::string & typeN
 
 void
 KnobSerialization::restoreKnobLinks(const boost::shared_ptr<KnobI> & knob,
-                                    const std::vector<boost::shared_ptr<Natron::Node> > & allNodes)
+                                    const std::list<boost::shared_ptr<Natron::Node> > & allNodes)
 {
     int i = 0;
 
@@ -89,9 +105,9 @@ KnobSerialization::restoreKnobLinks(const boost::shared_ptr<KnobI> & knob,
         if (it->masterDimension != -1) {
             ///we need to cycle through all the nodes of the project to find the real master
             boost::shared_ptr<Natron::Node> masterNode;
-            for (U32 k = 0; k < allNodes.size(); ++k) {
-                if (allNodes[k]->getName() == it->masterNodeName) {
-                    masterNode = allNodes[k];
+            for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it2 = allNodes.begin(); it2 != allNodes.end(); ++it2) {
+                if ((*it2)->getScriptName() == it->masterNodeName) {
+                    masterNode = *it2;
                     break;
                 }
             }
@@ -121,7 +137,7 @@ KnobSerialization::restoreKnobLinks(const boost::shared_ptr<KnobI> & knob,
 
 void
 KnobSerialization::restoreTracks(const boost::shared_ptr<KnobI> & knob,
-                                 const std::vector<boost::shared_ptr<Natron::Node> > & allNodes)
+                                 const std::list<boost::shared_ptr<Natron::Node> > & allNodes)
 {
     Double_Knob* isDouble = dynamic_cast<Double_Knob*>( knob.get() );
 
@@ -130,3 +146,17 @@ KnobSerialization::restoreTracks(const boost::shared_ptr<KnobI> & knob,
     }
 }
 
+void
+KnobSerialization::restoreExpressions(const boost::shared_ptr<KnobI> & knob)
+{
+    int dims = std::min(knob->getDimension(), _knob->getDimension());
+    try {
+        for (int i = 0; i < dims; ++i) {
+            (void)knob->restoreExpression(i, _expressions[i].first, _expressions[i].second);
+        }
+    } catch (const std::exception& e) {
+        QString err = QString("Failed to restore expression on %1: %2").arg(knob->getName().c_str()).arg(e.what());
+        appPTR->writeToOfxLog_mt_safe(err);
+    }
+    
+}

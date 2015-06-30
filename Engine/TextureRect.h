@@ -11,6 +11,10 @@
 #ifndef NATRON_ENGINE_TEXTURERECT_H_
 #define NATRON_ENGINE_TEXTURERECT_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Engine/Rect.h"
 
 /** @class This class describes the rectangle (or portion) of an image that is contained
@@ -103,6 +107,14 @@ struct TextureRect
         intersection->y2 = std::min(y2,r.y2);
 
         return true;
+    }
+    
+    bool contains(const TextureRect& other) const
+    {
+        return other.x1 >= x1 &&
+        other.y1 >= y1 &&
+        other.x2 <= x2 &&
+        other.y2 <= y2;
     }
 };
 

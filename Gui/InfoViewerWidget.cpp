@@ -7,13 +7,16 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "InfoViewerWidget.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <QtGui/QImage>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QThread>
 #include <QPaintEvent>
 #include <QPainter>
@@ -23,6 +26,7 @@
 #include "Engine/Lut.h"
 #include "Engine/Image.h"
 #include "Gui/ViewerGL.h"
+#include "Gui/Label.h"
 
 using std::cout; using std::endl;
 using namespace Natron;
@@ -30,21 +34,53 @@ using namespace Natron;
 InfoViewerWidget::InfoViewerWidget(ViewerGL* v,
                                    const QString & description,
                                    QWidget* parent)
-    : QWidget(parent)
-      , viewer(v)
-      , _comp(eImageComponentNone)
+: QWidget(parent)
+, viewer(v)
+, _comp(ImageComponents::getNoneComponents())
+, _colorValid(false)
+, _colorApprox(false)
 {
-
+    for (int i = 0; i < 4; ++i) {
+        currentColor[i] = 0;
+    }
     setFixedHeight(20);
-    setStyleSheet( QString("background :black") );
+    setStyleSheet( QString("background-color: black;\n"
+                           "color : rgba(200,200,200,255);\n"
+                           "QToolTip { background-color: black;}") );
     
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    
+    
+    QString tt = QString(tr("Informations from left to right:<br/>"
+                            "<br/>"
+                            "<br><font color=orange>Input:</font> Specifies whether the information are for the input <b>A</b> or <b>B</b></br>"
+                            "<br/>"
+                            "<br><font color=orange>Image format:</font>  An identifier for the pixel components and bitdepth of the displayed image</br>"
+                            "<br/>"
+                            "<br><font color=orange>Format:</font>  The resolution of the project's format</br>"
+                            "<br/>"
+                            "<br><font color=orange>RoD:</font>  The region of definition of the displayed image</br>"
+                            "<br/>"
+                            "<br><font color=orange>Fps:</font>  (Only active during playback) The frame-rate of the play-back sustained by the viewer</br>"
+                            "<br/>"
+                            "<br><font color=orange>Coordinates:</font>  The coordinates of the current mouse location</br>"
+                            "<br/>"
+                            "<br><font color=orange>RGBA:</font>  The RGBA color of the displayed image. Note that if some <b>?</b> are set instead of colors "
+                            "that means the underlying image cannot be accessed internally, you should refresh the viewer to make it available. "
+                            "Also sometimes you may notice the tild '~' before the colors: it indicates whether the color indicated is the true "
+                            "color in the image (no tild) or this is an approximated mipmap that has been filtered with a box filter (tild), "
+                            "in which case this may not reflect exactly the underlying internal image. </br>"
+                            "<br/>"
+                            "<br><font color=orange>HSVL:</font>  For convenience the RGBA color is also displayed as HSV(L)</br>"
+                            "<br/>"
+                            ""));
+    setToolTip(tt);
 
     layout = new QHBoxLayout(this);
     layout->setSpacing(0);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    descriptionLabel = new QLabel(this);
+    descriptionLabel = new Natron::Label(this);
     {
         const QFont& font = descriptionLabel->font();
 
@@ -58,14 +94,14 @@ InfoViewerWidget::InfoViewerWidget(ViewerGL* v,
         int width = fm.width("A:");
         descriptionLabel->setMinimumWidth(width);
     }
-    imageFormat = new QLabel(this);
+    imageFormat = new Natron::Label(this);
     {
         QFontMetrics fm = imageFormat->fontMetrics();
-        int width = fm.width("RGBA32f");
+        int width = fm.width("backward.motion32f");
         imageFormat->setMinimumWidth(width);
     }
 
-    resolution = new QLabel(this);
+    resolution = new Natron::Label(this);
     {
         QFontMetrics fm = resolution->fontMetrics();
         int width = fm.width("00000x00000");
@@ -73,7 +109,7 @@ InfoViewerWidget::InfoViewerWidget(ViewerGL* v,
     }
 
 
-    coordDispWindow = new QLabel(this);
+    coordDispWindow = new Natron::Label(this);
     {
         QFontMetrics fm = coordDispWindow->fontMetrics();
         int width = fm.width("RoD: 000 000 0000 0000");
@@ -81,7 +117,7 @@ InfoViewerWidget::InfoViewerWidget(ViewerGL* v,
         coordDispWindow->setMinimumWidth(width);
     }
    
-    _fpsLabel = new QLabel(this);
+    _fpsLabel = new Natron::Label(this);
     {
         QFontMetrics fm = _fpsLabel->fontMetrics();
         int width = fm.width("100 fps");
@@ -90,24 +126,24 @@ InfoViewerWidget::InfoViewerWidget(ViewerGL* v,
         _fpsLabel->hide();
     }
     
-    coordMouse = new QLabel(this);
+    coordMouse = new Natron::Label(this);
     {
         QFontMetrics fm = coordMouse->fontMetrics();
         int width = fm.width("x=00000 y=00000");
         coordMouse->setMinimumWidth(width);
     }
 
-    rgbaValues = new QLabel(this);
+    rgbaValues = new Natron::Label(this);
     {
         QFontMetrics fm = rgbaValues->fontMetrics();
-        int width = fm.width("0.00000 0.00000 0.00000");
+        int width = fm.width("0.00000 0.00000 0.00000 ~ ");
         rgbaValues->setMinimumWidth(width);
     }
 
-    color = new QLabel(this);
+    color = new Natron::Label(this);
     color->setFixedSize(20, 20);
     
-    hvl_lastOption = new QLabel(this);
+    hvl_lastOption = new Natron::Label(this);
     {
         QFontMetrics fm = hvl_lastOption->fontMetrics();
         int width = fm.width("H:000 S:0.00 V:0.00 L:0.00000");
@@ -199,6 +235,16 @@ InfoViewerWidget::~InfoViewerWidget()
 }
 
 void
+InfoViewerWidget::setColorApproximated(bool approx)
+{
+    if (_colorApprox == approx) {
+        return;
+    }
+    _colorApprox = approx;
+    setColor(currentColor[0], currentColor[1], currentColor[2], currentColor[3]);
+}
+
+void
 InfoViewerWidget::setColor(float r,
                            float g,
                            float b,
@@ -206,38 +252,56 @@ InfoViewerWidget::setColor(float r,
 {
     QString values;
     const QFont& font = rgbaValues->font();
+    
+    currentColor[0] = r;
+    currentColor[1] = g;
+    currentColor[2] = b;
+    currentColor[3] = a;
+    
+    QString rS = _colorValid ? QString::number(r,'f',5) : "?";
+    QString gS = _colorValid ? QString::number(g,'f',5) : "?";
+    QString bS = _colorValid ? QString::number(b,'f',5) : "?";
+    QString aS = _colorValid ? QString::number(a,'f',5) : "?";
+    
     //values = QString("<font color='red'>%1</font> <font color='green'>%2</font> <font color='blue'>%3</font> <font color=\"#DBE0E0\">%4</font>")
     // the following three colors have an equal luminance (=0.4), which makes the text easier to read.
-    switch (_comp) {
-    case Natron::eImageComponentNone:
+
+    if (_comp.getNumComponents() == 0 || _comp.getNumComponents() > 4) {
         values = QString();
-        break;
-    case Natron::eImageComponentAlpha:
+    } else if (_comp.getNumComponents() == 1) {
         values = QString("<font color=\"#DBE0E0\" face=\"%2\" size=%3>%1</font>")
-            .arg(a,0,'f',5).arg(font.family()).arg(font.pixelSize());
-        break;
-    case Natron::eImageComponentRGB:
+            .arg(aS).arg(font.family()).arg(font.pixelSize());
+    } else if (_comp.getNumComponents() == 2) {
+        values = QString("<font color='#d93232' face=\"%3\" size=%4>%1  </font>"
+                         "<font color='#00a700' face=\"%3\" size=%4>%2  </font>")
+        .arg(rS)
+        .arg(gS)
+        .arg(font.family())
+        .arg(font.pixelSize());
+    } else if (_comp.getNumComponents() == 3) {
         values = QString("<font color='#d93232' face=\"%4\" size=%5>%1  </font>"
                            "<font color='#00a700' face=\"%4\" size=%5>%2  </font>"
                            "<font color='#5858ff' face=\"%4\" size=%5>%3</font>")
-                   .arg(r,0,'f',5)
-                   .arg(g,0,'f',5)
-                   .arg(b,0,'f',5)
+                   .arg(rS)
+                   .arg(gS)
+                   .arg(bS)
                    .arg(font.family())
                    .arg(font.pixelSize());
-        break;
-    case Natron::eImageComponentRGBA:
+    } else if (_comp.getNumComponents() == 4) {
         values = QString("<font color='#d93232' face=\"%5\" size=%6>%1  </font>"
                            "<font color='#00a700' face=\"%5\" size=%6>%2  </font>"
                            "<font color='#5858ff' face=\"%5\" size=%6>%3  </font>"
                            "<font color=\"#DBE0E0\" face=\"%5\" size=%6>%4</font>")
-                   .arg(r,0,'f',5)
-                   .arg(g,0,'f',5)
-                   .arg(b,0,'f',5)
-                   .arg(a,0,'f',5)
+                   .arg(rS)
+                   .arg(gS)
+                   .arg(bS)
+                   .arg(aS)
                    .arg(font.family())
                    .arg(font.pixelSize());
-        break;
+    }
+    
+    if (_colorApprox) {
+        values.prepend("<b> ~ </b>");
     }
     rgbaValues->setText(values);
     rgbaValues->repaint();
@@ -248,7 +312,7 @@ InfoViewerWidget::setColor(float r,
     double srgb_g = Color::to_func_srgb(g);
     double srgb_b = Color::to_func_srgb(b);
     QColor col;
-    col.setRgbF( Natron::clamp(srgb_r), Natron::clamp(srgb_g), Natron::clamp(srgb_b) );
+    col.setRgbF( Natron::clamp(srgb_r, 0., 1.), Natron::clamp(srgb_g, 0., 1.), Natron::clamp(srgb_b, 0., 1.) );
     QPixmap pix(15,15);
     pix.fill(col);
     color->setPixmap(pix);
@@ -256,20 +320,39 @@ InfoViewerWidget::setColor(float r,
 
     const QFont &hsvFont = hvl_lastOption->font();
 
+    
     Color::rgb_to_hsv(srgb_r,srgb_g,srgb_b,&h,&s,&v);
     l = 0.2125 * r + 0.7154 * g + 0.0721 * b; // L according to Rec.709
+    
+    QString lS = _colorValid ? QString::number(l,'f',5) : "?";
+    QString hS = _colorValid ? QString::number(h,'f',0) : "?";
+    QString sS = _colorValid ? QString::number(s,'f',2) : "?";
+    QString vS = _colorValid ? QString::number(v,'f',2) : "?";
+    
     QString hsvlValues;
     hsvlValues = QString("<font color=\"#DBE0E0\" face=\"%5\" size=%6>H:%1 S:%2 V:%3  L:%4</font>")
-                 .arg(h,0,'f',0)
-                 .arg(s,0,'f',2)
-                 .arg(v,0,'f',2)
-                 .arg(l,0,'f',5)
+                 .arg(hS)
+                 .arg(sS)
+                 .arg(vS)
+                 .arg(lS)
                  .arg(hsvFont.family())
                  .arg(hsvFont.pixelSize());
 
     hvl_lastOption->setText(hsvlValues);
     hvl_lastOption->repaint();
 } // setColor
+
+void
+InfoViewerWidget::setColorValid(bool valid)
+{
+    if (_colorValid == valid) {
+        return;
+    }
+    _colorValid = valid;
+    if (!valid) {
+        setColor(currentColor[0], currentColor[1], currentColor[2], currentColor[3]);
+    }
+}
 
 void
 InfoViewerWidget::setMousePos(QPoint p)
@@ -310,7 +393,7 @@ InfoViewerWidget::setResolution(const Format & f)
     format = f;
     
     const QFont& font = resolution->font();
-    if ( format.getName() == std::string("") ) {
+    if ( format.getName().empty() ) {
         
         QString w,h;
         w.setNum(format.width());
@@ -359,7 +442,7 @@ InfoViewerWidget::setDataWindow(const RectI & r)
 }
 
 void
-InfoViewerWidget::setImageFormat(Natron::ImageComponentsEnum comp,
+InfoViewerWidget::setImageFormat(const Natron::ImageComponents& comp,
                                  Natron::ImageBitDepthEnum depth)
 {
 
@@ -372,11 +455,5 @@ InfoViewerWidget::setImageFormat(Natron::ImageComponentsEnum comp,
     text.append("</font>");
     imageFormat->setText(text);
     _comp = comp;
-}
-
-void
-InfoViewerWidget::paintEvent(QPaintEvent* e)
-{
-    QWidget::paintEvent(e);
 }
 

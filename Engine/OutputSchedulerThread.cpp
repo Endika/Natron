@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "OutputSchedulerThread.h"
 
 #include <iostream>
@@ -122,7 +126,8 @@ struct RequestedFrame
 struct ProducedFrame
 {
     BufferableObjectList frames;
-    RequestedFrame* request;
+    boost::shared_ptr<RequestedFrame> request;
+    bool processRequest;
 };
 
 struct OutputSchedulerThreadPrivate
@@ -148,6 +153,9 @@ struct OutputSchedulerThreadPrivate
     bool isAbortRequestBlocking;
     QWaitCondition abortedRequestedCondition;
     QMutex abortedRequestedMutex; // protects abortRequested
+    
+    bool abortFlag; // Same as abortRequested > 0 but held by a mutex on a smaller scope.
+    mutable QMutex abortFlagMutex; // protects abortFlag
 
     
     QMutex abortBeingProcessedMutex; //protects abortBeingProcessed
@@ -201,6 +209,9 @@ struct OutputSchedulerThreadPrivate
     Natron::OutputEffectInstance* outputEffect; //< The effect used as output device
     RenderEngine* engine;
 
+    bool runningCallback;
+    QMutex runningCallbackMutex;
+    QWaitCondition runningCallbackCond;
     
     OutputSchedulerThreadPrivate(RenderEngine* engine,Natron::OutputEffectInstance* effect,OutputSchedulerThread::ProcessFrameModeEnum mode)
     : buf()
@@ -219,6 +230,8 @@ struct OutputSchedulerThreadPrivate
     , isAbortRequestBlocking(false)
     , abortedRequestedCondition()
     , abortedRequestedMutex()
+    , abortFlag(false)
+    , abortFlagMutex()
     , abortBeingProcessedMutex()
     , abortBeingProcessed(false)
     , processRunning(false)
@@ -241,6 +254,9 @@ struct OutputSchedulerThreadPrivate
     , framesToRenderNotEmptyCond()
     , outputEffect(effect)
     , engine(engine)
+    , runningCallback(false)
+    , runningCallbackMutex()
+    , runningCallbackCond()
     {
        
     }
@@ -300,7 +316,7 @@ struct OutputSchedulerThreadPrivate
     {
         ///Private shouldn't lock
         assert(!renderThreadsMutex.tryLock());
-        for (RenderThreads::iterator it = renderThreads.begin() ; it!=renderThreads.end();++it) {
+        for (RenderThreads::iterator it = renderThreads.begin(); it != renderThreads.end(); ++it) {
             if (it->thread == runnable) {
                 return it;
             }
@@ -355,7 +371,7 @@ struct OutputSchedulerThreadPrivate
         ///Private shouldn't lock
         assert( !renderThreadsMutex.tryLock() );
         int ret = 0;
-        for (RenderThreads::const_iterator it = renderThreads.begin() ; it!=renderThreads.end();++it) {
+        for (RenderThreads::const_iterator it = renderThreads.begin(); it != renderThreads.end(); ++it) {
             if (it->active) {
                 ++ret;
             }
@@ -367,7 +383,7 @@ struct OutputSchedulerThreadPrivate
     {
         for (;;) {
             bool hasRemoved = false;
-            for (RenderThreads::iterator it = renderThreads.begin() ; it!=renderThreads.end();++it) {
+            for (RenderThreads::iterator it = renderThreads.begin(); it != renderThreads.end(); ++it) {
                 if (it->thread->hasQuit()) {
                     it->thread->deleteLater();
                     renderThreads.erase(it);
@@ -400,7 +416,7 @@ struct OutputSchedulerThreadPrivate
             threads = renderThreads;
         }
         
-        for (RenderThreads::iterator it = threads.begin(); it != threads.end();++it) {
+        for (RenderThreads::iterator it = threads.begin(); it != threads.end(); ++it) {
             it->thread->wait();
         }
         {
@@ -425,6 +441,8 @@ OutputSchedulerThread::OutputSchedulerThread(RenderEngine* engine,Natron::Output
     QObject::connect(_imp->timer.get(), SIGNAL(fpsChanged(double,double)), _imp->engine, SIGNAL(fpsChanged(double,double)));
     
     QObject::connect(this, SIGNAL(s_abortRenderingOnMainThread(bool)), this, SLOT(abortRendering(bool)));
+    
+    QObject::connect(this, SIGNAL(s_executeCallbackOnMainThread(QString)), this, SLOT(onExecuteCallbackOnMainThread(QString)));
     
     setObjectName("Scheduler thread");
 }
@@ -738,6 +756,13 @@ OutputSchedulerThread::notifyThreadAboutToQuit(RenderThreadTask* thread)
     }
 }
 
+bool
+OutputSchedulerThread::isBeingAborted() const
+{
+    QMutexLocker k(&_imp->abortFlagMutex);
+    return _imp->abortFlag;
+}
+
 void
 OutputSchedulerThread::startRender()
 {
@@ -750,6 +775,7 @@ OutputSchedulerThread::startRender()
     ///They will be in the range determined by firstFrame-lastFrame
     int startingFrame;
     int firstFrame,lastFrame;
+    bool forward;
     {
         ///Copy the last requested run args
         
@@ -758,9 +784,13 @@ OutputSchedulerThread::startRender()
         firstFrame = _imp->livingRunArgs.firstFrame;
         lastFrame = _imp->livingRunArgs.lastFrame;
         startingFrame = timelineGetTime();
+        forward = _imp->livingRunArgs.timelineDirection == OutputSchedulerThread::eRenderDirectionForward;
     }
     
     aboutToStartRender();
+    
+    ///Notify everyone that the render is started
+    _imp->engine->s_renderStarted(forward);
     
     ///Flag that we're now doing work
     {
@@ -867,7 +897,12 @@ OutputSchedulerThread::stopRender()
             
             ///reset back the abort flag
             _imp->abortRequested = 0;
-            _imp->outputEffect->getApp()->getProject()->setAllNodesAborted(false);
+            
+            {
+                QMutexLocker k(&_imp->abortFlagMutex);
+                _imp->abortFlag = false;
+            }
+            //_imp->outputEffect->getApp()->getProject()->setAllNodesAborted(false);
             _imp->abortedRequestedCondition.wakeAll();
         }
         
@@ -886,7 +921,7 @@ OutputSchedulerThread::stopRender()
         ///Notify everyone that the render is finished
         _imp->engine->s_renderFinished(wasAborted ? 1 : 0);
         
-        onRenderStopped();
+        onRenderStopped(wasAborted);
 
         
     }
@@ -1067,8 +1102,8 @@ OutputSchedulerThread::run()
                         
                     }
 
-                    emit s_doProcessOnMainThread(framesToRender,!renderFinished, timeToSeek);
-                                        
+                    Q_EMIT s_doProcessOnMainThread(framesToRender,!renderFinished, timeToSeek);
+                    
                     while (_imp->processRunning) {
                         _imp->processCondition.wait(&_imp->processMutex);
                     }
@@ -1079,7 +1114,7 @@ OutputSchedulerThread::run()
                 /////At this point the frame has been processed by the output device
                 
                 
-                notifyFrameRendered(expectedTimeToRender,eSchedulingPolicyOrdered);
+                notifyFrameRendered(expectedTimeToRender,0,1,eSchedulingPolicyOrdered);
                 
                 ///////////
                 /// End of the loop, refresh bufferEmpty
@@ -1124,11 +1159,13 @@ OutputSchedulerThread::adjustNumberOfThreads(int* newNThreads)
     /////If we were analysing the CPU activity, now set the appropriate number of threads to render.
     int optimalNThreads;
     
+    ///How many parallel renders the user wants
     int userSettingParallelThreads = appPTR->getCurrentSettings()->getNumberOfParallelRenders();
     
+    ///How many threads are running in the application
     int runningThreads = appPTR->getNRunningThreads() + QThreadPool::globalInstance()->activeThreadCount();
     
-    
+    ///How many current threads are used by THIS renderer
     int currentParallelRenders = getNRenderThreads();
     
     if (userSettingParallelThreads == 0) {
@@ -1141,7 +1178,7 @@ OutputSchedulerThread::adjustNumberOfThreads(int* newNThreads)
     optimalNThreads = std::max(1,optimalNThreads);
 
 
-    if (runningThreads < optimalNThreads && currentParallelRenders < optimalNThreads) {
+    if ((runningThreads < optimalNThreads && currentParallelRenders < optimalNThreads) || currentParallelRenders == 0) {
      
         ////////
         ///Launch 1 thread
@@ -1165,17 +1202,25 @@ OutputSchedulerThread::adjustNumberOfThreads(int* newNThreads)
 
 void
 OutputSchedulerThread::notifyFrameRendered(int frame,
+                                           int viewIndex,
+                                           int viewsCount,
                                            Natron::SchedulingPolicyEnum policy)
 {
-    _imp->engine->s_frameRendered(frame);
-    
+    if (viewIndex == viewsCount -1) {
+        _imp->engine->s_frameRendered(frame);
+    }
+    double percentage;
     if (policy == eSchedulingPolicyFFA) {
         
         QMutexLocker l(&_imp->runArgsMutex);
-        ++_imp->nFramesRendered;
-        if ( _imp->nFramesRendered == (U64)(_imp->livingRunArgs.lastFrame - _imp->livingRunArgs.firstFrame + 1) ) {
+        if (viewIndex == viewsCount -1) {
+            ++_imp->nFramesRendered;
+        }
+        U64 totalFrames = _imp->livingRunArgs.lastFrame - _imp->livingRunArgs.firstFrame + 1;
+        percentage = (double)_imp->nFramesRendered / totalFrames;
+        if ( _imp->nFramesRendered == totalFrames) {
+
             _imp->renderFinished = true;
-            
             l.unlock();
 
             ///Notify the scheduler rendering is finished by append a fake frame to the buffer
@@ -1192,10 +1237,49 @@ OutputSchedulerThread::notifyFrameRendered(int frame,
             int newNThreads;
             adjustNumberOfThreads(&newNThreads);
         }
+    } else {
+        QMutexLocker l(&_imp->runArgsMutex);
+        percentage = (double)frame / _imp->livingRunArgs.lastFrame - _imp->livingRunArgs.firstFrame + 1;
     }
+    
+    
     if ( appPTR->isBackground() ) {
         QString frameStr = QString::number(frame);
-        appPTR->writeToOutputPipe(kFrameRenderedStringLong + frameStr,kFrameRenderedStringShort + frameStr);
+        
+        QString pStr = QString::number(percentage * 100);
+        appPTR->writeToOutputPipe(kFrameRenderedStringLong + frameStr + " (" + pStr + "%)",kFrameRenderedStringShort + frameStr);
+    }
+    
+    if (_imp->outputEffect->isWriter()) {
+        std::string cb = _imp->outputEffect->getNode()->getAfterFrameRenderCallback();
+        if (!cb.empty()) {
+            std::vector<std::string> args;
+            std::string error;
+            Natron::getFunctionArguments(cb, &error, &args);
+            if (!error.empty()) {
+                _imp->outputEffect->getApp()->appendToScriptEditor("Failed to run after frame render callback: " + error);
+                return;
+            }
+            
+            std::string signatureError;
+            signatureError.append("The after frame render callback supports the following signature(s):\n");
+            signatureError.append("- callback(frame, thisNode, app)");
+            if (args.size() != 3) {
+                _imp->outputEffect->getApp()->appendToScriptEditor("Failed to run after frame render callback: " + signatureError);
+                return;
+            }
+            
+            if (args[0] != "frame" || args[1] != "thisNode" || args[2] != "app" ) {
+                _imp->outputEffect->getApp()->appendToScriptEditor("Failed to run after frame render callback: " + signatureError);
+                return;
+            }
+            
+            std::stringstream ss;
+            ss << cb << "(" << frame << ",";
+            std::string script = ss.str();
+            runCallbackWithVariables(script.c_str());
+            
+        }
     }
 }
 
@@ -1240,7 +1324,9 @@ OutputSchedulerThread::appendToBuffer(double time,int view,const BufferableObjec
         return;
     }
     BufferableObjectList::const_iterator next = frames.begin();
-    ++next;
+    if (next != frames.end()) {
+        ++next;
+    }
     for (BufferableObjectList::const_iterator it = frames.begin(); it != frames.end(); ++it) {
         if (next != frames.end()) {
             appendToBuffer_internal(time, view, *it, false);
@@ -1310,9 +1396,12 @@ OutputSchedulerThread::abortRendering(bool blocking)
                 if (!blocking && _imp->abortRequested > 0) {
                     return;
                 }
-                
-                ///Flag the whole tree recursively that we aborted
-                _imp->outputEffect->getApp()->getProject()->setAllNodesAborted(true);
+
+                {
+                    QMutexLocker k(&_imp->abortFlagMutex);
+                    _imp->abortFlag = true;
+                }
+                _imp->outputEffect->getApp()->getProject()->notifyRenderBeingAborted();
                 
                 ++_imp->abortRequested;
             }
@@ -1329,6 +1418,13 @@ OutputSchedulerThread::abortRendering(bool blocking)
                 _imp->processRunning = false;
                 _imp->processCondition.wakeOne();
             }
+            
+            {
+                QMutexLocker l3(&_imp->runningCallbackMutex);
+                _imp->runningCallback = false;
+                _imp->runningCallbackCond.wakeAll();
+            }
+            
         }
         ///If the scheduler is asleep waiting for the buffer to be filling up, we post a fake request
         ///that will not be processed anyway because the first thing it does is checking for abort
@@ -1585,6 +1681,50 @@ OutputSchedulerThread::getEngine() const
     return _imp->engine;
 }
 
+void
+OutputSchedulerThread::onExecuteCallbackOnMainThread(QString callback)
+{
+    assert(QThread::currentThread() == qApp->thread());
+    std::string err,output;
+    if (!Natron::interpretPythonScript(callback.toStdString(), &err, &output)) {
+        _imp->outputEffect->getApp()->appendToScriptEditor("Failed to run callback: " + err);
+    } else if (!output.empty()) {
+        _imp->outputEffect->getApp()->appendToScriptEditor(output);
+    }
+    
+    QMutexLocker k(&_imp->runningCallbackMutex);
+    _imp->runningCallback = false;
+    _imp->runningCallbackCond.wakeAll();
+}
+
+void
+OutputSchedulerThread::runCallback(const QString& callback)
+{
+    QMutexLocker k(&_imp->runningCallbackMutex);
+    _imp->runningCallback = true;
+    Q_EMIT s_executeCallbackOnMainThread(callback);
+    
+    while (_imp->runningCallback) {
+        _imp->runningCallbackCond.wait(&_imp->runningCallbackMutex);
+    }
+
+}
+void
+OutputSchedulerThread::runCallbackWithVariables(const QString& callback)
+{
+    if (!callback.isEmpty()) {
+        QString script = callback;
+        std::string appID = _imp->outputEffect->getApp()->getAppIDString();
+        std::string thisNodeStr = appID + "." + _imp->outputEffect->getNode()->getFullyQualifiedName();
+        script.append(thisNodeStr.c_str());
+        script.append(",");
+        script.append(appID.c_str());
+        script.append(")\n");
+        Q_EMIT s_executeCallbackOnMainThread(script);
+    }
+}
+
+
 ////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////
 //////////////////////// RenderThreadTask ////////////
@@ -1734,6 +1874,36 @@ private:
     virtual void
     renderFrame(int time) {
         
+        std::string cb = _imp->output->getNode()->getBeforeFrameRenderCallback();
+        if (!cb.empty()) {
+            std::vector<std::string> args;
+            std::string error;
+            Natron::getFunctionArguments(cb, &error, &args);
+            if (!error.empty()) {
+                _imp->output->getApp()->appendToScriptEditor("Failed to run before frame render callback: " + error);
+                return;
+            }
+            
+            std::string signatureError;
+            signatureError.append("The before frame render callback supports the following signature(s):\n");
+            signatureError.append("- callback(frame, thisNode, app)");
+            if (args.size() != 3) {
+                _imp->output->getApp()->appendToScriptEditor("Failed to run before frame render callback: " + signatureError);
+                return;
+            }
+            
+            if (args[0] != "frame" || args[1] != "thisNode" || args[2] != "app" ) {
+                _imp->output->getApp()->appendToScriptEditor("Failed to run before frame render callback: " + signatureError);
+                return;
+            }
+
+            std::stringstream ss;
+            ss << cb << "(" << time << ",";
+            std::string script = ss.str();
+            _imp->scheduler->runCallbackWithVariables(script.c_str());
+
+        }
+        
         try {
             ////Writers always render at scale 1.
             int mipMapLevel = 0;
@@ -1794,23 +1964,29 @@ private:
                 
                 StatusEnum stat = activeInputToRender->getRegionOfDefinition_public(activeInputToRenderHash,time, scale, i, &rod, &isProjectFormat);
                 if (stat != eStatusFailed) {
-                    ImageComponentsEnum components;
+                    std::list<ImageComponents> components;
                     ImageBitDepthEnum imageDepth;
                     activeInputToRender->getPreferredDepthAndComponents(-1, &components, &imageDepth);
                     RectI renderWindow;
                     rod.toPixelEnclosing(scale, par, &renderWindow);
                     
-                    Node::ParallelRenderArgsSetter frameRenderARgs(activeInputToRender->getNode().get(),
-                                                                   time,
-                                                                   i,
-                                                                   false,  // is this render due to user interaction ?
-                                                                   canOnlyHandleOneView, // is this sequential ?
-                                                                   true,
-                                                                   activeInputToRenderHash,
-                                                                   false,
-                                                                   _imp->output->getApp()->getTimeLine().get());
+                    ParallelRenderArgsSetter frameRenderArgs(activeInputToRender->getApp()->getProject().get(),
+                                                             time,
+                                                             i,
+                                                             false,  // is this render due to user interaction ?
+                                                             canOnlyHandleOneView, // is this sequential ?
+                                                             true, // canAbort ?
+                                                             0, //renderAge
+                                                             _imp->output, // viewer requester
+                                                             0, //texture index
+                                                             _imp->output->getApp()->getTimeLine().get(),
+                                                             NodePtr(),
+                                                             false);
                     
-                    boost::shared_ptr<Natron::Image> img =
+                    RenderingFlagSetter flagIsRendering(activeInputToRender->getNode().get());
+                    
+                    ImageList planes;
+                    EffectInstance::RenderRoIRetCode retCode =
                     activeInputToRender->renderRoI( EffectInstance::RenderRoIArgs(time, //< the time at which to render
                                                                                   scale, //< the scale at which to render
                                                                                   mipMapLevel, //< the mipmap level (redundant with the scale)
@@ -1819,13 +1995,20 @@ private:
                                                                                   renderWindow, //< the region of interest (in pixel coordinates)
                                                                                   rod, // < any precomputed rod ? in canonical coordinates
                                                                                   components,
-                                                                                  imageDepth));
+                                                                                  imageDepth,
+                                                                                  _imp->output),&planes);
+                    if (retCode != EffectInstance::eRenderRoIRetCodeOk) {
+                        _imp->scheduler->notifyRenderFailure("Error caught while rendering");
+                        return;
+                    }
                     
                     ///If we need sequential rendering, pass the image to the output scheduler that will ensure the sequential ordering
                     if (!renderDirectly) {
-                        _imp->scheduler->appendToBuffer(time, i, boost::dynamic_pointer_cast<BufferableObject>(img));
+                        for (ImageList::iterator it = planes.begin(); it != planes.end(); ++it) {
+                            _imp->scheduler->appendToBuffer(time, i, boost::dynamic_pointer_cast<BufferableObject>(*it));
+                        }
                     } else {
-                        _imp->scheduler->notifyFrameRendered(time,eSchedulingPolicyFFA);
+                        _imp->scheduler->notifyFrameRendered(time,i,viewsCount,eSchedulingPolicyFFA);
                     }
                     
                 } else {
@@ -1871,7 +2054,7 @@ DefaultScheduler::processFrame(const BufferedFrames& frames)
     RectD rod;
     RectI roi;
     
-    Natron::ImageComponentsEnum components;
+    std::list<Natron::ImageComponents> components;
     Natron::ImageBitDepthEnum imageDepth;
     _effect->getPreferredDepthAndComponents(-1, &components, &imageDepth);
     
@@ -1884,21 +2067,26 @@ DefaultScheduler::processFrame(const BufferedFrames& frames)
         ignore_result(_effect->getRegionOfDefinition_public(hash,it->time, scale, it->view, &rod, &isProjectFormat));
         rod.toPixelEnclosing(0, par, &roi);
         
-        Node::ParallelRenderArgsSetter frameRenderARgs(_effect->getNode().get(),
-                                                       it->time,
-                                                       it->view,
-                                                       false,  // is this render due to user interaction ?
-                                                       canOnlyHandleOneView, // is this sequential ?
-                                                       true,
-                                                       hash,
-                                                       false,
-                                                       _effect->getApp()->getTimeLine().get());
+        ParallelRenderArgsSetter frameRenderArgs(_effect->getApp()->getProject().get(),
+                                                 it->time,
+                                                 it->view,
+                                                 false,  // is this render due to user interaction ?
+                                                 canOnlyHandleOneView, // is this sequential ?
+                                                 true, //canAbort
+                                                 0, //renderAge
+                                                 _effect, //viewer
+                                                 0, //texture index
+                                                 _effect->getApp()->getTimeLine().get(),
+                                                 NodePtr(),
+                                                 false);
+        
+        RenderingFlagSetter flagIsRendering(_effect->getNode().get());
         
         ImagePtr inputImage = boost::dynamic_pointer_cast<Natron::Image>(it->frame);
         assert(inputImage);
         
-        std::list<ImagePtr> inputImages;
-        inputImages.push_back(inputImage);
+        EffectInstance::InputImagesMap inputImages;
+        inputImages[0].push_back(inputImage);
         Natron::EffectInstance::RenderRoIArgs args(frame.time,
                                                    scale,0,
                                                    it->view,
@@ -1907,11 +2095,14 @@ DefaultScheduler::processFrame(const BufferedFrames& frames)
                                                    rod,
                                                    components,
                                                    imageDepth,
-                                                   3,
-                                                   false,
+                                                   _effect,
                                                    inputImages);
         try {
-            ignore_result(_effect->renderRoI(args));
+            ImageList planes;
+            EffectInstance::RenderRoIRetCode retCode = _effect->renderRoI(args,&planes);
+            if (retCode != EffectInstance::eRenderRoIRetCodeOk) {
+                notifyRenderFailure("");
+            }
         } catch (const std::exception& e) {
             notifyRenderFailure(e.what());
         }
@@ -1967,6 +2158,7 @@ DefaultScheduler::getSchedulingPolicy() const
     }
 }
 
+
 void
 DefaultScheduler::aboutToStartRender()
 {
@@ -1982,22 +2174,87 @@ DefaultScheduler::aboutToStartRender()
         _effect->setCurrentFrame(last);
     }
     
+    bool isBackGround = appPTR->isBackground();
     
-    if ( !appPTR->isBackground() ) {
+    if (!isBackGround) {
         _effect->setKnobsFrozen(true);
     } else {
         appPTR->writeToOutputPipe(kRenderingStartedLong, kRenderingStartedShort);
     }
+    
+    std::string cb = _effect->getNode()->getBeforeRenderCallback();
+    if (!cb.empty()) {
+        std::vector<std::string> args;
+        std::string error;
+        Natron::getFunctionArguments(cb, &error, &args);
+        if (!error.empty()) {
+            _effect->getApp()->appendToScriptEditor("Failed to run beforeRender callback: " + error);
+            return;
+        }
+        
+        std::string signatureError;
+        signatureError.append("The after render callback supports the following signature(s):\n");
+        signatureError.append("- callback(thisNode, app)");
+        if (args.size() != 2) {
+            _effect->getApp()->appendToScriptEditor("Failed to run beforeRender callback: " + signatureError);
+            return;
+        }
+        
+        if (args[0] != "thisNode" || args[1] != "app" ) {
+            _effect->getApp()->appendToScriptEditor("Failed to run beforeRender callback: " + signatureError);
+            return;
+        }
+        
+        
+        std::string script(cb + "(");
+        runCallbackWithVariables(script.c_str());
+    }
 }
 
 void
-DefaultScheduler::onRenderStopped()
+DefaultScheduler::onRenderStopped(bool aborted)
 {
-    if ( !appPTR->isBackground() ) {
+    bool isBackGround = appPTR->isBackground();
+    if (!isBackGround) {
         _effect->setKnobsFrozen(false);
     } else {
         _effect->notifyRenderFinished();
     }
+    
+    std::string cb = _effect->getNode()->getAfterRenderCallback();
+    if (!cb.empty()) {
+        
+        std::vector<std::string> args;
+        std::string error;
+        Natron::getFunctionArguments(cb, &error, &args);
+        if (!error.empty()) {
+            _effect->getApp()->appendToScriptEditor("Failed to run afterRender callback: " + error);
+            return;
+        }
+        
+        std::string signatureError;
+        signatureError.append("The after render callback supports the following signature(s):\n");
+        signatureError.append("- callback(aborted, thisNode, app)");
+        if (args.size() != 3) {
+            _effect->getApp()->appendToScriptEditor("Failed to run afterRender callback: " + signatureError);
+            return;
+        }
+        
+        if (args[0] != "aborted" || args[1] != "thisNode" || args[2] != "app" ) {
+            _effect->getApp()->appendToScriptEditor("Failed to run afterRender callback: " + signatureError);
+            return;
+        }
+
+        
+        std::string script(cb + "(");
+        if (aborted) {
+            script += "True,";
+        } else {
+            script += "False,";
+        }
+        runCallbackWithVariables(script.c_str());
+    }
+
 }
 
 ////////////////////////////////////////////////////////////
@@ -2103,17 +2360,17 @@ private:
         StatusEnum stat = eStatusReplyDefault;
         
         int viewsCount = _viewer->getRenderViewsCount();
-        int view = viewsCount > 0 ? _viewer->getCurrentView() : 0;
+        int view = viewsCount > 0 ? _viewer->getViewerCurrentView() : 0;
         U64 viewerHash = _viewer->getHash();
-        boost::shared_ptr<ViewerInstance::ViewerArgs> args[2];
+        boost::shared_ptr<ViewerArgs> args[2];
         
         Natron::StatusEnum status[2] = {
             eStatusFailed, eStatusFailed
         };
         
         for (int i = 0; i < 2; ++i) {
-            args[i].reset(new ViewerInstance::ViewerArgs);
-            status[i] = _viewer->getRenderViewerArgsAndCheckCache(time, view, i, viewerHash, args[i].get());
+            args[i].reset(new ViewerArgs);
+            status[i] = _viewer->getRenderViewerArgsAndCheckCache_public(time, true, true, view, i, viewerHash, NodePtr(), true, args[i].get());
         }
        
         if (status[0] == eStatusFailed && status[1] == eStatusFailed) {
@@ -2135,7 +2392,7 @@ private:
         
         if ((args[0] && status[0] != eStatusFailed) || (args[1] && status[1] != eStatusFailed)) {
             try {
-                stat = _viewer->renderViewer(view,false,true,viewerHash,true,args);
+                stat = _viewer->renderViewer(view,false,true,viewerHash,true, NodePtr(), true,  args, boost::shared_ptr<RequestedFrame>());
             } catch (...) {
                 stat = eStatusFailed;
             }
@@ -2171,12 +2428,12 @@ ViewerDisplayScheduler::handleRenderFailure(const std::string& /*errorMessage*/)
 }
 
 void
-ViewerDisplayScheduler::onRenderStopped()
+ViewerDisplayScheduler::onRenderStopped(bool /*/aborted*/)
 {
     ///Refresh all previews in the tree
     _viewer->getNode()->refreshPreviewsRecursivelyUpstream(_viewer->getTimeline()->currentFrame());
     
-    if (_viewer->getApp()->isGuiFrozen()) {
+    if (!_viewer->getApp() || _viewer->getApp()->isGuiFrozen()) {
         getEngine()->s_refreshAllKnobs();
     }
 }
@@ -2308,6 +2565,15 @@ RenderEngine::quitEngine()
 }
 
 bool
+RenderEngine::isSequentialRenderBeingAborted() const
+{
+    if (!_imp->scheduler) {
+        return false;
+    }
+    return _imp->scheduler->isBeingAborted();
+}
+
+bool
 RenderEngine::hasThreadsAlive() const
 {
 
@@ -2383,6 +2649,12 @@ RenderEngine::getDesiredFPS() const
 }
 
 
+void
+RenderEngine::notifyFrameProduced(const BufferableObjectList& frames, const boost::shared_ptr<RequestedFrame>& request)
+{
+    _imp->currentFrameScheduler->notifyFrameProduced(frames, request);
+}
+
 OutputSchedulerThread*
 ViewerRenderEngine::createScheduler(Natron::OutputEffectInstance* effect) 
 {
@@ -2399,7 +2671,7 @@ struct ViewerCurrentFrameRequestSchedulerPrivate
     ViewerInstance* viewer;
     
     QMutex requestsQueueMutex;
-    std::list<RequestedFrame*> requestsQueue;
+    std::list<boost::shared_ptr<RequestedFrame> > requestsQueue;
     QWaitCondition requestsQueueNotEmpty;
     
     QMutex producedQueueMutex;
@@ -2418,6 +2690,11 @@ struct ViewerCurrentFrameRequestSchedulerPrivate
     int abortRequested;
     QMutex abortRequestedMutex;
 
+    /**
+     * Single thread used by the ViewerCurrentFrameRequestScheduler when the global thread pool has reached its maximum
+     * activity to keep the renders responsive even if the thread pool is choking.
+     **/
+    ViewerCurrentFrameRequestRendererBackup backupThread;
     
     ViewerCurrentFrameRequestSchedulerPrivate(ViewerInstance* viewer)
     : viewer(viewer)
@@ -2435,6 +2712,7 @@ struct ViewerCurrentFrameRequestSchedulerPrivate
     , mustQuitCond()
     , abortRequested(0)
     , abortRequestedMutex()
+    , backupThread()
     {
         
     }
@@ -2460,12 +2738,13 @@ struct ViewerCurrentFrameRequestSchedulerPrivate
         return false;
     }
     
-    void notifyFrameProduced(const BufferableObjectList& frames,RequestedFrame* request)
+    void notifyFrameProduced(const BufferableObjectList& frames,const boost::shared_ptr<RequestedFrame>& request, bool processRequest)
     {
         QMutexLocker k(&producedQueueMutex);
         ProducedFrame p;
         p.frames = frames;
         p.request = request;
+        p.processRequest = processRequest;
         producedQueue.push_back(p);
         producedQueueNotEmpty.wakeOne();
     }
@@ -2474,16 +2753,6 @@ struct ViewerCurrentFrameRequestSchedulerPrivate
 
 };
 
-struct CurrentFrameFunctorArgs
-{
-    int view;
-    ViewerInstance* viewer;
-    bool canAbort;
-    U64 viewerHash;
-    RequestedFrame* request;
-    ViewerCurrentFrameRequestSchedulerPrivate* scheduler;
-    boost::shared_ptr<ViewerInstance::ViewerArgs> args[2];
-};
 
 static void renderCurrentFrameFunctor(CurrentFrameFunctorArgs& args)
 {
@@ -2494,7 +2763,13 @@ static void renderCurrentFrameFunctor(CurrentFrameFunctorArgs& args)
     
     BufferableObjectList ret;
     try {
-        stat = args.viewer->renderViewer(args.view,QThread::currentThread() == qApp->thread(),false,args.viewerHash,args.canAbort,args.args);
+        if (!args.isRotoPaintRequest) {
+            stat = args.viewer->renderViewer(args.view,QThread::currentThread() == qApp->thread(),false,args.viewerHash,args.canAbort,
+                                             NodePtr(), true,args.args, args.request);
+        } else {
+            stat = args.viewer->getViewerArgsAndRenderViewer(args.time, args.canAbort, args.view, args.viewerHash, args.isRotoPaintRequest,
+                                                             &args.args[0],&args.args[1]);
+        }
     } catch (...) {
         stat = eStatusFailed;
     }
@@ -2513,7 +2788,7 @@ static void renderCurrentFrameFunctor(CurrentFrameFunctorArgs& args)
     }
     
     if (args.request) {
-        args.scheduler->notifyFrameProduced(ret, args.request);
+        args.scheduler->notifyFrameProduced(ret, args.request, true);
     } else {
         
         assert(QThread::currentThread() == qApp->thread());
@@ -2540,6 +2815,7 @@ ViewerCurrentFrameRequestScheduler::~ViewerCurrentFrameRequestScheduler()
 void
 ViewerCurrentFrameRequestScheduler::run()
 {
+    boost::shared_ptr<RequestedFrame> firstRequest;
     for (;;) {
         
         if (_imp->checkForExit()) {
@@ -2547,10 +2823,9 @@ ViewerCurrentFrameRequestScheduler::run()
         }
         
         
-        RequestedFrame* firstRequest = 0;
         {
             QMutexLocker k(&_imp->requestsQueueMutex);
-            if (!_imp->requestsQueue.empty()) {
+            if (!firstRequest && !_imp->requestsQueue.empty()) {
                 firstRequest = _imp->requestsQueue.front();
                 _imp->requestsQueue.pop_front();
             }
@@ -2564,7 +2839,7 @@ ViewerCurrentFrameRequestScheduler::run()
                 QMutexLocker k(&_imp->producedQueueMutex);
                 
                 std::list<ProducedFrame>::iterator found = _imp->producedQueue.end();
-                for (std::list<ProducedFrame>::iterator it = _imp->producedQueue.begin(); it!= _imp->producedQueue.end(); ++it) {
+                for (std::list<ProducedFrame>::iterator it = _imp->producedQueue.begin(); it != _imp->producedQueue.end(); ++it) {
                     if (it->request == firstRequest) {
                         found = it;
                         break;
@@ -2572,9 +2847,12 @@ ViewerCurrentFrameRequestScheduler::run()
                 }
                 
                 while (found == _imp->producedQueue.end()) {
+					if (_imp->checkForExit()) {
+						return;
+					}
                     _imp->producedQueueNotEmpty.wait(&_imp->producedQueueMutex);
                     
-                    for (std::list<ProducedFrame>::iterator it = _imp->producedQueue.begin(); it!= _imp->producedQueue.end(); ++it) {
+                    for (std::list<ProducedFrame>::iterator it = _imp->producedQueue.begin(); it != _imp->producedQueue.end(); ++it) {
                         if (it->request == firstRequest) {
                             found = it;
                             break;
@@ -2583,32 +2861,34 @@ ViewerCurrentFrameRequestScheduler::run()
                 }
                 
                 assert(found != _imp->producedQueue.end());
-                
-                delete found->request;
-                found->request = 0;
+                found->request.reset();
+                if (found->processRequest) {
+                    firstRequest.reset();
+                }
                 frames = found->frames;
                 _imp->producedQueue.erase(found);
-            }
+            } // QMutexLocker k(&_imp->producedQueueMutex);
             if (_imp->checkForExit()) {
                 return;
             }
             
             {
+                
                 QMutexLocker processLocker(&_imp->processMutex);
                 _imp->processRunning = true;
-                emit s_processProducedFrameOnMainThread(frames);
+                Q_EMIT s_processProducedFrameOnMainThread(frames);
                 
                 while (_imp->processRunning && !_imp->checkForAbortion()) {
                     _imp->processCondition.wait(&_imp->processMutex);
                 }
             }
             
-        }
+        } // if (firstRequest) {
         
         
         {
             QMutexLocker k(&_imp->requestsQueueMutex);
-            while (_imp->requestsQueue.empty()) {
+            while (!firstRequest && _imp->requestsQueue.empty()) {
                 _imp->requestsQueueNotEmpty.wait(&_imp->requestsQueueMutex);
             }
         }
@@ -2629,22 +2909,22 @@ ViewerCurrentFrameRequestSchedulerPrivate::processProducedFrame(const Bufferable
 {
     assert(QThread::currentThread() == qApp->thread());
     
-    bool hasDoneSomething = false;
+    //bool hasDoneSomething = false;
     for (BufferableObjectList::const_iterator it2 = frames.begin(); it2 != frames.end(); ++it2) {
         assert(*it2);
         boost::shared_ptr<UpdateViewerParams> params = boost::dynamic_pointer_cast<UpdateViewerParams>(*it2);
         assert(params);
         if (params && params->ramBuffer) {
-            hasDoneSomething = true;
+            //hasDoneSomething = true;
             viewer->updateViewer(params);
         }
     }
     
     
     ///At least redraw the viewer, we might be here when the user removed a node upstream of the viewer.
-    if (hasDoneSomething) {
+    //if (hasDoneSomething) {
         viewer->redrawViewer();
-    }
+    //}
     
     
     {
@@ -2681,7 +2961,7 @@ ViewerCurrentFrameRequestScheduler::quitThread()
     }
     
     abortRendering();
-    
+    _imp->backupThread.quitThread();
     {
         QMutexLocker l2(&_imp->processMutex);
         _imp->processRunning = false;
@@ -2695,15 +2975,25 @@ ViewerCurrentFrameRequestScheduler::quitThread()
         ///Push a fake request
         {
             QMutexLocker k(&_imp->requestsQueueMutex);
-            _imp->requestsQueue.push_back(NULL);
+            _imp->requestsQueue.push_back(boost::shared_ptr<RequestedFrame>());
+            _imp->notifyFrameProduced(BufferableObjectList(), boost::shared_ptr<RequestedFrame>(), true);
             _imp->requestsQueueNotEmpty.wakeOne();
         }
-        
         while (_imp->mustQuit) {
             _imp->mustQuitCond.wait(&_imp->mustQuitMutex);
         }
     }
     wait();
+    
+    ///Clear all queues
+    {
+        QMutexLocker k(&_imp->requestsQueueMutex);
+        _imp->requestsQueue.clear();
+    }
+    {
+        QMutexLocker k(&_imp->producedQueueMutex);
+        _imp->producedQueue.clear();
+    }
 }
 
 bool
@@ -2714,69 +3004,231 @@ ViewerCurrentFrameRequestScheduler::hasThreadsWorking() const
 }
 
 void
+ViewerCurrentFrameRequestScheduler::notifyFrameProduced(const BufferableObjectList& frames,const boost::shared_ptr<RequestedFrame>& request)
+{
+    _imp->notifyFrameProduced(frames, request, false);
+}
+
+void
 ViewerCurrentFrameRequestScheduler::renderCurrentFrame(bool canAbort)
 {
     int frame = _imp->viewer->getTimeline()->currentFrame();
     int viewsCount = _imp->viewer->getRenderViewsCount();
-    int view = viewsCount > 0 ? _imp->viewer->getCurrentView() : 0;
+    int view = viewsCount > 0 ? _imp->viewer->getViewerCurrentView() : 0;
     U64 viewerHash = _imp->viewer->getHash();
     
     Natron::StatusEnum status[2] = {
         eStatusFailed, eStatusFailed
     };
-    
-    boost::shared_ptr<ViewerInstance::ViewerArgs> args[2];
-    for (int i = 0; i < 2; ++i) {
-        args[i].reset(new ViewerInstance::ViewerArgs);
-        status[i] = _imp->viewer->getRenderViewerArgsAndCheckCache(frame, view, i, viewerHash, args[i].get());
-    }
-    
-    if (status[0] == eStatusFailed && status[1] == eStatusFailed) {
-        _imp->viewer->disconnectViewer();
-        return;
-    } else if (status[0] == eStatusReplyDefault || status[1] == eStatusReplyDefault) {
-        _imp->viewer->redrawViewer();
+    if (!_imp->viewer->getUiContext() || _imp->viewer->getApp()->isCreatingNode()) {
         return;
     }
     
-    for (int i = 0; i < 2 ; ++i) {
-        if (args[i]->params && args[i]->params->ramBuffer) {
-            _imp->viewer->updateViewer(args[i]->params);
-            args[i].reset();
+    NodePtr isUserRotopainting = _imp->viewer->getApp()->getIsUserPainting();
+    boost::shared_ptr<ViewerArgs> args[2];
+    if (!isUserRotopainting) {
+        for (int i = 0; i < 2; ++i) {
+            args[i].reset(new ViewerArgs);
+            status[i] = _imp->viewer->getRenderViewerArgsAndCheckCache_public(frame, false, canAbort, view, i, viewerHash,isUserRotopainting, true, args[i].get());
         }
-    }
-    if ((!args[0] && !args[1]) ||
-        (!args[0] && status[0] == eStatusOK && args[1] && status[1] == eStatusFailed) ||
-        (!args[1] && status[1] == eStatusOK && args[0] && status[0] == eStatusFailed)) {
-        _imp->viewer->redrawViewer();
+        
+        if (status[0] == eStatusFailed && status[1] == eStatusFailed) {
+            _imp->viewer->disconnectViewer();
+            return;
+        } else if (status[0] == eStatusReplyDefault && status[1] == eStatusReplyDefault) {
+            _imp->viewer->redrawViewer();
+            return;
+        }
+        
+        for (int i = 0; i < 2 ; ++i) {
+            if (args[i]->params && args[i]->params->ramBuffer) {
+                _imp->viewer->updateViewer(args[i]->params);
+                args[i].reset();
+            }
+        }
+        if ((!args[0] && !args[1]) ||
+            (!args[0] && status[0] == eStatusOK && args[1] && status[1] == eStatusFailed) ||
+            (!args[1] && status[1] == eStatusOK && args[0] && status[0] == eStatusFailed)) {
+            _imp->viewer->redrawViewer();
+            return;
+        }
     } else {
         
-        CurrentFrameFunctorArgs functorArgs;
-        functorArgs.viewer = _imp->viewer;
-        functorArgs.view = view;
-        functorArgs.args[0] = args[0];
-        functorArgs.args[1] = args[1];
-        functorArgs.canAbort = canAbort;
-        functorArgs.viewerHash = viewerHash;
-        functorArgs.scheduler = _imp.get();
-        functorArgs.request = 0;
-        if (appPTR->getCurrentSettings()->getNumberOfThreads() == -1) {
-            renderCurrentFrameFunctor(functorArgs);
-        } else {
-            RequestedFrame *request = new RequestedFrame;
-            request->id = 0;
-            {
-                QMutexLocker k(&_imp->requestsQueueMutex);
-                _imp->requestsQueue.push_back(request);
-                
-                if (isRunning()) {
-                    _imp->requestsQueueNotEmpty.wakeOne();
-                } else {
-                    start();
-                }
+    }
+    CurrentFrameFunctorArgs functorArgs;
+    functorArgs.viewer = _imp->viewer;
+    functorArgs.time = frame;
+    functorArgs.view = view;
+    functorArgs.args[0] = args[0];
+    functorArgs.args[1] = args[1];
+    functorArgs.viewerHash = viewerHash;
+    functorArgs.scheduler = _imp.get();
+    functorArgs.canAbort = canAbort;
+    functorArgs.isRotoPaintRequest = isUserRotopainting;
+    
+    if (appPTR->getCurrentSettings()->getNumberOfThreads() == -1) {
+        renderCurrentFrameFunctor(functorArgs);
+    } else {
+        boost::shared_ptr<RequestedFrame> request(new RequestedFrame);
+        request->id = 0;
+        {
+            QMutexLocker k(&_imp->requestsQueueMutex);
+            _imp->requestsQueue.push_back(request);
+            
+            if (isRunning()) {
+                _imp->requestsQueueNotEmpty.wakeOne();
+            } else {
+                start();
             }
-            functorArgs.request = request;
+        }
+        functorArgs.request = request;
+        
+        /*
+         * Let at least 1 free thread in the thread-pool to allow the renderer to use the thread pool if we use the thread-pool
+         * with QtConcurrent::run
+         */
+        int maxThreads = QThreadPool::globalInstance()->maxThreadCount();
+        
+        //When painting, limit the number of threads to 1 to be sure strokes are painted in the right order
+        if (_imp->viewer->getApp()->getIsUserPainting().get() != 0) {
+            maxThreads = 1;
+        }
+        if (maxThreads == 1 || (QThreadPool::globalInstance()->activeThreadCount() >= maxThreads - 1)) {
+            _imp->backupThread.renderCurrentFrame(functorArgs);
+        } else {
             QtConcurrent::run(renderCurrentFrameFunctor,functorArgs);
         }
+    }
+    
+}
+
+struct ViewerCurrentFrameRequestRendererBackupPrivate
+{
+    QMutex requestsQueueMutex;
+    std::list<CurrentFrameFunctorArgs> requestsQueue;
+    QWaitCondition requestsQueueNotEmpty;
+    
+    bool mustQuit;
+    mutable QMutex mustQuitMutex;
+    QWaitCondition mustQuitCond;
+    
+    ViewerCurrentFrameRequestRendererBackupPrivate()
+    : requestsQueueMutex()
+    , requestsQueue()
+    , requestsQueueNotEmpty()
+    , mustQuit(false)
+    , mustQuitMutex()
+    , mustQuitCond()
+    {
+        
+    }
+    
+    bool checkForExit()
+    {
+        QMutexLocker k(&mustQuitMutex);
+        if (mustQuit) {
+            mustQuit = false;
+            mustQuitCond.wakeAll();
+            return true;
+        }
+        return false;
+    }
+
+};
+
+ViewerCurrentFrameRequestRendererBackup::ViewerCurrentFrameRequestRendererBackup()
+: QThread()
+, _imp(new ViewerCurrentFrameRequestRendererBackupPrivate())
+{
+    setObjectName("ViewerCurrentFrameRequestRendererBackup");
+}
+
+ViewerCurrentFrameRequestRendererBackup::~ViewerCurrentFrameRequestRendererBackup()
+{
+    
+}
+
+void
+ViewerCurrentFrameRequestRendererBackup::renderCurrentFrame(const CurrentFrameFunctorArgs& args)
+{
+    {
+        QMutexLocker k(&_imp->requestsQueueMutex);
+        _imp->requestsQueue.push_back(args);
+        
+        if (isRunning()) {
+            _imp->requestsQueueNotEmpty.wakeOne();
+        } else {
+            start();
+        }
+    }
+}
+
+void
+ViewerCurrentFrameRequestRendererBackup::run()
+{
+    for (;;) {
+        
+        
+        bool hasRequest = false;
+        {
+            CurrentFrameFunctorArgs firstRequest;
+            {
+                QMutexLocker k(&_imp->requestsQueueMutex);
+                if (!_imp->requestsQueue.empty()) {
+                    hasRequest = true;
+                    firstRequest = _imp->requestsQueue.front();
+                    if (!firstRequest.viewer) {
+                        hasRequest = false;
+                    }
+                    _imp->requestsQueue.pop_front();
+                }
+            }
+            
+            if (_imp->checkForExit()) {
+                return;
+            }
+            
+            
+            if (hasRequest) {
+                renderCurrentFrameFunctor(firstRequest);
+            }
+        }
+        
+        {
+            QMutexLocker k(&_imp->requestsQueueMutex);
+            while (_imp->requestsQueue.empty()) {
+                _imp->requestsQueueNotEmpty.wait(&_imp->requestsQueueMutex);
+            }
+        }
+    }
+}
+
+void
+ViewerCurrentFrameRequestRendererBackup::quitThread()
+{
+    if (!isRunning()) {
+        return;
+    }
+    
+    {
+        QMutexLocker k(&_imp->mustQuitMutex);
+        _imp->mustQuit = true;
+        
+        ///Push a fake request
+        {
+            QMutexLocker k(&_imp->requestsQueueMutex);
+            _imp->requestsQueue.push_back(CurrentFrameFunctorArgs());
+            _imp->requestsQueueNotEmpty.wakeOne();
+        }
+        
+        while (_imp->mustQuit) {
+            _imp->mustQuitCond.wait(&_imp->mustQuitMutex);
+        }
+    }
+    wait();
+    //clear all queues
+    {
+        QMutexLocker k(&_imp->requestsQueueMutex);
+        _imp->requestsQueue.clear();
     }
 }

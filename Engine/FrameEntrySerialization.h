@@ -13,13 +13,23 @@
 #ifndef FRAMEENTRYSERIALIZATION_H
 #define FRAMEENTRYSERIALIZATION_H
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Engine/FrameEntry.h"
+#include "Engine/ImageParamsSerialization.h"
 #include "Engine/TextureRectSerialization.h"
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/serialization/version.hpp>
 #endif
 #define FRAME_KEY_INTRODUCES_INPUT_NAME 2
-#define FRAME_KEY_VERSION FRAME_KEY_INTRODUCES_INPUT_NAME
+#define FRAME_KEY_INTRODUCES_LAYERS 3
+#define FRAME_KEY_INTRODUCES_GAMMA 4
+#define FRAME_KEY_CHANGES_BITDEPTH_ENUM 5
+#define FRAME_KEY_HANDLE_FP_CORRECTLY 6
+#define FRAME_KEY_VERSION FRAME_KEY_HANDLE_FP_CORRECTLY
+
 template<class Archive>
 void
 Natron::FrameKey::serialize(Archive & ar,
@@ -28,8 +38,14 @@ Natron::FrameKey::serialize(Archive & ar,
     ar & boost::serialization::make_nvp("Time", _time);
     ar & boost::serialization::make_nvp("TreeVersion", _treeVersion);
     ar & boost::serialization::make_nvp("Gain", _gain);
+    if (version >= FRAME_KEY_INTRODUCES_GAMMA) {
+        ar & boost::serialization::make_nvp("Gamma", _gamma);
+    }
     ar & boost::serialization::make_nvp("Lut", _lut);
     ar & boost::serialization::make_nvp("BitDepth", _bitDepth);
+    if (version < FRAME_KEY_CHANGES_BITDEPTH_ENUM) {
+        _bitDepth += 1;
+    }
     ar & boost::serialization::make_nvp("Channels", _channels);
     ar & boost::serialization::make_nvp("View", _view);
     ar & boost::serialization::make_nvp("TextureRect", _textureRect);
@@ -38,6 +54,16 @@ Natron::FrameKey::serialize(Archive & ar,
 
     if (version >= FRAME_KEY_VERSION) {
         ar & boost::serialization::make_nvp("InputName", _inputName);
+    }
+    
+    if (version >= FRAME_KEY_INTRODUCES_LAYERS) {
+        ar & boost::serialization::make_nvp("Layer", _layer);
+        ar & boost::serialization::make_nvp("Alpha", _alphaChannelFullName);
+    }
+    if (version >= FRAME_KEY_HANDLE_FP_CORRECTLY) {
+        ar & boost::serialization::make_nvp("UserShader", _useShaders);
+    } else {
+        _useShaders = false;
     }
 }
 

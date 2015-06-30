@@ -11,8 +11,13 @@
 
 #ifndef NATRON_ENGINE_FRAMEENTRY_H_
 #define NATRON_ENGINE_FRAMEENTRY_H_
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <string>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #endif
 #include <QtCore/QObject>
@@ -51,16 +56,7 @@ public:
     {
     }
 
-    static FrameKey makeKey(SequenceTime time,
-                            U64 treeVersion,
-                            double gain,
-                            int lut,
-                            int bitDepth,
-                            int channels,
-                            int view,
-                            const TextureRect & textureRect,
-                            const RenderScale & scale,
-                            const std::string & inputName) WARN_UNUSED_RETURN;
+    
     static boost::shared_ptr<FrameParams> makeParams(const RectI & rod,
                                                      int bitDepth,
                                                      int texW,
@@ -74,6 +70,10 @@ public:
     {
         return _data.writable();
     }
+
+    const U8* pixelAt(int x, int y ) const WARN_UNUSED_RETURN;
+
+    void copy(const FrameEntry& other);
 
     void setAborted(bool aborted) {
         QMutexLocker k(&_abortedMutex);

@@ -8,37 +8,36 @@
  * contact: immarespond at gmail dot com
  *
  */
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "OfxOverlayInteract.h"
 
-
+#include "Global/Macros.h"
 #include "Engine/OfxImageEffectInstance.h"
 #include "Engine/OfxEffectInstance.h"
 #include "Engine/Format.h"
 #include "Engine/OverlaySupport.h"
 #include "Engine/Knob.h"
+#include "Engine/Node.h"
+#include "Engine/AppInstance.h"
 
 
 using namespace Natron;
 
-namespace {
-    // an RAII class to save OpenGL context
-    class OGLContextSaver {
-    public:
-        OGLContextSaver(OverlaySupport* viewport)
-        : _viewport(viewport)
-        {
-            assert(_viewport);
-            _viewport->saveOpenGLContext();
-        }
-
-        ~OGLContextSaver() {
-            _viewport->restoreOpenGLContext();
-        }
-
-    private:
-        OverlaySupport* const _viewport;
-    };
+NatronOverlayInteractSupport::OGLContextSaver::OGLContextSaver(OverlaySupport* viewport)
+: _viewport(viewport)
+{
+    assert(_viewport);
+    _viewport->saveOpenGLContext();
 }
+
+NatronOverlayInteractSupport::OGLContextSaver::~OGLContextSaver() {
+    _viewport->restoreOpenGLContext();
+}
+
 
 OfxOverlayInteract::OfxOverlayInteract(OfxImageEffectInstance &v,
                                        int bitDepthPerComponent,
@@ -46,6 +45,7 @@ OfxOverlayInteract::OfxOverlayInteract(OfxImageEffectInstance &v,
     : OFX::Host::ImageEffect::OverlayInteract(v,bitDepthPerComponent,hasAlpha)
       , NatronOverlayInteractSupport()
 {
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -63,7 +63,7 @@ OfxStatus
 OfxOverlayInteract::drawAction(OfxTime time,
                                const OfxPointD &renderScale)
 {
-    OGLContextSaver s(_viewport);
+    NatronOverlayInteractSupport::OGLContextSaver s(_viewport);
     OfxStatus stat = OFX::Host::ImageEffect::OverlayInteract::drawAction(time, renderScale);
     return stat;
 }
@@ -146,7 +146,32 @@ OfxOverlayInteract::loseFocusAction(OfxTime  time,
     return OFX::Host::ImageEffect::OverlayInteract::loseFocusAction(time, renderScale);
 }
 
+bool
+Natron::OfxOverlayInteract::getSuggestedColour(double &r,
+                                               double &g,
+                                               double &b) const
+{
+    OfxImageEffectInstance* effect = dynamic_cast<OfxImageEffectInstance*>(&_instance);
+    assert(effect && effect->getOfxEffectInstance());
+    return effect->getOfxEffectInstance()->getNode()->getOverlayColor(&r, &g, &b);
+}
 
+OfxStatus
+OfxOverlayInteract::redraw()
+{
+    OfxImageEffectInstance* effect = dynamic_cast<OfxImageEffectInstance*>(&_instance);
+    assert(effect);
+    if (effect && effect->getOfxEffectInstance()->getNode()->shouldDrawOverlay()) {
+        AppInstance* app =  effect->getOfxEffectInstance()->getApp();
+        assert(app);
+        if (effect->getOfxEffectInstance()->isDoingInteractAction()) {
+            app->queueRedrawForAllViewers();
+        } else {
+            app->redrawAllViewers();
+        }
+    }
+    return kOfxStatOK;
+}
 
 
 Natron::OfxParamOverlayInteract::OfxParamOverlayInteract(KnobI* knob,
@@ -173,6 +198,12 @@ NatronOverlayInteractSupport::setCallingViewport(OverlaySupport* viewport)
     _viewport = viewport;
 }
 
+OverlaySupport*
+NatronOverlayInteractSupport::getLastCallingViewport() const
+{
+    return _viewport;
+}
+
 OfxStatus
 NatronOverlayInteractSupport::n_swapBuffers()
 {
@@ -183,15 +214,7 @@ NatronOverlayInteractSupport::n_swapBuffers()
     return kOfxStatOK;
 }
 
-OfxStatus
-NatronOverlayInteractSupport::n_redraw()
-{
-    if (_viewport) {
-        _viewport->redraw();
-    }
 
-    return kOfxStatOK;
-}
 
 void
 NatronOverlayInteractSupport::n_getViewportSize(double &width,
@@ -221,20 +244,20 @@ NatronOverlayInteractSupport::n_getBackgroundColour(double &r,
     }
 }
 
-void
-NatronOverlayInteractSupport::n_getOverlayColour(double &r,
-                                                 double &g,
-                                                 double &b) const
+bool
+NatronOverlayInteractSupport::n_getSuggestedColour(double &/*r*/,
+                                                   double &/*g*/,
+                                                   double &/*b*/) const
 {
-    r = g = b = 1.;
+    return false;
 }
 
 void
-Natron::OfxParamOverlayInteract::getMinimumSize(int & minW,
-                                                int & minH) const
+Natron::OfxParamOverlayInteract::getMinimumSize(double & minW,
+                                                double & minH) const
 {
-    minW = _descriptor.getProperties().getIntProperty(kOfxParamPropInteractMinimumSize,0);
-    minH = _descriptor.getProperties().getIntProperty(kOfxParamPropInteractMinimumSize,1);
+    minW = _descriptor.getProperties().getDoubleProperty(kOfxParamPropInteractMinimumSize,0);
+    minH = _descriptor.getProperties().getDoubleProperty(kOfxParamPropInteractMinimumSize,1);
 }
 
 void
@@ -265,5 +288,16 @@ void
 Natron::OfxParamOverlayInteract::getPixelAspectRatio(double & par) const
 {
     par = _descriptor.getProperties().getDoubleProperty(kOfxParamPropInteractSizeAspect);
+}
+
+
+OfxStatus
+Natron::OfxParamOverlayInteract::redraw()
+{
+    if (_viewport) {
+        _viewport->redraw();
+    }
+    
+    return kOfxStatOK;
 }
 

@@ -8,6 +8,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Texture.h"
 
 #include <iostream>
@@ -31,31 +35,44 @@ Texture::Texture(U32 target,
     glGenTextures(1, &_texID);
 }
 
+bool
+Texture::mustAllocTexture(const TextureRect& rect) const
+{
+    return _textureRect != rect;
+}
+
 void
 Texture::fillOrAllocateTexture(const TextureRect & texRect,
-                               DataTypeEnum type)
+                               DataTypeEnum type,
+                               const RectI& roi,
+                               bool updateOnlyRoi)
 {
-    GLuint savedTexture;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, (GLint*)&savedTexture);
+    //GLuint savedTexture;
+    //glGetIntegerv(GL_TEXTURE_BINDING_2D, (GLint*)&savedTexture);
     {
         GLProtectAttrib a(GL_ENABLE_BIT);
 
+        int width = updateOnlyRoi ? roi.width() : w();
+        int height = updateOnlyRoi ? roi.height() : h();
+        int x1 = updateOnlyRoi ? roi.x1 - texRect.x1 : 0;
+        int y1 = updateOnlyRoi ? roi.y1 - texRect.y1 : 0;
+        
         glEnable(_target);
         glBindTexture (_target, _texID);
         if ( (texRect == _textureRect) && (_type == type) ) {
             if (_type == Texture::eDataTypeByte) {
                 glTexSubImage2D(_target,
                                 0,              // level
-                                0, 0,               // xoffset, yoffset
-                                w(), h(),
+                                x1, y1,               // xoffset, yoffset
+                                width, height,
                                 GL_BGRA,            // format
                                 GL_UNSIGNED_INT_8_8_8_8_REV,        // type
                                 0);
             } else if (_type == Texture::eDataTypeFloat) {
                 glTexSubImage2D(_target,
                                 0,              // level
-                                0, 0,               // xoffset, yoffset
-                                w(), h(),
+                                x1, y1,               // xoffset, yoffset
+                                width, height,
                                 GL_RGBA,            // format
                                 GL_FLOAT,       // type
                                 0);

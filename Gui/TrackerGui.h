@@ -7,7 +7,11 @@
 #ifndef TRACKERGUI_H
 #define TRACKERGUI_H
 
-#ifndef Q_MOC_RUN
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 #endif
@@ -24,6 +28,7 @@ class TrackerPanel;
 class QKeyEvent;
 class QPointF;
 class QMouseEvent;
+class QInputEvent;
 
 struct TrackerGuiPrivate;
 class TrackerGui
@@ -46,13 +51,13 @@ public:
 
     void drawOverlays(double scaleX, double scaleY) const;
 
-    bool penDown(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
+    bool penDown(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure, QMouseEvent* e);
 
     bool penDoubleClicked(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
 
-    bool penMotion(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
+    bool penMotion(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure, QInputEvent* e);
 
-    bool penUp(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
+    bool penUp(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure, QMouseEvent* e);
 
     bool keyDown(double scaleX, double scaleY, QKeyEvent* e);
 
@@ -60,7 +65,7 @@ public:
 
     bool loseFocus(double scaleX, double scaleY);
 
-public slots:
+public Q_SLOTS:
 
     void onAddTrackClicked(bool clicked);
 

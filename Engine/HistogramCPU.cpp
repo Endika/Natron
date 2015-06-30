@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "HistogramCPU.h"
 
@@ -61,6 +64,7 @@ struct FinishedHistogram
     int binsCount;
     int pixelsCount;
     double vmin,vmax;
+    unsigned int mipMapLevel;
 
     FinishedHistogram()
         : histogram1()
@@ -71,6 +75,7 @@ struct FinishedHistogram
           , pixelsCount(0)
           , vmin(0)
           , vmax(0)
+          , mipMapLevel(0)
     {
     }
 };
@@ -166,7 +171,8 @@ HistogramCPU::getMostRecentlyProducedHistogram(std::vector<float>* histogram1,
                                                unsigned int* pixelsCount,
                                                int* mode,
                                                double* vmin,
-                                               double* vmax)
+                                               double* vmax,
+                                               unsigned int* mipMapLevel)
 {
     assert(histogram1 && histogram2 && histogram3 && binsCount && pixelsCount && mode && vmin && vmax);
 
@@ -185,6 +191,7 @@ HistogramCPU::getMostRecentlyProducedHistogram(std::vector<float>* histogram1,
     *mode = h->mode;
     *vmin = h->vmin;
     *vmax = h->vmax;
+    *mipMapLevel = h->mipMapLevel;
     _imp->produced.pop_back();
 
     return true;
@@ -194,7 +201,7 @@ HistogramCPU::getMostRecentlyProducedHistogram(std::vector<float>* histogram1,
 ///"function has not external linkage"
 struct pix_red
 {
-    static float val(float *pix)
+    static float val(const float *pix)
     {
         return pix[0];
     }
@@ -202,7 +209,7 @@ struct pix_red
 
 struct pix_green
 {
-    static float val(float *pix)
+    static float val(const float *pix)
     {
         return pix[1];
     }
@@ -210,7 +217,7 @@ struct pix_green
 
 struct pix_blue
 {
-    static float val(float *pix)
+    static float val(const float *pix)
     {
         return pix[2];
     }
@@ -218,7 +225,7 @@ struct pix_blue
 
 struct pix_alpha
 {
-    static float val(float *pix)
+    static float val(const float *pix)
     {
         return pix[3];
     }
@@ -226,14 +233,14 @@ struct pix_alpha
 
 struct pix_lum
 {
-    static float val(float *pix)
+    static float val(const float *pix)
     {
         return 0.299 * pix[0] + 0.587 * pix[1] + 0.114 * pix[2];
     }
 };
 
 
-template <float pix_func(float*)>
+template <float pix_func(const float*)>
 void
 computeHisto(const HistogramRequest & request,
              int upscale,
@@ -247,9 +254,11 @@ computeHisto(const HistogramRequest & request,
     ///Images come from the viewer which is in float.
     assert(request.image->getBitDepth() == Natron::eImageBitDepthFloat);
 
+    Natron::Image::ReadAccess acc = request.image->getReadRights();
+    
     for (int y = request.rect.bottom(); y < request.rect.top(); ++y) {
         for (int x = request.rect.left(); x < request.rect.right(); ++x) {
-            float *pix = (float*)request.image->pixelAt(x, y);
+            const float *pix = (const float*)acc.pixelAt(x, y);
             float v = pix_func(pix);
             if ( (request.vmin <= v) && (v < request.vmax) ) {
                 int index = (int)( (v - request.vmin) / binSize );
@@ -511,6 +520,7 @@ HistogramCPU::run()
         ret->mode = request.mode;
         ret->vmin = request.vmin;
         ret->vmax = request.vmax;
+        ret->mipMapLevel = request.image->getMipMapLevel();
 
 
         switch (request.mode) {
@@ -536,7 +546,7 @@ HistogramCPU::run()
             QMutexLocker l(&_imp->producedMutex);
             _imp->produced.push_back(ret);
         }
-        emit histogramProduced();
+        Q_EMIT histogramProduced();
     }
 } // run
 

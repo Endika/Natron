@@ -7,7 +7,7 @@ TEMPLATE = app
 CONFIG += console
 CONFIG -= app_bundle
 CONFIG += moc rcc
-CONFIG += boost glew opengl qt expat cairo 
+CONFIG += boost glew opengl qt expat cairo python shiboken pyside
 QT += gui core opengl network
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets concurrent
 
@@ -43,7 +43,11 @@ win32-msvc*{
 	else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/../Gui/debug/ -lGui
 	else:*-xcode:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../Gui/build/Release/ -lGui
 	else:*-xcode:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/../Gui/build/Debug/ -lGui
-	else:unix: LIBS += -L$$OUT_PWD/../Gui/ -lGui
+        else:unix {
+            LIBS += -L$$OUT_PWD/../Gui/ -lGui
+            # GLU is required by ViewerGL, but some versions of glew don't link it (e.g. Ubuntu 12.04)
+            !macx: LIBS += -lGLU
+        }
 }
 INCLUDEPATH += $$PWD/../Gui
 DEPENDPATH += $$PWD/../Gui

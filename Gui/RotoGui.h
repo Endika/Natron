@@ -11,7 +11,12 @@
 
 #ifndef ROTOGUI_H
 #define ROTOGUI_H
-#ifndef Q_MOC_RUN
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 #endif
@@ -25,6 +30,7 @@ CLANG_DIAG_ON(uninitialized)
 
 #include "Global/GlobalDefines.h"
 
+class QInputEvent;
 class QMouseEvent;
 class QToolBar;
 class QWidget;
@@ -39,6 +45,7 @@ class RotoItem;
 class QUndoCommand;
 class NodeGui;
 class Bezier;
+class RotoDrawableItem;
 class BezierCP;
 class GuiAppInstance;
 struct RotoGuiSharedData;
@@ -62,12 +69,17 @@ public:
     bool getIsSelected() const;
     void setIsSelected(bool s);
     
+public Q_SLOTS:
+    
+    void handleLongPress();
+    
 private:
 
     virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseReleaseEvent(QMouseEvent* e) OVERRIDE FINAL;
     
     bool isSelected;
+    bool wasMouseReleased;
 };
 
 class RotoGui
@@ -87,7 +99,11 @@ public:
     {
         eRotoRoleSelection = 0,
         eRotoRolePointsEdition,
-        eRotoRoleBezierEdition
+        eRotoRoleBezierEdition,
+        eRotoRolePaintBrush,
+        eRotoRoleCloneBrush,
+        eRotoRoleEffectBrush,
+        eRotoRoleMergeBrush
     };
 
     enum RotoToolEnum
@@ -108,6 +124,21 @@ public:
         eRotoToolDrawBSpline,
         eRotoToolDrawEllipse,
         eRotoToolDrawRectangle,
+        
+        eRotoToolSolidBrush,
+        eRotoToolOpenBezier,
+        eRotoToolEraserBrush,
+        
+        eRotoToolClone,
+        eRotoToolReveal,
+        
+        eRotoToolBlur,
+        eRotoToolSharpen,
+        eRotoToolSmear,
+        
+        eRotoToolDodge,
+        eRotoToolBurn
+        
     };
 
     RotoGui(NodeGui* node,
@@ -145,13 +176,13 @@ public:
 
     void drawOverlays(double scaleX, double scaleY) const;
 
-    bool penDown(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
+    bool penDown(double scaleX, double scaleY, Natron::PenType pen, bool isTabletEvent, const QPointF & viewportPos, const QPointF & pos, double pressure, double timestamp, QMouseEvent* e);
 
     bool penDoubleClicked(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
 
-    bool penMotion(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
+    bool penMotion(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure, double timestamp, QInputEvent* e);
 
-    bool penUp(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, QMouseEvent* e);
+    bool penUp(double scaleX, double scaleY, const QPointF & viewportPos, const QPointF & pos, double pressure, double timestamp, QMouseEvent* e);
 
     bool keyDown(double scaleX, double scaleY, QKeyEvent* e);
 
@@ -167,12 +198,12 @@ public:
      * @brief Set the selection to be the given beziers and the given control points.
      * This can only be called on the main-thread.
      **/
-    void setSelection(const std::list<boost::shared_ptr<Bezier> > & selectedBeziers,
+    void setSelection(const std::list<boost::shared_ptr<RotoDrawableItem> > & selectedBeziers,
                       const std::list<std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > & selectedCps);
     void setSelection(const boost::shared_ptr<Bezier> & curve,
                       const std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > & point);
 
-    void getSelection(std::list<boost::shared_ptr<Bezier> >* selectedBeziers,
+    void getSelection(std::list<boost::shared_ptr<RotoDrawableItem> >* selectedBeziers,
                       std::list<std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > >* selectedCps);
 
     void refreshSelectionBBox();
@@ -205,14 +236,15 @@ public:
      * @brief Calls RotoContext::removeItem but also clears some pointers if they point to
      * this curve. For undo/redo purpose.
      **/
-    void removeCurve(const boost::shared_ptr<Bezier>& curve);
+    void removeCurve(const boost::shared_ptr<RotoDrawableItem>& curve);
 
     bool isFeatherVisible() const;
 
     void linkPointTo(const std::list<std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > & cp);
 
+    void notifyGuiClosing();
     
-signals:
+Q_SIGNALS:
 
     /**
      * @brief Emitted when the selected role changes
@@ -221,7 +253,7 @@ signals:
 
     void selectedToolChanged(int);
 
-public slots:
+public Q_SLOTS:
 
     void updateSelectionFromSelectionRectangle(bool onRelease);
 
@@ -251,7 +283,7 @@ public slots:
 
     void onRefreshAsked();
 
-    void onCurveLockedChanged();
+    void onCurveLockedChanged(int);
 
     void onSelectionChanged(int reason);
 
@@ -263,7 +295,18 @@ public slots:
     void removeFeatherForSelectedCurve();
     void lockSelectedCurves();
     
+    void onColorWheelButtonClicked();
+    void onDialogCurrentColorChanged(const QColor& color);
+    
+    void onPressureOpacityClicked(bool isDown);
+    void onPressureSizeClicked(bool isDown);
+    void onPressureHardnessClicked(bool isDown);
+    void onBuildupClicked(bool isDown);
+    
+    void onResetCloneTransformClicked();
+    
 private:
+    
 
     void showMenuForCurve(const boost::shared_ptr<Bezier> & curve);
 

@@ -8,23 +8,34 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "ShortCutEditor.h"
 
 #include <list>
+
+#include "Global/Macros.h"
+CLANG_DIAG_OFF(deprecated)
+CLANG_DIAG_OFF(uninitialized)
 #include <QVBoxLayout>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QHBoxLayout>
 #include <QGroupBox>
-#include <QLabel>
 #include <QTextDocument>
 #include <QStyledItemDelegate>
 #include <QPainter>
 #include <QApplication>
+CLANG_DIAG_ON(deprecated)
+CLANG_DIAG_ON(uninitialized)
 
 #include "Gui/Button.h"
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/ActionShortcuts.h"
+#include "Gui/Label.h"
+#include "Gui/Utils.h"
 
 struct GuiBoundAction
 {
@@ -99,7 +110,7 @@ struct ShortCutEditorPrivate
     HackedTreeWidget* tree;
     QGroupBox* shortcutGroup;
     QHBoxLayout* shortcutGroupLayout;
-    QLabel* shortcutLabel;
+    Natron::Label* shortcutLabel;
     KeybindRecorder* shortcutEditor;
     Button* validateButton;
     Button* clearButton;
@@ -213,7 +224,7 @@ ShortCutEditor::ShortCutEditor(QWidget* parent)
     _imp->mainLayout = new QVBoxLayout(this);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     setWindowFlags(Qt::WindowStaysOnTopHint | Qt::Window);
-    setWindowTitle( tr("Shortcuts editor") );
+    setWindowTitle( tr("Shortcuts Editor") );
     _imp->tree = new HackedTreeWidget(this);
     _imp->tree->setColumnCount(2);
     QStringList headers;
@@ -222,14 +233,14 @@ ShortCutEditor::ShortCutEditor(QWidget* parent)
     _imp->tree->setSelectionMode(QAbstractItemView::SingleSelection);
     _imp->tree->setAttribute(Qt::WA_MacShowFocusRect,0);
     _imp->tree->setSortingEnabled(false);
-    _imp->tree->setToolTip( Qt::convertFromPlainText(
+    _imp->tree->setToolTip( Natron::convertFromPlainText(
                                 tr("In this table is represented each action of the application that can have a possible keybind/mouse shortcut."
                                    " Note that this table also have some special assignments which also involve the mouse. "
                                    "You cannot assign a keybind to a shortcut involving the mouse and vice versa. "
                                    "Note that internally " NATRON_APPLICATION_NAME " does an emulation of a three-button mouse "
                                    "if your computer doesn't have one, that is: \n"
                                    "---> Middle mouse button is emulated by holding down Options (alt) coupled with a left click.\n "
-                                   "---> Right mouse button is emulated by holding down Command (cmd) coupled with a left click."),Qt::WhiteSpaceNormal) );
+                                   "---> Right mouse button is emulated by holding down Command (cmd) coupled with a left click."), Qt::WhiteSpaceNormal) );
     _imp->tree->setItemDelegate( new ShortcutDelegate(_imp->tree) );
     
     const AppShortcuts & appShortcuts = appPTR->getAllShortcuts();
@@ -255,7 +266,7 @@ ShortCutEditor::ShortCutEditor(QWidget* parent)
     _imp->shortcutGroupLayout = new QHBoxLayout(_imp->shortcutGroup);
     _imp->shortcutGroupLayout->setContentsMargins(0, 0, 0, 0);
 
-    _imp->shortcutLabel = new QLabel(_imp->shortcutGroup);
+    _imp->shortcutLabel = new Natron::Label(_imp->shortcutGroup);
     _imp->shortcutLabel->setText( tr("Sequence:") );
     _imp->shortcutGroupLayout->addWidget(_imp->shortcutLabel);
 
@@ -265,7 +276,7 @@ ShortCutEditor::ShortCutEditor(QWidget* parent)
     _imp->shortcutGroupLayout->addWidget(_imp->shortcutEditor);
 
     _imp->validateButton = new Button(tr("Validate"),_imp->shortcutGroup);
-    _imp->validateButton->setToolTip( tr("Validates the shortcut on the field editor and set the selected shortcut.") );
+    _imp->validateButton->setToolTip(Natron::convertFromPlainText(tr("Validates the shortcut on the field editor and set the selected shortcut."), Qt::WhiteSpaceNormal));
     _imp->shortcutGroupLayout->addWidget(_imp->validateButton);
     QObject::connect( _imp->validateButton, SIGNAL( clicked(bool) ), this, SLOT( onValidateButtonClicked() ) );
 
@@ -493,7 +504,7 @@ ShortCutEditor::onValidateButtonClicked()
                     QString err = QString("Cannot bind this shortcut because the following action is already using it: %1")
                                   .arg( it2->item->text(0) );
                     _imp->shortcutEditor->clear();
-                    Natron::errorDialog( tr("Shortcut editor").toStdString(), tr( err.toStdString().c_str() ).toStdString() );
+                    Natron::errorDialog( tr("Shortcuts Editor").toStdString(), tr( err.toStdString().c_str() ).toStdString() );
 
                     return;
                 }

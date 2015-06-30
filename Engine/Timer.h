@@ -104,7 +104,7 @@ public:
 
     PlayStateEnum playState;
     
-signals:
+Q_SIGNALS:
     
     void fpsChanged(double actualfps,double desiredfps);
 
@@ -132,7 +132,7 @@ public:
     TimeLapse();
     
     /**
-     * @brief Returns the time elapsed in seconds since reportAndReset was last called. If reportAndReset has never been called
+     * @brief Returns the time elapsed in seconds since getTimeElapsedReset was last called. If getTimeElapsedReset has never been called
      * this will return the time since the object was instantiated.
      **/
     double getTimeElapsedReset();

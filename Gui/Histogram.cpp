@@ -3,13 +3,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "Histogram.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QCheckBox>
-#include <QLabel>
 #include <QSplitter>
 #include <QDesktopWidget>
 #include <QGLShaderProgram>
@@ -19,7 +21,6 @@ CLANG_DIAG_OFF(unused-private-field)
 CLANG_DIAG_ON(unused-private-field)
 #include <QDebug>
 #include <QApplication>
-#include <QMenu>
 #include <QToolButton>
 #include <QActionGroup>
 
@@ -28,6 +29,7 @@ CLANG_DIAG_ON(unused-private-field)
 #include "Engine/HistogramCPU.h"
 #include "Engine/Node.h"
 
+#include "Gui/Menu.h"
 #include "Gui/ticks.h"
 #include "Gui/Shaders.h"
 #include "Gui/Gui.h"
@@ -54,6 +56,7 @@ enum EventStateEnum
     eEventStateNone
 };
 }
+
 
 struct HistogramPrivate
 {
@@ -102,6 +105,8 @@ struct HistogramPrivate
           , vmin(0)
           , vmax(0)
           , binsCount(0)
+          , mipMapLevel(0)
+          , hasImage(false)
 #endif
          , sizeH()
     {
@@ -115,6 +120,10 @@ struct HistogramPrivate
     void drawScale();
 
     void drawPicker();
+    
+    void drawWarnings();
+    
+    void drawMissingImage();
 
     void updatePicker(double x);
 
@@ -140,16 +149,16 @@ struct HistogramPrivate
     QVBoxLayout* mainLayout;
 
     ///////// OPTIONS
-    QMenu* rightClickMenu;
+    Natron::Menu* rightClickMenu;
     QMenu* histogramSelectionMenu;
     QActionGroup* histogramSelectionGroup;
-    QMenu* viewerCurrentInputMenu;
+    Natron::Menu* viewerCurrentInputMenu;
     QActionGroup* viewerCurrentInputGroup;
     QActionGroup* modeActions;
-    QMenu* modeMenu;
+    Natron::Menu* modeMenu;
     QAction* fullImage;
     QActionGroup* filterActions;
-    QMenu* filterMenu;
+    Natron::Menu* filterMenu;
     Histogram* widget;
     Histogram::DisplayModeEnum mode;
     QPoint oldClick; /// the last click pressed, in widget coordinates [ (0,0) == top left corner ]
@@ -235,6 +244,8 @@ struct HistogramPrivate
     unsigned int pixelsCount;
     double vmin,vmax; //< the x range of the histogram
     unsigned int binsCount;
+    unsigned int mipMapLevel;
+    bool hasImage;
 #endif // !NATRON_HISTOGRAM_USING_OPENGL
     
     QSize sizeH;
@@ -258,17 +269,17 @@ Histogram::Histogram(Gui* gui,
 //    _imp->sizeH = desktop->screenGeometry().size();
     _imp->sizeH = QSize(10000,10000);
     
-    _imp->rightClickMenu = new QMenu(this);
-    _imp->rightClickMenu->setFont( QFont(appFont,appFontSize) );
+    _imp->rightClickMenu = new Natron::Menu(this);
+    //_imp->rightClickMenu->setFont( QFont(appFont,appFontSize) );
 
-    _imp->histogramSelectionMenu = new QMenu(tr("Viewer target"),_imp->rightClickMenu);
-    _imp->histogramSelectionMenu->setFont( QFont(appFont,appFontSize) );
+    _imp->histogramSelectionMenu = new Natron::Menu(tr("Viewer target"),_imp->rightClickMenu);
+    //_imp->histogramSelectionMenu->setFont( QFont(appFont,appFontSize) );
     _imp->rightClickMenu->addAction( _imp->histogramSelectionMenu->menuAction() );
 
     _imp->histogramSelectionGroup = new QActionGroup(_imp->histogramSelectionMenu);
 
-    _imp->viewerCurrentInputMenu = new QMenu(tr("Viewer input"),_imp->rightClickMenu);
-    _imp->viewerCurrentInputMenu->setFont( QFont(appFont,appFontSize) );
+    _imp->viewerCurrentInputMenu = new Natron::Menu(tr("Viewer input"),_imp->rightClickMenu);
+    //_imp->viewerCurrentInputMenu->setFont( QFont(appFont,appFontSize) );
     _imp->rightClickMenu->addAction( _imp->viewerCurrentInputMenu->menuAction() );
 
     _imp->viewerCurrentInputGroup = new QActionGroup(_imp->viewerCurrentInputMenu);
@@ -291,8 +302,8 @@ Histogram::Histogram(Gui* gui,
     _imp->viewerCurrentInputGroup->addAction(inputBAction);
     _imp->viewerCurrentInputMenu->addAction(inputBAction);
 
-    _imp->modeMenu = new QMenu(tr("Display mode"),_imp->rightClickMenu);
-    _imp->modeMenu->setFont( QFont(appFont,appFontSize) );
+    _imp->modeMenu = new Natron::Menu(tr("Display mode"),_imp->rightClickMenu);
+    //_imp->modeMenu->setFont( QFont(appFont,appFontSize) );
     _imp->rightClickMenu->addAction( _imp->modeMenu->menuAction() );
 
     _imp->fullImage = new QAction(_imp->rightClickMenu);
@@ -302,8 +313,8 @@ Histogram::Histogram(Gui* gui,
     QObject::connect( _imp->fullImage, SIGNAL( triggered() ), this, SLOT( computeHistogramAndRefresh() ) );
     _imp->rightClickMenu->addAction(_imp->fullImage);
 
-    _imp->filterMenu = new QMenu(tr("Smoothing"),_imp->rightClickMenu);
-    _imp->filterMenu->setFont( QFont(appFont,appFontSize) );
+    _imp->filterMenu = new Natron::Menu(tr("Smoothing"),_imp->rightClickMenu);
+    //_imp->filterMenu->setFont( QFont(appFont,appFontSize) );
     _imp->rightClickMenu->addAction( _imp->filterMenu->menuAction() );
 
     _imp->modeActions = new QActionGroup(_imp->modeMenu);
@@ -426,10 +437,10 @@ boost::shared_ptr<Natron::Image> HistogramPrivate::getHistogramImage(RectI* imag
         return boost::shared_ptr<Natron::Image>();
     } else if (index == 1) {
         //current viewer
-        ViewerTab* lastSelectedViewer = gui->getLastSelectedViewer();
+        ViewerTab* lastSelectedViewer = gui->getNodeGraph()->getLastSelectedViewer();
         boost::shared_ptr<Natron::Image> ret;
         if (lastSelectedViewer) {
-            ret = lastSelectedViewer->getViewer()->getLastRenderedImage(textureIndex);
+            ret = lastSelectedViewer->getViewer()->getLastRenderedImageByMipMapLevel(textureIndex,lastSelectedViewer->getInternalNode()->getMipMapLevelFromZoomFactor());
         }
         if (ret) {
             if (!useImageRoD) {
@@ -446,7 +457,7 @@ boost::shared_ptr<Natron::Image> HistogramPrivate::getHistogramImage(RectI* imag
         boost::shared_ptr<Natron::Image> ret;
         const std::list<ViewerTab*> & viewerTabs = gui->getViewersList();
         for (std::list<ViewerTab*>::const_iterator it = viewerTabs.begin(); it != viewerTabs.end(); ++it) {
-            if ( (*it)->getInternalNode()->getName() == viewerName ) {
+            if ( (*it)->getInternalNode()->getScriptName_mt_safe() == viewerName ) {
                 ret = (*it)->getViewer()->getLastRenderedImage(textureIndex);
                 if (ret) {
                     if (!useImageRoD) {
@@ -512,7 +523,7 @@ Histogram::populateViewersChoices()
     for (std::list<ViewerTab*>::const_iterator it = viewerTabs.begin(); it != viewerTabs.end(); ++it) {
         if ( (*it)->getInternalNode()->getNode()->isActivated() ) {
             QAction* ac = new QAction(_imp->histogramSelectionGroup);
-            ac->setText( (*it)->getInternalNode()->getName().c_str() );
+            ac->setText( (*it)->getInternalNode()->getScriptName_mt_safe().c_str() );
             ac->setCheckable(true);
             ac->setChecked(false);
             ac->setData(c);
@@ -549,17 +560,18 @@ Histogram::onCurrentViewerChanged(QAction*)
 
 void
 Histogram::onViewerImageChanged(ViewerGL* viewer,
-                                int texIndex)
+                                int texIndex,
+                                bool hasImageBackend)
 {
     // always running in the main thread
     assert( qApp && qApp->thread() == QThread::currentThread() );
 
-    if (viewer) {
-        QString viewerName = viewer->getInternalNode()->getName().c_str();
-        ViewerTab* lastSelectedViewer = _imp->gui->getLastSelectedViewer();
+    if (viewer && hasImageBackend) {
+        QString viewerName = viewer->getInternalNode()->getScriptName_mt_safe().c_str();
+        ViewerTab* lastSelectedViewer = _imp->gui->getNodeGraph()->getLastSelectedViewer();
         QString currentViewerName;
         if (lastSelectedViewer) {
-            currentViewerName = lastSelectedViewer->getInternalNode()->getName().c_str();
+            currentViewerName = lastSelectedViewer->getInternalNode()->getScriptName_mt_safe().c_str();
         }
 
         QAction* selectedHistAction = _imp->histogramSelectionGroup->checkedAction();
@@ -571,10 +583,15 @@ Histogram::onViewerImageChanged(ViewerGL* viewer,
                 QAction* currentInput = _imp->viewerCurrentInputGroup->checkedAction();
                 if ( currentInput && (currentInput->data().toInt() == texIndex) ) {
                     computeHistogramAndRefresh();
+                    return;
                 }
             }
         }
     }
+    
+    _imp->hasImage =false;
+    update();
+    
 }
 
 QSize
@@ -817,10 +834,12 @@ startRenderingTo(GLuint fboId,
     glDrawBuffer(attachment);
     glViewport(0,0,w,h);
     glMatrixMode(GL_PROJECTION);
+    glCheckProjectionStack();
     glPushMatrix();
     glLoadIdentity();
-    glOrtho(0,w,0,h,-1,1);
+    glOrtho(0, w, 0, h, 1, -1);
     glMatrixMode(GL_MODELVIEW);
+    glCheckModelviewStack();
     glPushMatrix();
     glLoadIdentity();
 }
@@ -1092,43 +1111,48 @@ Histogram::paintGL()
         return;
     }
 
+    assert(_imp->zoomCtx.factor() > 0.);
+
+    double zoomLeft = _imp->zoomCtx.left();
+    double zoomRight = _imp->zoomCtx.right();
+    double zoomBottom = _imp->zoomCtx.bottom();
+    double zoomTop = _imp->zoomCtx.top();
+    if ( (zoomLeft == zoomRight) || (zoomTop == zoomBottom) ) {
+        glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        return;
+    }
+
     {
         GLProtectAttrib a(GL_TRANSFORM_BIT | GL_COLOR_BUFFER_BIT);
-        GLProtectMatrix m(GL_MODELVIEW);
         GLProtectMatrix p(GL_PROJECTION);
-        glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        glMatrixMode(GL_PROJECTION);
+        glOrtho(zoomLeft, zoomRight, zoomBottom, zoomTop, 1, -1);
+        GLProtectMatrix m(GL_MODELVIEW);
         glLoadIdentity();
-        assert(_imp->zoomCtx.factor() > 0.);
-
-        double zoomLeft = _imp->zoomCtx.left();
-        double zoomRight = _imp->zoomCtx.right();
-        double zoomBottom = _imp->zoomCtx.bottom();
-        double zoomTop = _imp->zoomCtx.top();
-        if ( (zoomLeft == zoomRight) || (zoomTop == zoomBottom) ) {
-            glClearColor(0,0,0,1);
-            glClear(GL_COLOR_BUFFER_BIT);
-
-            return;
-        }
-        glOrtho(zoomLeft, zoomRight, zoomBottom, zoomTop, -1, 1);
         glCheckError();
-
-
+        
         glClearColor(0,0,0,1);
         glClear(GL_COLOR_BUFFER_BIT);
         glCheckErrorIgnoreOSXBug();
-
-
+        
         _imp->drawScale();
-
+        
+        if (_imp->hasImage) {
 #ifndef NATRON_HISTOGRAM_USING_OPENGL
-        _imp->drawHistogramCPU();
+            _imp->drawHistogramCPU();
 #endif
-        if (_imp->drawCoordinates) {
-            _imp->drawPicker();
+            if (_imp->drawCoordinates) {
+                _imp->drawPicker();
+            }
+            
+            _imp->drawWarnings();
+            
+        } else {
+            _imp->drawMissingImage();
         }
+        
         glCheckError();
     } // GLProtectAttrib a(GL_TRANSFORM_BIT | GL_COLOR_BUFFER_BIT);
 } // paintGL
@@ -1165,13 +1189,15 @@ Histogram::mousePressEvent(QMouseEvent* e)
         _imp->oldClick = e->pos();
     } else if ( buttonDownIsRight(e) ) {
         _imp->showMenu( e->globalPos() );
-    } else if ((e->buttons() & Qt::MiddleButton) && (buttonControlAlt(e) == Qt::AltModifier || (e->buttons() & Qt::LeftButton)) ) {
-        // Alt + middle = zoom or left + middle = zoom
+    } else if (((e->buttons() & Qt::MiddleButton) &&
+                (buttonMetaAlt(e) == Qt::AltModifier || (e->buttons() & Qt::LeftButton))) ||
+               ((e->buttons() & Qt::LeftButton) &&
+                (buttonMetaAlt(e) == (Qt::AltModifier|Qt::MetaModifier)))) {
+        // Alt + middle or left + middle or Meta + Alt + left = zoom
         _imp->state = eEventStateZoomingView;
         _imp->oldClick = e->pos();
         return;
     }
-
 }
 
 void
@@ -1427,6 +1453,8 @@ Histogram::computeHistogramAndRefresh(bool forceEvenIfNotVisible)
     boost::shared_ptr<Natron::Image> image = _imp->getHistogramImage(&rect);
     if (image) {
         _imp->histogramThread.computeHistogram(_imp->mode, image, rect, width(),vmin,vmax,_imp->filterSize);
+    } else {
+        _imp->hasImage = false;
     }
 
 #endif
@@ -1446,9 +1474,10 @@ Histogram::onCPUHistogramComputed()
     assert( qApp && qApp->thread() == QThread::currentThread() );
 
     int mode;
-    bool success = _imp->histogramThread.getMostRecentlyProducedHistogram(&_imp->histogram1, &_imp->histogram2, &_imp->histogram3, &_imp->binsCount, &_imp->pixelsCount, &mode,&_imp->vmin,&_imp->vmax);
+    bool success = _imp->histogramThread.getMostRecentlyProducedHistogram(&_imp->histogram1, &_imp->histogram2, &_imp->histogram3, &_imp->binsCount, &_imp->pixelsCount, &mode,&_imp->vmin,&_imp->vmax,&_imp->mipMapLevel);
     assert(success);
     if (success) {
+        _imp->hasImage = true;
         update();
     }
 }
@@ -1556,6 +1585,54 @@ HistogramPrivate::drawScale()
     } // GLProtectAttrib a(GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_ENABLE_BIT);
     glCheckError();
 } // drawScale
+
+void
+HistogramPrivate::drawWarnings()
+{
+    // always running in the main thread
+    assert( qApp && qApp->thread() == QThread::currentThread() );
+    assert( QGLContext::currentContext() == widget->context() );
+    if (mipMapLevel > 0) {
+        QFontMetrics m(_font);
+        QString str(QObject::tr("Image downscaled"));
+        int strWidth = m.width(str);
+        QPointF pos = zoomCtx.toZoomCoordinates(widget->width() - strWidth - 10,5 * m.height() + 30);
+        glCheckError();
+        widget->renderText(pos.x(), pos.y(), str,QColor(220,220,0), _font);
+        glCheckError();
+    }
+
+}
+
+void
+HistogramPrivate::drawMissingImage()
+{
+    QPointF topLeft = zoomCtx.toZoomCoordinates(0, 0);
+    QPointF btmRight = zoomCtx.toZoomCoordinates(widget->width(), widget->height());
+    QPointF topRight(btmRight.x(),topLeft.y());
+    QPointF btmLeft(topLeft.x(),btmRight.y());
+    {
+        GLProtectAttrib a(GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_ENABLE_BIT);
+        
+        glColor4f(0.9,0.9,0,1);
+        glLineWidth(1.5);
+        glBegin(GL_LINES);
+        glVertex2f(topLeft.x(),topLeft.y());
+        glVertex2f(btmRight.x(),btmRight.y());
+        glVertex2f(btmLeft.x(),btmLeft.y());
+        glVertex2f(topRight.x(),topRight.y());
+        glEnd();
+        glLineWidth(1.);
+    }
+    
+    QString txt(QObject::tr("Missing image"));
+    QFontMetrics m(_font);
+    int strWidth = m.width(txt);
+    QPointF pos = zoomCtx.toZoomCoordinates(widget->width() / 2. - strWidth / 2., m.height() + 10);
+    glCheckError();
+    widget->renderText(pos.x(), pos.y(), txt,QColor(220,0,0), _font);
+    glCheckError();
+}
 
 void
 HistogramPrivate::drawPicker()
@@ -1800,23 +1877,18 @@ Histogram::renderText(double x,
         return;
     }
 
-    glCheckError();
-    {
-        GLProtectAttrib a(GL_TRANSFORM_BIT);
-        GLProtectMatrix p(GL_PROJECTION);
-
-        glMatrixMode(GL_PROJECTION);
-        glLoadIdentity();
-        double h = (double)height();
-        double w = (double)width();
-        /*we put the ortho proj to the widget coords, draw the elements and revert back to the old orthographic proj.*/
-        glOrtho(0,w,0,h,-1,1);
-
-        QPointF pos = _imp->zoomCtx.toWidgetCoordinates(x, y);
-        glCheckError();
-        _imp->textRenderer.renderText(pos.x(),h - pos.y(),text,color,font);
-        glCheckError();
-    } // GLProtectAttrib a(GL_TRANSFORM_BIT);
+    double w = (double)width();
+    double h = (double)height();
+    double bottom = _imp->zoomCtx.bottom();
+    double left = _imp->zoomCtx.left();
+    double top =  _imp->zoomCtx.top();
+    double right = _imp->zoomCtx.right();
+    if (w <= 0 || h <= 0 || right <= left || top <= bottom) {
+        return;
+    }
+    double scalex = (right-left) / w;
+    double scaley = (top-bottom) / h;
+    _imp->textRenderer.renderText(x, y, scalex, scaley, text, color, font);
     glCheckError();
 }
 

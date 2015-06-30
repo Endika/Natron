@@ -8,6 +8,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "SpinBox.h"
 
 #include <cfloat>
@@ -21,6 +25,8 @@ CLANG_DIAG_ON(unused-private-field)
 #include <QStyle> // in QtGui on Qt4, in QtWidgets on Qt5
 #include <QApplication>
 #include <QDebug>
+#include <QMenu>
+#include <QPainter>
 
 #include "Engine/Variant.h"
 #include "Engine/Settings.h"
@@ -47,6 +53,9 @@ struct SpinBoxPrivate
     double valueAfterLastValidation;
     bool valueInitialized; //< false when setValue has never been called yet.
     
+    bool useLineColor;
+    QColor lineColor;
+    
     SpinBoxPrivate(SpinBox::SpinBoxTypeEnum type)
     : type(type)
     , decimals(2)
@@ -60,6 +69,8 @@ struct SpinBoxPrivate
     , hasChangedSinceLastValidation(false)
     , valueAfterLastValidation(0)
     , valueInitialized(false)
+    , useLineColor(false)
+    , lineColor(Qt::black)
     {
     }
     
@@ -71,30 +82,17 @@ SpinBox::SpinBox(QWidget* parent,
 : LineEdit(parent)
 , animation(0)
 , dirty(false)
+, altered(false)
 , _imp( new SpinBoxPrivate(type) )
 {
-    switch (_imp->type) {
-        case eSpinBoxTypeDouble:
-            _imp->mini.setValue<double>(-DBL_MAX);
-            _imp->maxi.setValue<double>(DBL_MAX);
-            _imp->doubleValidator = new QDoubleValidator;
-            _imp->doubleValidator->setTop(DBL_MAX);
-            _imp->doubleValidator->setBottom(-DBL_MAX);
-            break;
-        case eSpinBoxTypeInt:
-            _imp->intValidator = new QIntValidator;
-            _imp->mini.setValue<int>(INT_MIN);
-            _imp->maxi.setValue<int>(INT_MAX);
-            _imp->intValidator->setTop(INT_MAX);
-            _imp->intValidator->setBottom(INT_MIN);
-            break;
-    }
     QObject::connect( this, SIGNAL( returnPressed() ), this, SLOT( interpretReturn() ) );
     setValue(0);
     setMaximumWidth(50);
     setMinimumWidth(35);
-    decimals(_imp->decimals);
     setFocusPolicy(Qt::WheelFocus); // mouse wheel gives focus too - see also SpinBox::focusInEvent()
+    decimals(_imp->decimals);
+
+    setType(type);
 }
 
 SpinBox::~SpinBox()
@@ -105,6 +103,39 @@ SpinBox::~SpinBox()
             break;
         case eSpinBoxTypeInt:
             delete _imp->intValidator;
+            break;
+    }
+}
+
+void
+SpinBox::setType(SpinBoxTypeEnum type)
+{
+    _imp->type = type;
+    if (_imp->doubleValidator) {
+        delete _imp->doubleValidator;
+        _imp->doubleValidator = 0;
+    }
+    if (_imp->intValidator) {
+        delete _imp->intValidator;
+        _imp->intValidator = 0;
+    }
+    switch (_imp->type) {
+        case eSpinBoxTypeDouble:
+            _imp->mini.setValue<double>(-DBL_MAX);
+            _imp->maxi.setValue<double>(DBL_MAX);
+            _imp->doubleValidator = new QDoubleValidator;
+            _imp->doubleValidator->setTop(DBL_MAX);
+            _imp->doubleValidator->setBottom(-DBL_MAX);
+            setValue_internal(value(),true);
+            break;
+        case eSpinBoxTypeInt:
+            _imp->intValidator = new QIntValidator;
+            _imp->mini.setValue<int>(INT_MIN);
+            _imp->maxi.setValue<int>(INT_MAX);
+            _imp->intValidator->setTop(INT_MAX);
+            _imp->intValidator->setBottom(INT_MIN);
+            setValue_internal((int)std::floor(value() + 0.5),true);
+
             break;
     }
 }
@@ -196,7 +227,7 @@ SpinBox::interpretReturn()
 {
     if ( validateText() ) {
         //setValue_internal(text().toDouble(), true, true); // force a reformat
-        emit valueChanged( value() );
+        Q_EMIT valueChanged( value() );
     }
 }
 
@@ -269,7 +300,7 @@ SpinBox::increment(int delta,
         val = std::max( miniD, std::min(val, maxiD) );
         if (val != oldVal) {
             setValue(val);
-            emit valueChanged(val);
+            Q_EMIT valueChanged(val);
         }
         
         return;
@@ -548,7 +579,7 @@ SpinBox::increment(int delta,
     // Set the selection
     assert( newPos + 1 <= newStr.size() );
     setSelection(newPos + 1, -1);
-    emit valueChanged( value() );
+    Q_EMIT valueChanged( value() );
 } // increment
 
 void
@@ -599,7 +630,7 @@ SpinBox::focusOutEvent(QFocusEvent* e)
     if (newValue != _imp->valueWhenEnteringFocus) {
         if ( validateText() ) {
             //setValue_internal(text().toDouble(), true, true); // force a reformat
-            emit valueChanged( value() );
+            Q_EMIT valueChanged( value() );
         }
     }
     LineEdit::focusOutEvent(e);
@@ -756,6 +787,28 @@ SpinBox::setDirty(bool d)
 QMenu*
 SpinBox::getRightClickMenu()
 {
-    return createStandardContextMenu();
+    QMenu* menu =  createStandardContextMenu();
+    menu->setFont(QApplication::font()); // necessary
+    return menu;
 }
 
+void
+SpinBox::paintEvent(QPaintEvent* e)
+{
+    LineEdit::paintEvent(e);
+    
+    if (_imp->useLineColor) {
+        QPainter p(this);
+        p.setPen(_imp->lineColor);
+        int h = height() - 1;
+        p.drawLine(0, h - 1, width() - 1, h - 1);
+    }
+}
+
+void
+SpinBox::setUseLineColor(bool use, const QColor& color)
+{
+    _imp->useLineColor = use;
+    _imp->lineColor = color;
+    repaint();
+}

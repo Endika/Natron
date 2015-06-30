@@ -8,9 +8,12 @@
  *
  */
 
-#include "Gui/KnobGuiFile.h"
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
-#include <QLabel> // in QtGui on Qt4, in QtWidgets on Qt5
+#include "KnobGuiFile.h"
+
 #include <QFormLayout> // in QtGui on Qt4, in QtWidgets on Qt5
 #include <QHBoxLayout> // in QtGui on Qt4, in QtWidgets on Qt5
 #include <QDebug>
@@ -21,7 +24,6 @@
 #include <QApplication>
 #include <QStyledItemDelegate>
 #include <QAction>
-#include <QMenu>
 #include <QFileSystemWatcher>
 
 #include "Engine/Settings.h"
@@ -40,6 +42,8 @@
 #include "Gui/Gui.h"
 #include "Gui/GuiAppInstance.h"
 #include "Gui/TableModelView.h"
+#include "Gui/Menu.h"
+#include "Gui/Utils.h"
 
 using namespace Natron;
 
@@ -55,25 +59,31 @@ File_KnobGui::File_KnobGui(boost::shared_ptr<KnobI> knob,
     , _watcher(new QFileSystemWatcher)
     , _fileBeingWatched()
 {
-    _knob = boost::dynamic_pointer_cast<File_Knob>(knob);
-    assert(_knob);
-    QObject::connect( _knob.get(), SIGNAL( openFile() ), this, SLOT( open_file() ) );
+    boost::shared_ptr<File_Knob> k = boost::dynamic_pointer_cast<File_Knob>(knob);
+    assert(k);
+    QObject::connect( k.get(), SIGNAL( openFile() ), this, SLOT( open_file() ) );
     QObject::connect(_watcher, SIGNAL(fileChanged(QString)), this, SLOT(watchedFileChanged()));
+    _knob = k;
 
 }
 
 File_KnobGui::~File_KnobGui()
 {
-//    delete _lineEdit;
-//    delete _openFileButton;
-//    delete _watcher;
+}
+
+void File_KnobGui::removeSpecificGui()
+{
+    delete _lineEdit;
+    delete _openFileButton;
+    delete _watcher;
 }
 
 void
 File_KnobGui::createWidget(QHBoxLayout* layout)
 {
     
-    if (_knob->getHolder() && _knob->getEvaluateOnChange()) {
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getEvaluateOnChange()) {
         boost::shared_ptr<TimeLine> timeline = getGui()->getApp()->getTimeLine();
         QObject::connect(timeline.get(), SIGNAL(frameChanged(SequenceTime,int)), this, SLOT(onTimelineFrameChanged(SequenceTime, int)));
     }
@@ -92,10 +102,6 @@ File_KnobGui::createWidget(QHBoxLayout* layout)
     ///set the copy/link actions in the right click menu
     enableRightClickMenu(_lineEdit, 0);
 
-
-    if ( hasToolTip() ) {
-        _lineEdit->setToolTip( toolTip() );
-    }
     QObject::connect( _lineEdit, SIGNAL( editingFinished() ), this, SLOT( onTextEdited() ) );
 
 
@@ -111,14 +117,14 @@ File_KnobGui::createWidget(QHBoxLayout* layout)
     containerLayout->addWidget(_lineEdit);
     containerLayout->addWidget(_openFileButton);
     
-    if (_knob->getHolder() && _knob->isInputImageFile()) {
+    if (knob->getHolder() && knob->isInputImageFile()) {
         _reloadButton = new Button(container);
         _reloadButton->setFixedSize(17, 17);
         _reloadButton->setFocusPolicy(Qt::NoFocus);
         QPixmap pixRefresh;
         appPTR->getIcon(NATRON_PIXMAP_VIEWER_REFRESH, &pixRefresh);
         _reloadButton->setIcon(QIcon(pixRefresh));
-        _reloadButton->setToolTip(tr("Reload the file"));
+        _reloadButton->setToolTip(Natron::convertFromPlainText(tr("Reload the file."), Qt::WhiteSpaceNormal));
         QObject::connect( _reloadButton, SIGNAL( clicked() ), this, SLOT( onReloadClicked() ) );
         containerLayout->addWidget(_reloadButton);
     }
@@ -135,14 +141,16 @@ File_KnobGui::onButtonClicked()
 void
 File_KnobGui::onReloadClicked()
 {
+    
     if (_reloadButton) {
-        assert(_knob->getHolder());
-        EffectInstance* effect = dynamic_cast<EffectInstance*>(_knob->getHolder());
+        boost::shared_ptr<File_Knob> knob = _knob.lock();
+        assert(knob->getHolder());
+        EffectInstance* effect = dynamic_cast<EffectInstance*>(knob->getHolder());
         if (effect) {
             effect->purgeCaches();
             effect->clearPersistentMessage(false);
         }
-        _knob->evaluateValueChange(0, Natron::eValueChangedReasonNatronInternalEdited, true);
+        knob->evaluateValueChange(0, Natron::eValueChangedReasonNatronInternalEdited);
     }
 }
 
@@ -151,16 +159,16 @@ void
 File_KnobGui::open_file()
 {
     std::vector<std::string> filters;
-
-    if ( !_knob->isInputImageFile() ) {
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    if ( !knob->isInputImageFile() ) {
         filters.push_back("*");
     } else {
-        Natron::EffectInstance* effect = dynamic_cast<Natron::EffectInstance*>( _knob->getHolder() );
+        Natron::EffectInstance* effect = dynamic_cast<Natron::EffectInstance*>( knob->getHolder() );
         if (effect) {
             filters = effect->supportedFileFormats();
         }
     }
-    std::string oldPattern = _knob->getValue();
+    std::string oldPattern = knob->getValue();
     std::string currentPattern = oldPattern;
     std::string path = SequenceParsing::removePath(currentPattern);
     QString pathWhereToOpen;
@@ -170,7 +178,7 @@ File_KnobGui::open_file()
         pathWhereToOpen = path.c_str();
     }
 
-    SequenceFileDialog dialog( _lineEdit->parentWidget(), filters, _knob->isInputImageFile(),
+    SequenceFileDialog dialog( _lineEdit->parentWidget(), filters, knob->isInputImageFile(),
                                SequenceFileDialog::eFileDialogModeOpen, pathWhereToOpen.toStdString(), getGui(),true);
     
     if ( dialog.exec() ) {
@@ -196,19 +204,19 @@ File_KnobGui::updateLastOpened(const QString &str)
 void
 File_KnobGui::updateGUI(int /*dimension*/)
 {
-    
-    _lineEdit->setText(_knob->getValue().c_str());
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    _lineEdit->setText(knob->getValue().c_str());
     
     bool useNotifications = appPTR->getCurrentSettings()->notifyOnFileChange();
-    if (useNotifications && _knob->getHolder() && _knob->getEvaluateOnChange() ) {
+    if (useNotifications && knob->getHolder() && knob->getEvaluateOnChange() ) {
         if (!_fileBeingWatched.empty()) {
             _watcher->removePath(_fileBeingWatched.c_str());
             _fileBeingWatched.clear();
         }
         
-        std::string newValue = _knob->getFileName(_knob->getCurrentTime(), 0);
-        if (_knob->getHolder()->getApp()) {
-            _knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
+        std::string newValue = knob->getFileName(knob->getCurrentTime());
+        if (knob->getHolder()->getApp()) {
+            knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
         }
         QString file(newValue.c_str());
         
@@ -234,13 +242,14 @@ File_KnobGui::onTimelineFrameChanged(SequenceTime time,int /*reason*/)
     if (!useNotifications) {
         return;
     }
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
     ///Get the current file, if it exists, add the file path to the file system watcher
     ///to get notified if the file changes.
-    std::string filepath = _knob->getFileName(time, 0);
-    if (!filepath.empty() && _knob->getHolder() && _knob->getHolder()->getApp()) {
-        _knob->getHolder()->getApp()->getProject()->canonicalizePath(filepath);
+    std::string filepath = knob->getFileName(time);
+    if (!filepath.empty() && knob->getHolder() && knob->getHolder()->getApp()) {
+        knob->getHolder()->getApp()->getProject()->canonicalizePath(filepath);
     }
-    if (filepath != _fileBeingWatched  && _knob->getHolder() && _knob->getEvaluateOnChange() ) {
+    if (filepath != _fileBeingWatched  && knob->getHolder() && knob->getEvaluateOnChange() ) {
         
         
         if (!_fileBeingWatched.empty()) {
@@ -268,8 +277,9 @@ File_KnobGui::watchedFileChanged()
     ///The file has changed, trigger a new render.
     
     ///Make sure the node doesn't hold any cache
-    if (_knob->getHolder()) {
-        EffectInstance* effect = dynamic_cast<EffectInstance*>(_knob->getHolder());
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    if (knob->getHolder()) {
+        EffectInstance* effect = dynamic_cast<EffectInstance*>(knob->getHolder());
         if (effect) {
             effect->purgeCaches();
             
@@ -281,7 +291,7 @@ File_KnobGui::watchedFileChanged()
                 }
                 
             } else {
-                 _knob->evaluateValueChange(0, Natron::eValueChangedReasonNatronInternalEdited, true);
+                 knob->evaluateValueChange(0, Natron::eValueChangedReasonNatronInternalEdited);
             }
         }
         
@@ -295,7 +305,7 @@ void File_KnobGui::onTextEdited()
     std::string str = _lineEdit->text().toStdString();
     
     ///don't do antyhing if the pattern is the same
-    std::string oldValue = _knob->getValue();
+    std::string oldValue = _knob.lock()->getValue();
     
     if ( str == oldValue ) {
         return;
@@ -353,7 +363,7 @@ File_KnobGui::setDirty(bool dirty)
 
 boost::shared_ptr<KnobI> File_KnobGui::getKnob() const
 {
-    return _knob;
+    return _knob.lock();
 }
 
 void
@@ -374,7 +384,7 @@ File_KnobGui::addRightClickMenuEntries(QMenu* menu)
 
     menu->addSeparator();
     QMenu* qtMenu = _lineEdit->createStandardContextMenu();
-    qtMenu->setFont(QFont(appFont,appFontSize));
+    qtMenu->setFont(QApplication::font()); // necessary
     qtMenu->setTitle(tr("Edit"));
     menu->addMenu(qtMenu);
 }
@@ -382,10 +392,11 @@ File_KnobGui::addRightClickMenuEntries(QMenu* menu)
 void
 File_KnobGui::onMakeAbsoluteTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
+        knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
     }
 }
@@ -393,10 +404,11 @@ File_KnobGui::onMakeAbsoluteTriggered()
 void
 File_KnobGui::onMakeRelativeTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->makeRelativeToProject(newValue);
+        knob->getHolder()->getApp()->getProject()->makeRelativeToProject(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
     }
 
@@ -405,11 +417,36 @@ File_KnobGui::onMakeRelativeTriggered()
 void
 File_KnobGui::onSimplifyTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<File_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->simplifyPath(newValue);
+        knob->getHolder()->getApp()->getProject()->simplifyPath(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
+    }
+}
+
+void
+File_KnobGui::reflectAnimationLevel(int /*dimension*/,Natron::AnimationLevelEnum /*level*/)
+{
+    _lineEdit->setAnimation(0);
+}
+
+void
+File_KnobGui::reflectExpressionState(int /*dimension*/,bool hasExpr)
+{
+    bool isSlaved = _knob.lock()->isSlave(0);
+    _lineEdit->setAnimation(3);
+    _lineEdit->setReadOnly(hasExpr || isSlaved);
+    _openFileButton->setEnabled(!hasExpr && !isSlaved);
+}
+
+void
+File_KnobGui::updateToolTip()
+{
+    if (hasToolTip()) {
+        QString tt = toolTip();
+        _lineEdit->setToolTip(tt);
     }
 }
 
@@ -421,15 +458,21 @@ OutputFile_KnobGui::OutputFile_KnobGui(boost::shared_ptr<KnobI> knob,
     , _openFileButton(0)
 {
     _knob = boost::dynamic_pointer_cast<OutputFile_Knob>(knob);
-    assert(_knob);
-    QObject::connect( _knob.get(), SIGNAL( openFile(bool) ), this, SLOT( open_file(bool) ) );
+    assert(_knob.lock());
+    QObject::connect( _knob.lock().get(), SIGNAL( openFile(bool) ), this, SLOT( open_file(bool) ) );
 }
 
 OutputFile_KnobGui::~OutputFile_KnobGui()
 {
-//    delete _lineEdit;
-//    delete _openFileButton;
+
 }
+
+void OutputFile_KnobGui::removeSpecificGui()
+{
+    delete _lineEdit;
+    delete _openFileButton;
+}
+
 
 void
 OutputFile_KnobGui::createWidget(QHBoxLayout* layout)
@@ -439,9 +482,7 @@ OutputFile_KnobGui::createWidget(QHBoxLayout* layout)
     QObject::connect( _lineEdit, SIGNAL( editingFinished() ), this, SLOT( onTextEdited() ) );
 
     _lineEdit->setPlaceholderText( tr("File path...") );
-    if ( hasToolTip() ) {
-        _lineEdit->setToolTip( toolTip() );
-    }
+
     _lineEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     ///set the copy/link actions in the right click menu
@@ -453,7 +494,7 @@ OutputFile_KnobGui::createWidget(QHBoxLayout* layout)
     QPixmap pix;
     appPTR->getIcon(NATRON_PIXMAP_OPEN_FILE, &pix);
     _openFileButton->setIcon( QIcon(pix) );
-    _openFileButton->setToolTip(tr("Browse file..."));
+    _openFileButton->setToolTip(Natron::convertFromPlainText(tr("Browse file..."), Qt::WhiteSpaceNormal));
     _openFileButton->setFocusPolicy(Qt::NoFocus); // exclude from tab focus
     QObject::connect( _openFileButton, SIGNAL( clicked() ), this, SLOT( onButtonClicked() ) );
     QWidget *container = new QWidget( layout->parentWidget() );
@@ -470,7 +511,7 @@ OutputFile_KnobGui::createWidget(QHBoxLayout* layout)
 void
 OutputFile_KnobGui::onButtonClicked()
 {
-    open_file( _knob->isSequencesDialogEnabled() );
+    open_file( _knob.lock()->isSequencesDialogEnabled() );
 }
 
 void
@@ -478,7 +519,7 @@ OutputFile_KnobGui::open_file(bool openSequence)
 {
     std::vector<std::string> filters;
 
-    if ( !_knob->isOutputImageFile() ) {
+    if ( !_knob.lock()->isOutputImageFile() ) {
         filters.push_back("*");
     } else {
         Natron::EffectInstance* effect = dynamic_cast<Natron::EffectInstance*>( getKnob()->getHolder() );
@@ -510,7 +551,7 @@ OutputFile_KnobGui::updateLastOpened(const QString &str)
 void
 OutputFile_KnobGui::updateGUI(int /*dimension*/)
 {
-    _lineEdit->setText( _knob->getValue().c_str() );
+    _lineEdit->setText( _knob.lock()->getValue().c_str() );
 }
 
 void
@@ -525,7 +566,7 @@ OutputFile_KnobGui::onTextEdited()
 //    }
 //
 //    
-    pushUndoCommand( new KnobUndoCommand<std::string>( this,_knob->getValue(),newPattern ) );
+    pushUndoCommand( new KnobUndoCommand<std::string>( this,_knob.lock()->getValue(),newPattern ) );
 }
 
 void
@@ -567,7 +608,7 @@ OutputFile_KnobGui::setDirty(bool dirty)
 
 boost::shared_ptr<KnobI> OutputFile_KnobGui::getKnob() const
 {
-    return _knob;
+    return _knob.lock();
 }
 
 
@@ -589,7 +630,7 @@ OutputFile_KnobGui::addRightClickMenuEntries(QMenu* menu)
     
     menu->addSeparator();
     QMenu* qtMenu = _lineEdit->createStandardContextMenu();
-    qtMenu->setFont(QFont(appFont,appFontSize));
+    qtMenu->setFont(QApplication::font()); // necessary
     qtMenu->setTitle(tr("Edit"));
     menu->addMenu(qtMenu);
 }
@@ -597,10 +638,11 @@ OutputFile_KnobGui::addRightClickMenuEntries(QMenu* menu)
 void
 OutputFile_KnobGui::onMakeAbsoluteTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<OutputFile_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
+        knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
     }
 }
@@ -608,10 +650,11 @@ OutputFile_KnobGui::onMakeAbsoluteTriggered()
 void
 OutputFile_KnobGui::onMakeRelativeTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<OutputFile_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->makeRelativeToProject(newValue);
+        knob->getHolder()->getApp()->getProject()->makeRelativeToProject(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
     }
     
@@ -620,11 +663,37 @@ OutputFile_KnobGui::onMakeRelativeTriggered()
 void
 OutputFile_KnobGui::onSimplifyTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<OutputFile_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->simplifyPath(newValue);
+        knob->getHolder()->getApp()->getProject()->simplifyPath(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
+    }
+}
+
+void
+OutputFile_KnobGui::reflectExpressionState(int /*dimension*/,bool hasExpr)
+{
+    bool isSlaved = _knob.lock()->isSlave(0);
+    _lineEdit->setAnimation(3);
+    _lineEdit->setReadOnly(hasExpr || isSlaved);
+    _openFileButton->setEnabled(!hasExpr && !isSlaved);
+}
+
+
+void
+OutputFile_KnobGui::reflectAnimationLevel(int /*dimension*/,Natron::AnimationLevelEnum /*level*/)
+{
+    _lineEdit->setAnimation(0);
+}
+
+void
+OutputFile_KnobGui::updateToolTip()
+{
+    if (hasToolTip()) {
+        QString tt = toolTip();
+        _lineEdit->setToolTip(tt);
     }
 }
 
@@ -643,12 +712,16 @@ Path_KnobGui::Path_KnobGui(boost::shared_ptr<KnobI> knob,
     , _isInsertingItem(false)
 {
     _knob = boost::dynamic_pointer_cast<Path_Knob>(knob);
-    assert(_knob);
+    assert(_knob.lock());
 }
 
 Path_KnobGui::~Path_KnobGui()
 {
-    //delete _mainContainer;
+}
+
+void Path_KnobGui::removeSpecificGui()
+{
+    delete _mainContainer;
 }
 
 ////////////// TableView delegate
@@ -729,17 +802,15 @@ void
 Path_KnobGui::createWidget(QHBoxLayout* layout)
 {
     _mainContainer = new QWidget(layout->parentWidget());
-    
-    if (_knob->isMultiPath()) {
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    if (knob->isMultiPath()) {
         QVBoxLayout* mainLayout = new QVBoxLayout(_mainContainer);
         mainLayout->setContentsMargins(0, 0, 0, 0);
         
         _table = new TableView( _mainContainer );
         layout->parentWidget()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         //    QObject::connect( _table, SIGNAL( editingFinished() ), this, SLOT( onReturnPressed() ) );
-        if ( hasToolTip() ) {
-            _table->setToolTip( toolTip() );
-        }
+  
         _table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         _table->setAttribute(Qt::WA_MacShowFocusRect,0);
 
@@ -769,16 +840,16 @@ Path_KnobGui::createWidget(QHBoxLayout* layout)
         buttonsLayout->setContentsMargins(0, 0, 0, 0);
         
         _addPathButton = new Button( tr("Add"),buttonsContainer );
-        _addPathButton->setToolTip( tr("Click to add a new project path") );
+        _addPathButton->setToolTip(Natron::convertFromPlainText(tr("Click to add a new project path."), Qt::WhiteSpaceNormal));
         QObject::connect( _addPathButton, SIGNAL( clicked() ), this, SLOT( onAddButtonClicked() ) );
         
         _removePathButton = new Button( tr("Remove"),buttonsContainer);
         QObject::connect( _removePathButton, SIGNAL( clicked() ), this, SLOT( onRemoveButtonClicked() ) );
-        _removePathButton->setToolTip(tr("Click to remove selected project path"));
+        _removePathButton->setToolTip(Natron::convertFromPlainText(tr("Click to remove selected project path."), Qt::WhiteSpaceNormal));
         
         _editPathButton = new Button( tr("Edit"), buttonsContainer);
         QObject::connect( _editPathButton, SIGNAL( clicked() ), this, SLOT( onEditButtonClicked() ) );
-        _editPathButton->setToolTip(tr("Click to change the path of the selected project path"));
+        _editPathButton->setToolTip(Natron::convertFromPlainText(tr("Click to change the path of the selected project path."), Qt::WhiteSpaceNormal));
         
         buttonsLayout->addWidget(_addPathButton);
         buttonsLayout->addWidget(_removePathButton);
@@ -795,13 +866,10 @@ Path_KnobGui::createWidget(QHBoxLayout* layout)
         _lineEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         QObject::connect( _lineEdit, SIGNAL( editingFinished() ), this, SLOT( onTextEdited() ) );
 
-        if ( hasToolTip() ) {
-            _lineEdit->setToolTip( toolTip() );
-        }
         enableRightClickMenu(_lineEdit, 0);
         _openFileButton = new Button( layout->parentWidget() );
         _openFileButton->setFixedSize(17, 17);
-        _openFileButton->setToolTip( tr("Click to select a path to append to/replace this variable.") );
+        _openFileButton->setToolTip(Natron::convertFromPlainText(tr("Click to select a path to append to/replace this variable."), Qt::WhiteSpaceNormal));
         QPixmap pix;
         appPTR->getIcon(NATRON_PIXMAP_OPEN_FILE, &pix);
         _openFileButton->setIcon( QIcon(pix) );
@@ -828,7 +896,7 @@ Path_KnobGui::onAddButtonClicked()
         updateLastOpened(dirPath.c_str());
         
         
-        std::string oldValue = _knob->getValue();
+        std::string oldValue = _knob.lock()->getValue();
         
         int rowCount = (int)_items.size();
         
@@ -846,7 +914,7 @@ Path_KnobGui::onAddButtonClicked()
 void
 Path_KnobGui::onEditButtonClicked()
 {
-    std::string oldValue = _knob->getValue();
+    std::string oldValue = _knob.lock()->getValue();
     QModelIndexList selection = _table->selectionModel()->selectedRows();
     
     if (selection.size() != 1) {
@@ -889,7 +957,7 @@ Path_KnobGui::onOpenFileButtonClicked()
         std::string dirPath = dialog.selectedDirectory();
         updateLastOpened(dirPath.c_str());
         
-        std::string oldValue = _knob->getValue();
+        std::string oldValue = _knob.lock()->getValue();
         
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,dirPath ) );
     }
@@ -899,7 +967,8 @@ Path_KnobGui::onOpenFileButtonClicked()
 void
 Path_KnobGui::onRemoveButtonClicked()
 {
-    std::string oldValue = _knob->getValue();
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    std::string oldValue = knob->getValue();
     QModelIndexList selection = _table->selectionModel()->selectedRows();
 
 	if (selection.isEmpty()) {
@@ -920,7 +989,7 @@ Path_KnobGui::onRemoveButtonClicked()
 
     
     ///Fix all variables if needed
-    if (_knob->getHolder() && _knob->getHolder() == getGui()->getApp()->getProject().get() &&
+    if (knob->getHolder() && knob->getHolder() == getGui()->getApp()->getProject().get() &&
         appPTR->getCurrentSettings()->isAutoFixRelativeFilePathEnabled()) {
         for (std::list<std::string>::iterator it = removeVars.begin(); it != removeVars.end(); ++it) {
             getGui()->getApp()->getProject()->fixRelativeFilePaths(*it, "",false);
@@ -952,7 +1021,7 @@ Path_KnobGui::onTextEdited()
 //    }
 
     
-    std::string oldValue = _knob->getValue();
+    std::string oldValue = _knob.lock()->getValue();
     
     pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,dirPath ) );
 }
@@ -969,9 +1038,10 @@ Path_KnobGui::updateLastOpened(const QString &str)
 void
 Path_KnobGui::updateGUI(int /*dimension*/)
 {
-    QString path(_knob->getValue().c_str());
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    QString path(_knob.lock()->getValue().c_str());
     
-    if (_knob->isMultiPath()) {
+    if (_knob.lock()->isMultiPath()) {
         std::map<std::string,std::string> variables;
         Natron::Project::makeEnvMap(path.toStdString(), variables);
         
@@ -979,7 +1049,7 @@ Path_KnobGui::updateGUI(int /*dimension*/)
         _model->clear();
         _items.clear();
         int i = 0;
-        for (std::map<std::string,std::string> ::const_iterator it = variables.begin();it!=variables.end();++it,++i) {
+        for (std::map<std::string,std::string> ::const_iterator it = variables.begin(); it != variables.end(); ++it, ++i) {
             createItem(i, it->second.c_str(), it->first.c_str());
         }
     } else {
@@ -1039,7 +1109,7 @@ void
 Path_KnobGui::setEnabled()
 {
     bool enabled = getKnob()->isEnabled(0);
-    if (_knob->isMultiPath()) {
+    if (_knob.lock()->isMultiPath()) {
         _table->setEnabled(enabled);
         _addPathButton->setEnabled(enabled);
         _removePathButton->setEnabled(enabled);
@@ -1053,7 +1123,7 @@ void
 Path_KnobGui::setReadOnly(bool readOnly,
                           int /*dimension*/)
 {
-    if (_knob->isMultiPath()) {
+    if (_knob.lock()->isMultiPath()) {
         _table->setEnabled(!readOnly);
         _addPathButton->setEnabled(!readOnly);
         _removePathButton->setEnabled(!readOnly);
@@ -1071,7 +1141,7 @@ Path_KnobGui::setDirty(bool /*dirty*/)
 
 boost::shared_ptr<KnobI> Path_KnobGui::getKnob() const
 {
-    return _knob;
+    return _knob.lock();
 }
 
 void
@@ -1080,13 +1150,13 @@ Path_KnobGui::onItemDataChanged(TableItem* /*item*/)
     if (_isInsertingItem) {
         return;
     }
-    
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
     std::string newPath = rebuildPath();
-    std::string oldPath = _knob->getValue();
+    std::string oldPath = knob->getValue();
     
     if (oldPath != newPath) {
         
-        if (_knob->getHolder() && _knob->getHolder()->isProject() &&
+        if (knob->getHolder() && knob->getHolder()->isProject() &&
             appPTR->getCurrentSettings()->isAutoFixRelativeFilePathEnabled()) {
             std::map<std::string,std::string> oldEnv,newEnv;
             
@@ -1127,10 +1197,10 @@ Path_KnobGui::rebuildPath() const
     std::string path;
     
     Variables::const_iterator next = _items.begin();
-    if (!_items.empty()) {
+    if (next != _items.end()) {
         ++next;
     }
-    for (Variables::const_iterator it = _items.begin(); it!= _items.end(); ++it,++next) {
+    for (Variables::const_iterator it = _items.begin(); it != _items.end(); ++it) {
         // In order to use XML tags, the text inside the tags has to be escaped.
         path += NATRON_ENV_VAR_NAME_START_TAG;
         path += Project::escapeXML(it->second.varName->text().toStdString());
@@ -1138,10 +1208,12 @@ Path_KnobGui::rebuildPath() const
         path += NATRON_ENV_VAR_VALUE_START_TAG;
         path += Project::escapeXML(it->second.value->text().toStdString());
         path += NATRON_ENV_VAR_VALUE_END_TAG;
-        if (next == _items.end()) {
-            --next;
+
+        // increment for next iteration
+        if (next != _items.end()) {
+            ++next;
         }
-    }
+    } // for(it)
     return path;
 }
 
@@ -1150,7 +1222,7 @@ Path_KnobGui::rebuildPath() const
 void
 Path_KnobGui::addRightClickMenuEntries(QMenu* menu)
 {
-    if (!_knob->isMultiPath()) {
+    if (!_knob.lock()->isMultiPath()) {
         QAction* makeAbsoluteAction = new QAction(QObject::tr("Make absolute"),menu);
         QObject::connect(makeAbsoluteAction,SIGNAL(triggered()),this,SLOT(onMakeAbsoluteTriggered()));
         makeAbsoluteAction->setToolTip(QObject::tr("Make the file-path absolute if it was previously relative to any project path"));
@@ -1166,7 +1238,7 @@ Path_KnobGui::addRightClickMenuEntries(QMenu* menu)
         
         menu->addSeparator();
         QMenu* qtMenu = _lineEdit->createStandardContextMenu();
-        qtMenu->setFont(QFont(appFont,appFontSize));
+        qtMenu->setFont(QApplication::font()); // necessary
         qtMenu->setTitle(tr("Edit"));
         menu->addMenu(qtMenu);
     }
@@ -1175,10 +1247,11 @@ Path_KnobGui::addRightClickMenuEntries(QMenu* menu)
 void
 Path_KnobGui::onMakeAbsoluteTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
+        knob->getHolder()->getApp()->getProject()->canonicalizePath(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
     }
 }
@@ -1186,10 +1259,11 @@ Path_KnobGui::onMakeAbsoluteTriggered()
 void
 Path_KnobGui::onMakeRelativeTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->makeRelativeToProject(newValue);
+        knob->getHolder()->getApp()->getProject()->makeRelativeToProject(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
     }
     
@@ -1198,10 +1272,45 @@ Path_KnobGui::onMakeRelativeTriggered()
 void
 Path_KnobGui::onSimplifyTriggered()
 {
-    if (_knob->getHolder() && _knob->getHolder()->getApp()) {
-        std::string oldValue = _knob->getValue();
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    if (knob->getHolder() && knob->getHolder()->getApp()) {
+        std::string oldValue = knob->getValue();
         std::string newValue = oldValue;
-        _knob->getHolder()->getApp()->getProject()->simplifyPath(newValue);
+        knob->getHolder()->getApp()->getProject()->simplifyPath(newValue);
         pushUndoCommand( new KnobUndoCommand<std::string>( this,oldValue,newValue ) );
+    }
+}
+
+void
+Path_KnobGui::reflectAnimationLevel(int /*dimension*/,Natron::AnimationLevelEnum /*level*/)
+{
+    if (!_knob.lock()->isMultiPath()) {
+        _lineEdit->setAnimation(0);
+    }
+}
+
+
+void
+Path_KnobGui::reflectExpressionState(int /*dimension*/,bool hasExpr)
+{
+    boost::shared_ptr<Path_Knob> knob = _knob.lock();
+    if (!knob->isMultiPath()) {
+        bool isSlaved = knob->isSlave(0);
+        _lineEdit->setAnimation(3);
+        _lineEdit->setReadOnly(hasExpr || isSlaved);
+        _openFileButton->setEnabled(!hasExpr && !isSlaved);
+    }
+}
+
+void
+Path_KnobGui::updateToolTip()
+{
+    if (hasToolTip()) {
+        QString tt = toolTip();
+        if (!_knob.lock()->isMultiPath()) {
+            _lineEdit->setToolTip(tt);
+        } else {
+            _table->setToolTip(tt);
+        }
     }
 }

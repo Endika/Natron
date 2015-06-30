@@ -12,6 +12,9 @@
 #ifndef NATRON_WRITERS_WRITEQT_H_
 #define NATRON_WRITERS_WRITEQT_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "Engine/EffectInstance.h"
 
@@ -74,24 +77,17 @@ public:
 
     void knobChanged(KnobI* k, Natron::ValueChangedReasonEnum reason, int view, SequenceTime time,
                      bool originatedFromMainThread) OVERRIDE FINAL;
-    virtual Natron::StatusEnum render(SequenceTime time,
-                                  const RenderScale& originalScale,
-                                  const RenderScale & mappedScale,
-                                  const RectI & roi,
-                                  int view,
-                                  bool isSequentialRender,
-                                  bool isRenderResponseToUserInteraction,
-                                  boost::shared_ptr<Natron::Image> output) OVERRIDE;
-    virtual void addAcceptedComponents(int inputNb,std::list<Natron::ImageComponentsEnum>* comps) OVERRIDE FINAL;
+    virtual Natron::StatusEnum render(const RenderActionArgs& args) OVERRIDE;
+    virtual void addAcceptedComponents(int inputNb,std::list<Natron::ImageComponents>* comps) OVERRIDE FINAL;
     virtual void addSupportedBitDepth(std::list<Natron::ImageBitDepthEnum>* depths) const OVERRIDE FINAL;
 
 protected:
 
 
     virtual void initializeKnobs() OVERRIDE;
-    virtual Natron::EffectInstance::RenderSafetyEnum renderThreadSafety() const OVERRIDE
+    virtual Natron::RenderSafetyEnum renderThreadSafety() const OVERRIDE
     {
-        return Natron::EffectInstance::eRenderSafetyInstanceSafe;
+        return Natron::eRenderSafetyInstanceSafe;
     }
 
 private:

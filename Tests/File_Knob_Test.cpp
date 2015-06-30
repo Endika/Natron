@@ -4,6 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <gtest/gtest.h>
 
 #include <QString>
@@ -565,7 +569,7 @@ TEST(SequenceFromFiles,ComplexTest) {
         EXPECT_TRUE( sequence.tryInsertFile( FileNameContent("/Users/Test/23489.jpg") ) );
         EXPECT_TRUE( sequence.tryInsertFile( FileNameContent("/Users/Test/00001.jpg") ) );
         EXPECT_FALSE( sequence.tryInsertFile( FileNameContent("/Users/Test/0001.jpg") ) );
-        EXPECT_TRUE( sequence.tryInsertFile( FileNameContent("/Users/Test/122938.jpg") ) );
+        EXPECT_FALSE( sequence.tryInsertFile( FileNameContent("/Users/Test/122938.jpg") ) );
         EXPECT_FALSE( sequence.tryInsertFile( FileNameContent("/Users/Test/000002.jpg") ) );
         EXPECT_TRUE(sequence.generateValidSequencePattern() == "/Users/Test/#####.jpg");
     }

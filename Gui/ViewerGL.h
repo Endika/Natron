@@ -12,9 +12,13 @@
 #ifndef NATRON_GUI_VIEWERGL_H_
 #define NATRON_GUI_VIEWERGL_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include <utility>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #endif
 #include "Global/Macros.h"
@@ -43,6 +47,7 @@ class AppInstance;
 class ViewerInstance;
 class ViewerTab;
 class ImageInfo;
+class QInputEvent;
 struct TextureRect;
 class Format;
 
@@ -100,7 +105,7 @@ public:
     virtual bool isClippingImageToProjectWindow() const OVERRIDE FINAL;
 
 
-    OpenGLViewerI::BitDepthEnum getBitDepth() const OVERRIDE FINAL;
+    virtual Natron::ImageBitDepthEnum getBitDepth() const OVERRIDE FINAL;
 
     /**
      *@brief Hack to allow the resizeEvent to be publicly used elsewhere.
@@ -163,12 +168,15 @@ public:
      **/
     virtual void transferBufferFromRAMtoGPU(const unsigned char* ramBuffer,
                                             const boost::shared_ptr<Natron::Image>& image,
+                                            Natron::ImageBitDepthEnum depth,
                                             int time,
                                             const RectD& rod,
                                             size_t bytesCount, const TextureRect & region,
-                                            double gain, double offset, int lut, int pboIndex,
+                                            double gain, double gamma, double offset, int lut, int pboIndex,
                                             unsigned int mipMapLevel,Natron::ImagePremultiplicationEnum premult,
-                                            int textureIndex) OVERRIDE FINAL;
+                                            int textureIndex,
+                                            const RectI& roi,
+                                            bool updateOnlyRoi) OVERRIDE FINAL;
     
     virtual void clearLastRenderedImage() OVERRIDE FINAL;
     
@@ -188,9 +196,10 @@ public:
     void updatePersistentMessage();
     void updatePersistentMessageToWidth(int w);
     
+
     virtual void getViewerFrameRange(int* first,int* last) const OVERRIDE FINAL;
     
-public slots:
+public Q_SLOTS:
 
 
     /**
@@ -216,7 +225,6 @@ public slots:
     void setRegionOfDefinition(const RectD & rod, double par, int textureIndex);
 
     virtual void updateColorPicker(int textureIndex,int x = INT_MAX,int y = INT_MAX) OVERRIDE FINAL;
-
 
     void clearColorBuffer(double r = 0.,double g = 0.,double b = 0.,double a = 1.);
 
@@ -245,7 +253,6 @@ public:
     
 
     virtual void makeOpenGLcontextCurrent() OVERRIDE FINAL;
-    virtual void onViewerNodeNameChanged(const QString & name) OVERRIDE FINAL;
     virtual void removeGUI() OVERRIDE FINAL;
     virtual int getCurrentView() const OVERRIDE FINAL;
     
@@ -259,6 +266,11 @@ public:
     void getProjection(double *zoomLeft, double *zoomBottom, double *zoomFactor, double *zoomAspectRatio) const;
 
     void setProjection(double zoomLeft, double zoomBottom, double zoomFactor, double zoomAspectRatio);
+    
+    /**
+     * @brief Returns whether the given rectangle is visible in the viewport, in zoom (OpenGL) coordinates.
+     **/
+    bool isVisibleInViewport(const RectD& rectangle) const;
 
     void setUserRoIEnabled(bool b);
 
@@ -299,6 +311,8 @@ public:
      * @brief can only be called on the main-thread
      **/
     void setGain(double d);
+    
+    void setGamma(double g);
 
     void setLut(int lut);
 
@@ -309,6 +323,7 @@ public:
     bool getZoomOrPannedSinceLastFit() const;
 
     virtual Natron::ViewerCompositingOperatorEnum getCompositingOperator() const OVERRIDE FINAL;
+    virtual void setCompositingOperator(Natron::ViewerCompositingOperatorEnum op) OVERRIDE FINAL;
 
     ///Not MT-Safe
     void getSelectionRectangle(double &left,double &right,double &bottom,double &top) const;
@@ -339,19 +354,22 @@ public:
      * X and Y are in CANONICAL COORDINATES
      * @return true if the point is inside the image and colors were set
      **/
-    bool getColorAt(double x, double y, bool forceLinear, int textureIndex, float* r, float* g, float* b, float* a) WARN_UNUSED_RETURN;
+    bool getColorAt(double x, double y, bool forceLinear, int textureIndex, float* r,
+                    float* g, float* b, float* a,unsigned int* mipMapLevel) WARN_UNUSED_RETURN;
     
     // same as getColor, but computes the mean over a given rectangle
     bool getColorAtRect(const RectD &rect, // rectangle in canonical coordinates
-                        bool forceLinear, int textureIndex, float* r, float* g, float* b, float* a);
+                        bool forceLinear, int textureIndex, float* r, float* g, float* b, float* a, unsigned int* mipMapLevel);
     
+    
+    virtual unsigned int getCurrentRenderScale() const OVERRIDE FINAL;
     
     ///same as getMipMapLevel but with the zoomFactor taken into account
     int getMipMapLevelCombinedToZoomFactor() const WARN_UNUSED_RETURN;
     
     virtual int getCurrentlyDisplayedTime() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     
-signals:
+Q_SIGNALS:
 
     /**
      *@brief Signal emitted when the current zoom factor changed.
@@ -361,7 +379,7 @@ signals:
     /**
      * @brief Emitted when the image texture changes.
      **/
-    void imageChanged(int texIndex);
+    void imageChanged(int texIndex,bool hasImageBackEnd);
 
     /**
      * @brief Emitted when the selection rectangle has changed.
@@ -380,7 +398,7 @@ private:
      *@brief The paint function. That's where all the drawing is done.
      **/
     virtual void paintGL() OVERRIDE FINAL;
-    virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
+    virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;    
     virtual void mouseDoubleClickEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseReleaseEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseMoveEvent(QMouseEvent* e) OVERRIDE FINAL;
@@ -391,7 +409,8 @@ private:
     virtual void leaveEvent(QEvent* e) OVERRIDE FINAL;
     virtual void keyPressEvent(QKeyEvent* e) OVERRIDE FINAL;
     virtual void keyReleaseEvent(QKeyEvent* e) OVERRIDE FINAL;
-
+    virtual void tabletEvent(QTabletEvent* e) OVERRIDE FINAL;
+    
     /**
      *@brief initiliazes OpenGL context related stuff. This is called once after widget creation.
      **/
@@ -403,6 +422,8 @@ private:
     virtual void resizeGL(int width,int height) OVERRIDE FINAL;
 
 private:
+    
+    bool penMotionInternal(int x, int y, double pressure, double timestamp, QInputEvent* event);
 
     /**
      * @brief Returns the OpenGL handle of the PBO at the given index.
@@ -506,8 +527,11 @@ private:
                          const QPointF & zoomPos,
                          double zoomScreenPixelWidth,
                          double zoomScreenPixelHeight);
-
+    
     void updateInfoWidgetColorPicker(const QPointF & imgPos,
+                                     const QPoint & widgetPos);
+
+    void updateInfoWidgetColorPickerInternal(const QPointF & imgPos,
                                      const QPoint & widgetPos,
                                      int width,
                                      int height,
@@ -515,10 +539,17 @@ private:
                                      const RectD & dispW, // in canonical coordinates
                                      int texIndex);
     void updateRectangleColorPicker();
+    void updateRectangleColorPickerInternal();
+    
+    
     /**
      * @brief X and Y are in widget coords!
      **/
     bool pickColor(double x,double y);
+    bool pickColorInternal(double x, double y);
+    
+
+    static double currentTimeForEvent(QInputEvent* e);
 
     struct Implementation;
     boost::scoped_ptr<Implementation> _imp; // PIMPL: hide implementation details

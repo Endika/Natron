@@ -8,6 +8,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "ProcessHandler.h"
 
 #include <QProcess>
@@ -22,6 +26,7 @@
 
 #include "Engine/AppInstance.h"
 #include "Engine/AppManager.h"
+#include "Engine/Node.h"
 #include "Engine/EffectInstance.h"
 
 ProcessHandler::ProcessHandler(AppInstance* app,
@@ -41,9 +46,8 @@ ProcessHandler::ProcessHandler(AppInstance* app,
     _ipcServer = new QLocalServer();
     QObject::connect( _ipcServer,SIGNAL( newConnection() ),this,SLOT( onNewConnectionPending() ) );
     QString serverName;
-    int randomNumber = std::rand();
     {
-        QTemporaryFile tmpf( NATRON_APPLICATION_NAME "_OUTPUT_PIPE_" + QString::number(randomNumber) );
+        QTemporaryFile tmpf(NATRON_APPLICATION_NAME "_OUTPUT_PIPE_");
         tmpf.open();
         serverName = tmpf.fileName();
         tmpf.remove();
@@ -51,7 +55,7 @@ ProcessHandler::ProcessHandler(AppInstance* app,
     _ipcServer->listen(serverName);
 
 
-    _processArgs << projectPath << "-b" << "-w" << writer->getName().c_str();
+    _processArgs << projectPath << "-b" << "-w" << writer->getScriptName_mt_safe().c_str();
     _processArgs << "--IPCpipe" << ( _ipcServer->fullServerName() );
 
     ///connect the useful slots of the process
@@ -72,7 +76,7 @@ ProcessHandler::ProcessHandler(AppInstance* app,
 
 ProcessHandler::~ProcessHandler()
 {
-    emit deleted();
+    Q_EMIT deleted();
 
     _ipcServer->close();
     _bgProcessInputSocket->close();
@@ -120,12 +124,12 @@ ProcessHandler::onDataWrittenToSocket()
     _processLog.append("Message received: " + str + '\n');
     if ( str.startsWith(kFrameRenderedStringShort) ) {
         str = str.remove(kFrameRenderedStringShort);
-        emit frameRendered( str.toInt() );
+        Q_EMIT frameRendered( str.toInt() );
     } else if ( str.startsWith(kRenderingFinishedStringShort) ) {
         ///don't do anything
     } else if ( str.startsWith(kProgressChangedStringShort) ) {
         str = str.remove(kProgressChangedStringShort);
-        emit frameProgress( str.toInt() );
+        Q_EMIT frameProgress( str.toInt() );
     } else if ( str.startsWith(kBgProcessServerCreatedShort) ) {
         str = str.remove(kBgProcessServerCreatedShort);
         ///the bg process wants us to create the pipe for its input
@@ -176,7 +180,7 @@ ProcessHandler::onStandardErrorBytesWritten()
 void
 ProcessHandler::onProcessCanceled()
 {
-    emit processCanceled();
+    Q_EMIT processCanceled();
 
     if (!_bgProcessInputSocket) {
         _earlyCancel = true;
@@ -190,7 +194,7 @@ void
 ProcessHandler::onProcessError(QProcess::ProcessError err)
 {
     if (err == QProcess::FailedToStart) {
-        Natron::errorDialog( _writer->getName(),QObject::tr("The render process failed to start").toStdString() );
+        Natron::errorDialog( _writer->getScriptName(),QObject::tr("The render process failed to start").toStdString() );
     } else if (err == QProcess::Crashed) {
         //@TODO: find out a way to get the backtrace
     }
@@ -207,7 +211,7 @@ ProcessHandler::onProcessEnd(int exitCode,
     } else if (exitCode == 1) {
         returnCode = 1;
     }
-    emit processFinished(returnCode);
+    Q_EMIT processFinished(returnCode);
 }
 
 ProcessInputChannel::ProcessInputChannel(const QString & mainProcessServerName)

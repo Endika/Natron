@@ -9,7 +9,12 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "ProjectSerialization.h"
+
 #include "Engine/TimeLine.h"
 #include "Engine/Project.h"
 #include "Engine/AppManager.h"
@@ -20,29 +25,17 @@ ProjectSerialization::initialize(const Natron::Project* project)
 {
     ///All the code in this function is MT-safe
 
-    std::vector<boost::shared_ptr<Natron::Node> > activeNodes;
-    std::vector<boost::shared_ptr<Natron::Node> > nodes = project->getCurrentNodes();
-
-    for (U32 i = 0; i < nodes.size(); ++i) {
-        if ( nodes[i]->isActivated() || (nodes[i]->isMultiInstance() && nodes[i]->getParentMultiInstanceName().empty())) {
-            activeNodes.push_back(nodes[i]);
-        }
-    }
-
-    _serializedNodes.clear();
-    for (U32 i = 0; i < activeNodes.size(); ++i) {
-        NodeSerialization state(activeNodes[i]);
-        _serializedNodes.push_back(state);
-    }
+    _nodes.initialize(*project);
+    
     project->getAdditionalFormats(&_additionalFormats);
 
-    const std::vector< boost::shared_ptr<KnobI> > & knobs = project->getKnobs();
+    std::vector< boost::shared_ptr<KnobI> > knobs = project->getKnobs_mt_safe();
     for (U32 i = 0; i < knobs.size(); ++i) {
         Group_Knob* isGroup = dynamic_cast<Group_Knob*>( knobs[i].get() );
         Page_Knob* isPage = dynamic_cast<Page_Knob*>( knobs[i].get() );
         Button_Knob* isButton = dynamic_cast<Button_Knob*>( knobs[i].get() );
         if (knobs[i]->getIsPersistant() && !isGroup && !isPage && !isButton) {
-            boost::shared_ptr<KnobSerialization> newKnobSer( new KnobSerialization(knobs[i],false) );
+            boost::shared_ptr<KnobSerialization> newKnobSer( new KnobSerialization(knobs[i]) );
             _projectKnobs.push_back(newKnobSer);
         }
     }

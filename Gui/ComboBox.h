@@ -12,8 +12,16 @@
 #ifndef NATRON_GUI_COMBOBOX_H_
 #define NATRON_GUI_COMBOBOX_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include "Global/Macros.h"
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
+#include <boost/shared_ptr.hpp>
+#include <boost/weak_ptr.hpp>
+#endif
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QFrame>
@@ -30,6 +38,17 @@ class QAction;
 
 class MenuWithToolTips;
 
+struct ComboBoxMenuNode
+{
+    MenuWithToolTips* isMenu;
+    QAction* isLeaf;
+    QString text;
+    std::vector<boost::shared_ptr<ComboBoxMenuNode> > children;
+    ComboBoxMenuNode* parent;
+    
+    ComboBoxMenuNode() : isMenu(0), isLeaf(0), text(), children(), parent(0) {}
+};
+
 class ComboBox
     : public QFrame
 {
@@ -44,12 +63,14 @@ private:
     int _animation;
     bool _clicked;
     bool _dirty;
+    bool _altered;
+    bool _cascading;
+    int _cascadingIndex;
     
     int _currentIndex;
     QString _currentText;
     std::vector<int> _separators;
-    std::vector<QAction*> _actions;
-    MenuWithToolTips* _menu;
+    boost::shared_ptr<ComboBoxMenuNode> _rootNode;
     
     mutable QSize _sh; ///size hint
     mutable QSize _msh; ///minmum size hint
@@ -64,13 +85,27 @@ public:
     virtual ~ComboBox() OVERRIDE
     {
     }
+    
+    void setCascading(bool cascading)
+    {
+        _cascading = cascading;
+    }
 
     /*Insert a new item BEFORE the specified index.*/
     void insertItem( int index,const QString &item,QIcon icon = QIcon(),QKeySequence = QKeySequence(),const QString & toolTip = QString() );
     
     void addAction(QAction* action);
     
+private:
+    
+    void addActionPrivate(QAction* action);
+    
+public:
+    
+    
     void addItem( const QString &item,QIcon icon = QIcon(),QKeySequence = QKeySequence(),const QString & toolTip = QString() );
+    
+    void addItemNew();
 
     /*Appends a separator to the comboBox.*/
     void addSeparator();
@@ -109,13 +144,20 @@ public:
     int getAnimation() const;
     void setAnimation(int i);
     void setReadOnly(bool readOnly);
+    
+    bool getEnabled_natron() const;
+    
+    void setAltered(bool b);
+    bool getAltered() const;
 
-public slots:
+    virtual QSize minimumSizeHint() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+
+public Q_SLOTS:
 
     ///Changes the current index AND emits the signal void currentIndexChanged(int)
     void setCurrentIndex(int index);
 
-    ///Same as setCurrentIndex but does not emit any signal.
+    ///Same as setCurrentIndex but does not Q_EMIT any signal.
     void setCurrentIndex_no_emit(int index);
 
     ///Changes the text displayed by the combobox. It doesn't have to match the text
@@ -128,11 +170,15 @@ public slots:
 
     void setEnabled_natron(bool enabled);
 
-signals:
+Q_SIGNALS:
 
     void currentIndexChanged(int index);
 
     void currentIndexChanged(QString);
+    
+    void itemNewSelected();
+    
+    void minimumSizeChanged(QSize);
 
 protected:
 
@@ -144,7 +190,6 @@ private:
     virtual void mouseReleaseEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void wheelEvent(QWheelEvent *e) OVERRIDE FINAL;
     virtual QSize sizeHint() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual QSize minimumSizeHint() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual void changeEvent(QEvent* e) OVERRIDE FINAL;
     virtual void resizeEvent(QResizeEvent* e) OVERRIDE FINAL;
     virtual void keyPressEvent(QKeyEvent* e) OVERRIDE FINAL;

@@ -12,13 +12,17 @@
 #ifndef NATRON_GUI_SEQUENCEFILEDIALOG_H_
 #define NATRON_GUI_SEQUENCEFILEDIALOG_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include <string>
 #include <map>
 #include <utility>
 #include <set>
 #include <list>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #include <boost/scoped_ptr.hpp>
 #endif
@@ -53,7 +57,9 @@ class Button;
 class QCheckBox;
 class ComboBox;
 class QWidget;
-class QLabel;
+namespace Natron {
+class Label;
+}
 class QFileInfo;
 class QHBoxLayout;
 class QVBoxLayout;
@@ -116,7 +122,7 @@ public:
     
     void removeRowIndex(const QModelIndex& index);
 
-public slots:
+public Q_SLOTS:
     void dataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight);
     void layoutChanged();
 
@@ -152,7 +158,7 @@ class FavoriteView
 {
     Q_OBJECT
 
-signals:
+Q_SIGNALS:
     void urlRequested(const QUrl &url);
 
 public:
@@ -187,7 +193,7 @@ public:
     void rename(const QModelIndex & index,const QString & name);
 
     
-public slots:
+public Q_SLOTS:
     void clicked(const QModelIndex &index);
     void showMenu(const QPoint &position);
     void removeEntry();
@@ -255,7 +261,7 @@ public:
 
     
     
-public slots:
+public Q_SLOTS:
     
     void onCurrentIndexChanged(int index);
 private:
@@ -309,7 +315,6 @@ public:
     ///Returns the selected pattern sequence or file name.
     ///Works only in eFileDialogModeOpen mode.
     std::string selectedFiles();
-
 
     ///Returns  the content of the selection line edit.
     ///Works only in eFileDialogModeSave mode.
@@ -410,7 +415,7 @@ public:
      **/
     virtual void onSortIndicatorChanged(int logicalIndex,Qt::SortOrder order) OVERRIDE FINAL;
     
-public slots:
+public Q_SLOTS:
 
     ///same as setDirectory but with a QModelIndex
     void enterDirectory(const QModelIndex & index);
@@ -518,7 +523,7 @@ private:
 
     QByteArray saveState() const;
 
-    bool restoreState(const QByteArray & state);
+    bool restoreState(const QByteArray & state, bool restoreDirectory);
 
     void createViewerPreviewNode();
     
@@ -548,7 +553,7 @@ private:
     boost::scoped_ptr<QFileSystemModel> _lookinViewModel;
     QVBoxLayout* _mainLayout;
     QString _requestedDir;
-    QLabel* _lookInLabel;
+    Natron::Label* _lookInLabel;
     FileDialogComboBox* _lookInCombobox;
     Button* _previousButton;
     Button* _nextButton;
@@ -559,10 +564,10 @@ private:
     Button* _addFavoriteButton;
     Button* _removeFavoriteButton;
     LineEdit* _selectionLineEdit;
-    QLabel* _relativeLabel;
+    Natron::Label* _relativeLabel;
     ComboBox* _relativeChoice;
     ComboBox* _sequenceButton;
-    QLabel* _filterLabel;
+    Natron::Label* _filterLabel;
     LineEdit* _filterLineEdit;
     Button* _filterDropDown;
     ComboBox* _fileExtensionCombo;
@@ -627,7 +632,7 @@ class AddFavoriteDialog
     Q_OBJECT
 
     QVBoxLayout* _mainLayout;
-    QLabel* _descriptionLabel;
+    Natron::Label* _descriptionLabel;
     QWidget* _secondLine;
     QHBoxLayout* _secondLineLayout;
     LineEdit* _pathLineEdit;
@@ -652,7 +657,7 @@ public:
     {
     }
 
-public slots:
+public Q_SLOTS:
 
     void openDir();
 };

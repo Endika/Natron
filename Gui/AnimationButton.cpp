@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "AnimationButton.h"
 
@@ -24,10 +27,13 @@ CLANG_DIAG_ON(deprecated)
 #include "Engine/Project.h"
 #include "Engine/Knob.h"
 #include "Engine/AppManager.h"
+#include "Engine/EffectInstance.h"
+#include "Engine/Node.h"
 
 #include "Gui/KnobGui.h"
+#include "Gui/KnobUndoCommand.h"
 #include "Gui/GuiMacros.h"
-
+#include "Gui/GuiApplicationManager.h"
 void
 AnimationButton::mousePressEvent(QMouseEvent* e)
 {
@@ -50,17 +56,37 @@ AnimationButton::mouseMoveEvent(QMouseEvent* e)
         if ( (e->pos() - _dragPos).manhattanLength() < QApplication::startDragDistance() ) {
             return;
         }
+        
+        Natron::EffectInstance* effect = dynamic_cast<Natron::EffectInstance*>(_knob->getKnob()->getHolder());
+        if (!effect) {
+            return;
+        }
+        boost::shared_ptr<NodeCollection> group = effect->getNode()->getGroup();
+        NodeGroup* isGroup = dynamic_cast<NodeGroup*>(group.get());
+        
+        std::stringstream expr;
+        if (isGroup) {
+            expr << "thisGroup.";
+        } else {
+            expr << effect->getApp()->getAppIDString() << ".";
+        }
+        expr << effect->getNode()->getFullyQualifiedName() << "." << _knob->getKnob()->getName()
+        << ".get()";
+        if (_knob->getKnob()->getDimension() > 1) {
+            expr << "[dimension]";
+        }
+
 
         // initiate Drag
 
         _knob->onCopyAnimationActionTriggered();
         QDrag* drag = new QDrag(this);
         QMimeData* mimeData = new QMimeData;
-        mimeData->setData("Animation", "");
+        mimeData->setData("Animation", QByteArray(expr.str().c_str()));
         drag->setMimeData(mimeData);
 
         QFontMetrics fmetrics = fontMetrics();
-        QString textFirstLine( tr("Copying animation from:") );
+        QString textFirstLine( tr("Linking value from:") );
         QString textSecondLine( _knob->getKnob()->getDescription().c_str() );
         QString textThirdLine( tr("Drag it to another animation button.") );
         int textWidth = std::max( std::max( fmetrics.width(textFirstLine), fmetrics.width(textSecondLine) ),fmetrics.width(textThirdLine) );
@@ -84,7 +110,7 @@ AnimationButton::mouseReleaseEvent(QMouseEvent* e)
 {
     _dragging = false;
     QPushButton::mouseReleaseEvent(e);
-    emit animationMenuRequested();
+    Q_EMIT animationMenuRequested();
 }
 
 void
@@ -111,7 +137,10 @@ AnimationButton::dropEvent(QDropEvent* e)
     e->accept();
     QStringList formats = e->mimeData()->formats();
     if ( formats.contains("Animation") ) {
-        _knob->onPasteAnimationActionTriggered();
+        QByteArray expr = e->mimeData()->data("Animation");
+        std::string expression(expr.data());
+        boost::shared_ptr<KnobI> knob = _knob->getKnob();
+        _knob->pushUndoCommand(new SetExpressionCommand(knob,false,-1,expression));
         e->acceptProposedAction();
     }
 }
@@ -130,7 +159,10 @@ void
 AnimationButton::enterEvent(QEvent* /*e*/)
 {
     if (cursor().shape() != Qt::OpenHandCursor) {
-        setCursor(Qt::OpenHandCursor);
+        QPixmap p;
+        appPTR->getIcon(Natron::NATRON_PIXMAP_LINK_CURSOR, &p);
+        QCursor c(p);
+        setCursor(c);
     }
 }
 
@@ -138,7 +170,7 @@ void
 AnimationButton::leaveEvent(QEvent* /*e*/)
 {
     if (cursor().shape() == Qt::OpenHandCursor) {
-        setCursor(Qt::ArrowCursor);
+        unsetCursor();
     }
 }
 

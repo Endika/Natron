@@ -9,9 +9,14 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "Splitter.h"
+
 #include <cassert>
+
 Splitter::Splitter(QWidget* parent)
     : QSplitter(parent)
       , _lock()
@@ -32,7 +37,7 @@ Splitter::addWidget_mt_safe(QWidget * widget)
 {
     QMutexLocker l(&_lock);
 
-    widget->setParent(this);
+    //widget->setParent(this);
     addWidget(widget);
 }
 
@@ -104,7 +109,7 @@ Splitter::insertChild_mt_safe(int i,
     QMutexLocker l(&_lock);
 
     insertWidget(i, w);
-    w->setParent(this);
+    //w->setParent(this);
 }
 
 void

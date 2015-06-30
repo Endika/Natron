@@ -12,6 +12,10 @@
 #ifndef NATRON_ENGINE_NODE_H_
 #define NATRON_ENGINE_NODE_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include <string>
 #include <map>
@@ -23,14 +27,18 @@ CLANG_DIAG_OFF(deprecated)
 #include <QtCore/QObject>
 CLANG_DIAG_ON(deprecated)
 #include <QMutex>
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #include <boost/scoped_ptr.hpp>
+#include <boost/enable_shared_from_this.hpp>
 #endif
 #include "Engine/AppManager.h"
 #include "Global/KeySymbols.h"
+#include "Engine/ImageComponents.h"
 
-#define NATRON_EXTRA_PARAMETER_PAGE_NAME "Node"
+#define NATRON_PARAMETER_PAGE_NAME_EXTRA "Node"
+#define NATRON_PARAMETER_PAGE_NAME_INFO "Info"
+
 
 #define kDisableNodeKnobName "disableNode"
 #define kUserLabelKnobName "userTextArea"
@@ -47,9 +55,14 @@ class TimeLine;
 class NodeSerialization;
 class KnobSerialization;
 class KnobHolder;
+class OverlaySupport;
 class Double_Knob;
 class NodeGuiI;
 class RotoContext;
+class NodeCollection;
+class RotoDrawableItem;
+class RectD;
+class RectI;
 namespace Natron {
 class Plugin;
 class OutputEffectInstance;
@@ -58,7 +71,7 @@ class EffectInstance;
 class LibraryBinary;
 
 class Node
-    : public QObject
+    : public QObject, public boost::enable_shared_from_this<Natron::Node>
 {
     Q_OBJECT
 
@@ -68,16 +81,24 @@ public:
 
 
     Node(AppInstance* app,
+         const boost::shared_ptr<NodeCollection>& group,
          Natron::Plugin* plugin);
 
     virtual ~Node();
 
+    boost::shared_ptr<NodeCollection> getGroup() const;
+    
     const Natron::Plugin* getPlugin() const;
+    
+    /**
+     * @brief Used internally when instanciating a Python template, we first make a group and then pass a pointer
+     * to the real plugin.
+     **/
+    void switchInternalPlugin(Natron::Plugin* plugin);
     
     /**
      * @brief Creates the EffectInstance that will be embedded into this node and set it up.
      * This function also loads all parameters. Node connections will not be setup in this method.
-     * @param pluginID The ID of the effect to create
      * @param parentMultiInstanceName The exact name of the node that is the parent (when in a multi-instance environment, e.g: tracker)
      * @param childIndex When parentMultiInstanceName is not empty, this indicates the child index of this node
      * @param thisShared A shared pointer to this node
@@ -85,18 +106,22 @@ public:
      * @param dontLoadName If set to true then the node shouldn't attempt to restore the name contained in the serialization object.
      * @param fixedName If set, forces the node to have this name, regardless whether another node in the project might have it.
      **/
-    void load(const std::string & pluginID,
-              const std::string & parentMultiInstanceName,
-              int childIndex,
-              const boost::shared_ptr<Natron::Node> & thisShared,
+    void load(const std::string & parentMultiInstanceName,
               const NodeSerialization & serialization,
               bool dontLoadName,
+              bool userEdited,
+              bool isPartOfProject,
               const QString& fixedName,
               const std::list<boost::shared_ptr<KnobSerialization> >& paramValues);
 
     ///called by load() and OfxEffectInstance, do not call this!
     void loadKnobs(const NodeSerialization & serialization,bool updateKnobGui = false);
 
+private:
+    void loadKnob(const boost::shared_ptr<KnobI> & knob,const std::list< boost::shared_ptr<KnobSerialization> > & serialization,
+                  bool updateKnobGui = false);
+public:
+    
     ///Set values for Knobs given their serialization
     void setValuesFromSerialization(const std::list<boost::shared_ptr<KnobSerialization> >& paramValues);
    
@@ -122,11 +147,16 @@ public:
 
     ///This cannot be done in loadKnobs as to call this all the nodes in the project must have
     ///been loaded first.
-    void restoreKnobsLinks(const NodeSerialization & serialization,const std::vector<boost::shared_ptr<Natron::Node> > & allNodes);
-
+    void restoreKnobsLinks(const NodeSerialization & serialization,const std::list<boost::shared_ptr<Natron::Node> > & allNodes);
+    
+    void restoreUserKnobs(const NodeSerialization& serialization);
+    
+    bool isNodeCreated() const;
+    
     /*@brief Quit all processing done by all render instances of this node
        This is called when the effect is about to be deleted pluginsly
      */
+    void setMustQuitProcessing(bool mustQuit);
     void quitAnyProcessing();
 
     /*@brief Similar to quitAnyProcessing except that the threads aren't destroyed
@@ -137,11 +167,9 @@ public:
     /*Never call this yourself. This is needed by OfxEffectInstance so the pointer to the live instance
      * is set earlier.
      */
-    void setLiveInstance(Natron::EffectInstance* liveInstance);
+    void setLiveInstance(const boost::shared_ptr<Natron::EffectInstance>& liveInstance);
 
     Natron::EffectInstance* getLiveInstance() const;
-
-    bool hasEffect() const;
 
     /**
      * @brief Returns true if the node is a multi-instance node, that is, holding several other nodes.
@@ -149,10 +177,12 @@ public:
      **/
     bool isMultiInstance() const;
     
-    Natron::Node* getParentMultiInstance() const;
+    boost::shared_ptr<Natron::Node> getParentMultiInstance() const;
 
     ///Accessed by the serialization thread, but mt safe since never changed
     std::string getParentMultiInstanceName() const;
+    
+    void getChildrenMultiInstance(std::list<boost::shared_ptr<Natron::Node> >* children) const;
 
     /**
      * @brief Returns the hash value of the node, or 0 if it has never been computed.
@@ -210,16 +240,22 @@ public:
     bool isOpenFXNode() const;
 
     /**
-     * @brief Returns true if the node is either a roto or rotopaint node
+     * @brief Returns true if the node is either a roto  node
      **/
     bool isRotoNode() const;
-
+    
     /**
      * @brief Returns true if this node is a tracker
      **/
     bool isTrackerNode() const;
+    
+    bool isPointTrackerNode() const;
 
-
+    /**
+     * @brief Returns true if this node is a backdrop
+     **/
+    bool isBackDropNode() const;
+    
     /**
      * @brief Returns true if the node is a rotopaint node
      **/
@@ -230,6 +266,8 @@ public:
      **/
     boost::shared_ptr<RotoContext> getRotoContext() const;
 
+    U64 getRotoAge() const;
+    
     /**
      * @brief Forwarded to the live effect instance
      **/
@@ -239,23 +277,26 @@ public:
      * @brief Returns true if the given input supports the given components. If inputNb equals -1
      * then this function will check whether the effect can produce the given components.
      **/
-    bool isSupportedComponent(int inputNb,Natron::ImageComponentsEnum comp) const;
+    bool isSupportedComponent(int inputNb,const Natron::ImageComponents& comp) const;
 
     /**
      * @brief Returns the most appropriate components that can be supported by the inputNb.
      * If inputNb equals -1 then this function will check the output components.
      **/
-    Natron::ImageComponentsEnum findClosestSupportedComponents(int inputNb,Natron::ImageComponentsEnum comp) const;
+    Natron::ImageComponents findClosestSupportedComponents(int inputNb,const Natron::ImageComponents& comp) const;
+    static Natron::ImageComponents findClosestInList(const Natron::ImageComponents& comp,
+                                                     const std::list<Natron::ImageComponents> &components,
+                                                     bool multiPlanar);
 
     /**
-     * @brief Returns the index of the channel to use to produce the mask.
+     * @brief Returns the components and index of the channel to use to produce the mask.
      * None = -1
      * R = 0
      * G = 1
      * B = 2
      * A = 3
      **/
-    int getMaskChannel(int inputNb) const;
+    int getMaskChannel(int inputNb,Natron::ImageComponents* comps, boost::shared_ptr<Natron::Node>* maskInput) const;
 
     /**
      * @brief Returns whether masking is enabled or not
@@ -273,6 +314,16 @@ public:
      * DO NOT CALL THIS ON THE SERIALIZATION THREAD, INSTEAD PREFER USING getInputNames()
      **/
     boost::shared_ptr<Node> getInput(int index) const;
+    
+    /**
+     * @brief Same as getInput except that it doesn't do group redirections for Inputs/Outputs
+     **/
+    boost::shared_ptr<Node> getRealInput(int index) const;
+    
+    /**
+     * @brief Returns the input index of the node if it is an input of this node, -1 otherwise.
+     **/
+    int getInputIndex(const Natron::Node* node) const;
 
     /**
      * @brief Returns true if the node is currently executing the onInputChanged handler.
@@ -295,6 +346,8 @@ public:
 
     const std::vector<std::string> & getInputLabels() const;
     std::string getInputLabel(int inputNb) const;
+    
+    int getInputNumberFromLabel(const std::string& inputLabel) const;
 
     bool isInputConnected(int inputNb) const;
 
@@ -302,7 +355,11 @@ public:
 
     bool hasInputConnected() const;
     
+    bool hasOverlay() const;
+    
     bool hasMandatoryInputDisconnected() const;
+    
+    bool hasAllInputsConnected() const;
     
     /**
      * @brief This is used by the auto-connection algorithm.
@@ -312,8 +369,51 @@ public:
      * empty input if they are all optionals, or -1 if nothing matches the 2 first conditions..
      * if all inputs are connected.
      **/
-    virtual int getPreferredInputForConnection() ;
-
+    virtual int getPreferredInputForConnection()  const;
+    virtual int getPreferredInput() const;
+    
+    void setRenderThreadSafety(Natron::RenderSafetyEnum safety);
+    Natron::RenderSafetyEnum getCurrentRenderThreadSafety() const;
+    void revertToPluginThreadSafety();
+    
+    /////////////////////ROTO-PAINT related functionnalities//////////////////////
+    //////////////////////////////////////////////////////////////////////////////
+    void updateLastPaintStrokeData(int newAge,const std::list<std::pair<Natron::Point,double> >& points,
+                                   const RectD& wholeBbox,const RectD& lastPointsBbox);
+    
+    //Used by nodes below the rotopaint tree to optimize the RoI
+    void setLastPaintStrokeDataNoRotopaint(const RectD& lastStrokeBbox);
+    void invalidateLastPaintStrokeDataNoRotopaint();
+    
+    void getPaintStrokeRoD(int time,RectD* bbox) const;
+    RectD getPaintStrokeRoD_duringPainting() const;
+    
+    bool isFirstPaintStrokeRenderTick() const;
+    int getStrokeImageAge() const;
+    void getLastPaintStrokeRoD(RectD* pointsBbox) ;
+    bool isLastPaintStrokeBitmapCleared() const;
+    void clearLastPaintStrokeRoD();
+    void getLastPaintStrokePoints(int time,std::list<std::pair<Natron::Point,double> >* points) const;
+    boost::shared_ptr<Natron::Image> getOrRenderLastStrokeImage(unsigned int mipMapLevel,
+                                                                const RectI& roi,
+                                                                double par,
+                                                                const Natron::ImageComponents& components,
+                                                                Natron::ImageBitDepthEnum depth) const;
+    
+    void setWhileCreatingPaintStroke(bool creating);
+    bool isDuringPaintStrokeCreation() const;
+    ////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////
+    
+    void setProcessChannelsValues(bool doR,bool doG, bool doB, bool doA);
+    
+private:
+    
+    int getPreferredInputInternal(bool connected) const;
+    
+public:
+    
+    
     /**
      * @brief Returns in 'outputs' a map of all nodes connected to this node
      * where the value of the map is the input index from which these outputs
@@ -323,13 +423,18 @@ public:
 
     const std::list<Node* > & getOutputs() const;
     void getOutputs_mt_safe(std::list<Node*>& outputs) const;
+    
+    /**
+     * @brief Same as above but enters into subgroups
+     **/
+    void getOutputsWithGroupRedirection(std::list<Node*>& outputs) const;
 
     /**
      * @brief Each input name is appended to the vector, in the same order
      * as they are in the internal inputs vector. Disconnected inputs are
      * represented as empty strings.
      **/
-    void getInputNames(std::vector<std::string> & inputNames) const;
+    void getInputNames(std::map<std::string,std::string> & inputNames) const;
     
     enum CanConnectInputReturnValue
     {
@@ -337,6 +442,7 @@ public:
         eCanConnectInput_indexOutOfRange,
         eCanConnectInput_inputAlreadyConnected,
         eCanConnectInput_givenNodeNotConnectable,
+        eCanConnectInput_groupHasNoOutput,
         eCanConnectInput_graphCycles,
         eCanConnectInput_differentPars,
         eCanConnectInput_differentFPS
@@ -355,6 +461,11 @@ public:
      */
     virtual bool connectInput(const boost::shared_ptr<Node>& input,int inputNumber);
 
+    bool connectInputBase(const boost::shared_ptr<Node>& input,int inputNumber)
+    {
+        return Node::connectInput(input, inputNumber);
+    }
+    
     /** @brief Removes the node connected to the input inputNumber of the
      * node. Returns the inputNumber if it could remove it, otherwise returns
        -1.
@@ -374,14 +485,51 @@ public:
      **/
     bool replaceInput(const boost::shared_ptr<Node>& input,int inputNumber);
     
-    void setNodeGuiPointer(NodeGuiI* gui);
+    void setNodeGuiPointer(const boost::shared_ptr<NodeGuiI>& gui);
 
+    boost::shared_ptr<NodeGuiI> getNodeGui() const;
+    
     bool isSettingsPanelOpened() const;
     
-    bool shouldCacheOutput() const;
+    bool shouldCacheOutput(bool isFrameVaryingOrAnimated) const;
+
+    /**
+     * @brief If the session is a GUI session, then this function sets the position of the node on the nodegraph.
+     **/
+    void setPosition(double x,double y);
+    void getPosition(double *x,double *y) const;
+    
+    void setSize(double w,double h);
+    void getSize(double* w,double* h) const;
+    
+    /**
+     * @brief Get the colour of the node as it appears on the nodegraph.
+     **/
+    void getColor(double* r,double *g, double* b) const;
+    void setColor(double r, double g, double b);
 
     
+    std::string getKnobChangedCallback() const;
+    
+    std::string getInputChangedCallback() const;
+
+    /**
+     * @brief This is used exclusively by nodes in the underlying graph of the implementation of the RotoPaint. 
+     * Do not use that anywhere else.
+     **/
+    void attachRotoItem(const boost::shared_ptr<RotoDrawableItem>& stroke);
+    boost::shared_ptr<RotoDrawableItem> getAttachedRotoItem() const;
+    
+    //This flag is used for the Roto plug-in and for the Merge inside the rotopaint tree
+    //so that if the input of the roto node is RGB, it gets converted with alpha = 0, otherwise the user
+    //won't be able to paint the alpha channel
+    bool usesAlpha0ToConvertFromRGBToRGBA() const;
+    
+protected:
+    
+    void runInputChangedCallback(int index);
 private:
+    
     /**
      * @brief Adds an output to this node.
      **/
@@ -399,13 +547,6 @@ public:
      **/
     void switchInput0And1();
     /*============================*/
-
-    /**
-     * @brief The node unique name.
-     **/
-    const std::string & getName() const;
-    std::string getName_mt_safe() const;
-
 
     /**
      * @brief Forwarded to the live effect instance
@@ -445,6 +586,7 @@ public:
                     , bool reconnect = true
                     , bool hideGui = true
                     , bool triggerRender = true);
+    
 
     /* @brief Make this node active. It will appear
        again on the node graph.
@@ -458,6 +600,12 @@ public:
     void activate(const std::list< Node* > & outputsToRestore = std::list< Node* >(),
                   bool restoreAll = true,
                   bool triggerRender = true);
+    
+    /**
+     * @brief Calls deactivate() and then remove the node from the project. It will no longer be possible to use it.
+     * @param autoReconnect If set to true, outputs connected to this node will try to connect to the input of this node automatically.
+     **/
+    void destroyNode(bool autoReconnect);
 
     /**
      * @brief Forwarded to the live effect instance
@@ -471,9 +619,8 @@ public:
     /**
      * @brief Called externally when the rendering is aborted. You should never
      * call this yourself.
-     * This function will also be called on all input nodes.
      **/
-    void setAborted(bool b);
+    void notifyRenderBeingAborted();
 
     bool makePreviewByDefault() const;
 
@@ -502,11 +649,6 @@ public:
      **/
     bool isRenderingPreview() const;
 
-    /**
-     * @brief
-     * You must call this in order to notify the GUI of any change (add/delete) for knobs
-     **/
-    void createKnobDynamically();
 
     /**
      * @brief Returns true if the node is active for use in the graph editor. MT-safe
@@ -579,7 +721,7 @@ public:
 
     void onAllKnobsSlaved(bool isSlave,KnobHolder* master);
 
-    void onKnobSlaved(const boost::shared_ptr<KnobI> & knob,int dimension,bool isSlave,KnobHolder* master);
+    void onKnobSlaved(KnobI* slave,KnobI* master,int dimension,bool isSlave);
 
     boost::shared_ptr<Natron::Node> getMasterNode() const;
 
@@ -615,7 +757,7 @@ public:
     void toggleBitDepthWarning(bool on,
                                const QString & tooltip)
     {
-        emit bitDepthWarningToggled(on, tooltip);
+        Q_EMIT bitDepthWarningToggled(on, tooltip);
     }
 
     std::string getNodeExtraLabel() const;
@@ -673,12 +815,13 @@ public:
     struct KnobLink
     {
         ///The knob being slaved
-        boost::shared_ptr<KnobI> knob;
+        KnobI* slave;
+        KnobI* master;
 
-        ///The dimension being slaved
+        ///The dimension being slaved, -1 if irrelevant
         int dimension;
 
-        ///The master to which the knob is slaved to
+        ///The master node to which the knob is slaved to
         boost::shared_ptr<Node> masterNode;
     };
 
@@ -690,7 +833,7 @@ public:
     /**
      * @brief Forwarded to the live effect instance
      **/
-    void initializeKnobs(const NodeSerialization & serialization,int renderScaleSupportPref);
+    void initializeKnobs(int renderScaleSupportPref);
 
     void onSetSupportRenderScaleMaybeSet(int support);
     
@@ -702,45 +845,9 @@ public:
      **/
     void getAllKnobsKeyframes(std::list<SequenceTime>* keyframes);
     
-    /**
-     * @brief Recursively sets render preferences for the rendering of a frame for the current thread.
-     * This is thread local storage
-     **/
-    void setParallelRenderArgs(int time,
-                               int view,
-                               bool isRenderUserInteraction,
-                               bool isSequential,
-                               bool canAbort,
-                               U64 nodeHash,
-                               bool canSetValue,
-                               const TimeLine* timeline);
     
-    void invalidateParallelRenderArgs();
-    
-    class ParallelRenderArgsSetter
-    {
-        Node* node;
-    public:
-        
-        ParallelRenderArgsSetter(Node* n,
-                                 int time,
-                                 int view,
-                                 bool isRenderUserInteraction,
-                                 bool isSequential,
-                                 bool canAbort,
-                                 U64 nodeHash,
-                                 bool canSetValue,
-                                 const TimeLine* timeline)
-        : node(n)
-        {
-            node->setParallelRenderArgs(time,view,isRenderUserInteraction,isSequential,canAbort,nodeHash,canSetValue,timeline);
-        }
-        
-        ~ParallelRenderArgsSetter()
-        {
-            node->invalidateParallelRenderArgs();
-        }
-    };
+    void setNodeIsRendering();
+    void unsetNodeIsRendering();
     
     /**
      * @brief Returns true if the parallel render args thread-storage is set
@@ -751,50 +858,163 @@ public:
     
     void getPersistentMessage(QString* message,int* type) const;
 
+    
+    /**
+     * @brief Attempts to detect cycles considering input being an input of this node.
+     * Returns true if it couldn't detect any cycle, false otherwise.
+     **/
+    bool checkIfConnectingInputIsOk(Natron::Node* input) const;
+
     bool isForceCachingEnabled() const;
     
     void restoreClipPreferencesRecursive(std::list<Natron::Node*>& markedNodes);
     
-    void computeFrameRangeForReader(const KnobI* fileKnob);
+    /**
+     * @brief Declares to Python all parameters as attribute of the variable representing this node.
+     **/
+    void declarePythonFields();
+        
+    /**
+     * @brief Set the node name.
+     * @returns True upon success, false otherwise. An error dialog will be displayed upon error.
+     **/
+    bool setScriptName(const std::string & name);
 
-public slots:
+    void setScriptName_no_error_check(const std::string & name);
+    
+    
+    /**
+     * @brief The node unique name.
+     **/
+    const std::string & getScriptName() const;
+    std::string getScriptName_mt_safe() const;
+    
+    /**
+     @brief Returns the name of the node, prepended by the name of all the group containing it, e.g:
+     * - a node in the "root" project would be: Blur1
+     * - a node within the group 1 of the project would be : <g>group1</g>Blur1
+     * - a node within the group 1 of the group 1 of the project would be : <g>group1</g><g>group1</g>Blur1
+     **/
+    std::string getFullyQualifiedName() const;
+
+    void setLabel(const std::string& label);
+    
+    const std::string& getLabel() const;
+    
+    std::string getLabel_mt_safe() const;
+    
+    std::string getBeforeRenderCallback() const;
+    std::string getBeforeFrameRenderCallback() const;
+    std::string getAfterRenderCallback() const;
+    std::string getAfterFrameRenderCallback() const;
+    
+    void computeFrameRangeForReader(const KnobI* fileKnob);
+    
+    bool getOverlayColor(double* r,double* g,double* b) const;
+    
+    bool shouldDrawOverlay() const;
+    
+    
+    void drawDefaultOverlay(double scaleX,double scaleY);
+    
+    bool onOverlayPenDownDefault(double scaleX,double scaleY,const QPointF & viewportPos, const QPointF & pos, double pressure) WARN_UNUSED_RETURN;
+    
+    bool onOverlayPenMotionDefault(double scaleX,double scaleY,const QPointF & viewportPos, const QPointF & pos, double pressure) WARN_UNUSED_RETURN;
+    
+    bool onOverlayPenUpDefault(double scaleX,double scaleY,const QPointF & viewportPos, const QPointF & pos, double pressure) WARN_UNUSED_RETURN;
+    
+    bool onOverlayKeyDownDefault(double scaleX,double scaleY,Natron::Key key,Natron::KeyboardModifiers modifiers) WARN_UNUSED_RETURN;
+    
+    bool onOverlayKeyUpDefault(double scaleX,double scaleY,Natron::Key key,Natron::KeyboardModifiers modifiers) WARN_UNUSED_RETURN;
+    
+    bool onOverlayKeyRepeatDefault(double scaleX,double scaleY,Natron::Key key,Natron::KeyboardModifiers modifiers) WARN_UNUSED_RETURN;
+    
+    bool onOverlayFocusGainedDefault(double scaleX,double scaleY) WARN_UNUSED_RETURN;
+    
+    bool onOverlayFocusLostDefault(double scaleX,double scaleY) WARN_UNUSED_RETURN;
+    
+    void addDefaultPositionOverlay(const boost::shared_ptr<Double_Knob>& position);
+    
+    void removeDefaultOverlay(KnobI* knob);
+    
+    void initializeDefaultOverlays();
+    
+    bool hasDefaultOverlay() const;
+    
+    void setCurrentViewportForDefaultOverlays(OverlaySupport* viewPort);
+    
+    bool hasDefaultOverlayForParam(const KnobI* knob) const;
+
+    void setPluginIconFilePath(const std::string& iconFilePath);
+    
+    void setPluginDescription(const std::string& description);
+    
+    void setPluginIDAndVersionForGui(const std::string& pluginLabel,const std::string& pluginID,unsigned int version);
+    
+    void setPluginPythonModule(const std::string& pythonModule, unsigned int version);
+    
+    std::string getPluginPythonModule() const;
+    
+    unsigned int getPluginPythonModuleVersion() const;
+  
+    void refreshChannelSelectors(bool setValues);
+    
+    bool getProcessChannel(int channelIndex) const;
+    
+    bool getUserComponents(int inputNb,bool* processChannels,bool* isAll,Natron::ImageComponents *layer) const;
+    
+    void addUserComponents(const Natron::ImageComponents& comps);
+    
+    void getUserComponents(std::list<Natron::ImageComponents>* comps);
+    
+    bool hasAtLeastOneChannelToProcess() const;
+    
+    void removeParameterFromPython(const std::string& parameterName);
+
+    double getHostMixingValue(int time) const;
+    
+private:
+    
+    void setNameInternal(const std::string& name);
+
+public Q_SLOTS:
+
 
     void setKnobsAge(U64 newAge);
 
-    void setName(const QString & name);
 
 
     void doRefreshEdgesGUI()
     {
-        emit refreshEdgesGUI();
+        Q_EMIT refreshEdgesGUI();
     }
 
     /*will force a preview re-computation not matter of the project's preview mode*/
     void computePreviewImage(int time)
     {
-        emit previewRefreshRequested(time);
+        Q_EMIT previewRefreshRequested(time);
     }
 
     /*will refresh the preview only if the project is in auto-preview mode*/
     void refreshPreviewImage(int time)
     {
-        emit previewImageChanged(time);
+        Q_EMIT previewImageChanged(time);
     }
 
     void onMasterNodeDeactivated();
 
-    void onInputNameChanged(const QString & name);
+    void onInputLabelChanged(const QString & name);
 
     void notifySettingsPanelClosed(bool closed )
     {
-        emit settingsPanelClosed(closed);
+        Q_EMIT settingsPanelClosed(closed);
     }
     
     void dequeueActions();
 
     void onParentMultiInstanceInputChanged(int input);
 
-signals:
+Q_SIGNALS:
 
     void settingsPanelClosed(bool);
 
@@ -818,8 +1038,11 @@ signals:
 
     void canRedoChanged(bool);
 
-    void nameChanged(QString);
-    void inputNameChanged(int,QString);
+    void labelChanged(QString);
+    
+    void scriptNameChanged(QString);
+    
+    void inputLabelChanged(int,QString);
 
     void refreshEdgesGUI();
 
@@ -859,12 +1082,6 @@ signals:
 protected:
 
     /**
-     * @brief Attempts to detect cycles considering input being an input of this node.
-     * Returns true if it couldn't detect any cycle, false otherwise.
-     **/
-    bool checkIfConnectingInputIsOk(Natron::Node* input) const;
-
-    /**
      * @brief Recompute the hash value of this node and notify all the clone effects that the values they store in their
      * knobs is dirty and that they should refresh it by cloning the live instance.
      **/
@@ -872,24 +1089,17 @@ protected:
 
 private:
     
+    void computeHashInternal(std::list<Natron::Node*>& marked);
+    
+    void declareRotoPythonField();
+
     
     std::string makeInfoForInput(int inputNumber) const;
-
-    void invalidateParallelRenderArgsInternal(std::list<Natron::Node*>& markedNodes);
     
-    void setParallelRenderArgsInternal(int time,
-                                       int view,
-                                       bool isRenderUserInteraction,
-                                       bool isSequential,
-                                       U64 nodeHash,
-                                       bool canAbort,
-                                       bool canSetValue,
-                                       const TimeLine* timeline,
-                                       std::list<Natron::Node*>& markedNodes);
+    void setNodeIsRenderingInternal(std::list<Natron::Node*>& markedNodes);
+    void setNodeIsNoLongerRenderingInternal(std::list<Natron::Node*>& markedNodes);
     
 
-
-    void loadKnob(const boost::shared_ptr<KnobI> & knob,const NodeSerialization & serialization,bool updateKnobGui = false);
 
 
     /**
@@ -897,6 +1107,11 @@ private:
      * calls this function recursively on all inputs.
      **/
     void isNodeUpstream(const Natron::Node* input,bool* ok) const;
+    
+    void declareNodeVariableToPython(const std::string& nodeName);
+    void setNodeVariableToPython(const std::string& oldName,const std::string& newName);
+    void deleteNodeVariableToPython(const std::string& nodeName);
+    void declareParameterAsNodeField(const std::string& nodeName,PyObject* nodeObj,const std::string& parameterName);
 
     boost::scoped_ptr<Implementation> _imp;
 };
@@ -914,37 +1129,60 @@ class InspectorNode
 {
     Q_OBJECT
     
-    int _inputsCount;
-
+    int _maxInputs;
 
 public:
 
     InspectorNode(AppInstance* app,
-                  Natron::Plugin* plugin);
+                  const boost::shared_ptr<NodeCollection>& group,
+                  Natron::Plugin* plugin,
+                  int maxInputs);
 
     virtual ~InspectorNode();
 
     virtual int getMaxInputCount() const OVERRIDE
     {
-        return _inputsCount;
+        return _maxInputs;
     }
 
+
+
+    /**
+     * @brief Same as connectInputBase but if another input is already connected to 'input' then
+     * it will disconnect it prior to connecting the input of the given number.
+     **/
     virtual bool connectInput(const boost::shared_ptr<Node>& input,int inputNumber) OVERRIDE;
-    virtual int disconnectInput(int inputNumber) OVERRIDE;
-    virtual int disconnectInput(Node* input) OVERRIDE;
 
+    virtual int getPreferredInputForConnection() const OVERRIDE FINAL;
+    virtual int getPreferredInput() const OVERRIDE FINAL;
 
+private:
 
-    virtual int getPreferredInputForConnection()  OVERRIDE FINAL;
+    int getPreferredInputInternal(bool connected) const;
 
-    bool tryAddEmptyInput();
-
-    void addEmptyInput();
-
-    void removeEmptyInputs();
+public:
 
     void setActiveInputAndRefresh(int inputNb);
 
 };
+
+
+class RenderingFlagSetter
+{
+    Natron::Node* node;
+public:
+    
+    RenderingFlagSetter(Natron::Node* n)
+    : node(n)
+    {
+        node->setNodeIsRendering();
+    }
+    
+    ~RenderingFlagSetter()
+    {
+        node->unsetNodeIsRendering();
+    }
+};
+
 
 #endif // NATRON_ENGINE_NODE_H_

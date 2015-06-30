@@ -11,14 +11,34 @@
 #ifndef NATRON_GLOBAL_GLOBALDEFINES_H_
 #define NATRON_GLOBAL_GLOBALDEFINES_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <utility>
 #if defined(_WIN32)
 #include <string>
 #include <windows.h>
+#else
+#include <cstdlib>
 #endif
 
 #include "Global/Macros.h"
-#ifndef Q_MOC_RUN
+
+// ofxhPropertySuite.h:565:37: warning: 'this' pointer cannot be null in well-defined C++ code; comparison may be assumed to always evaluate to true [-Wtautological-undefined-compare]
+CLANG_DIAG_OFF(unknown-pragmas)
+CLANG_DIAG_OFF(tautological-undefined-compare) // appeared in clang 3.5
+#include <ofxhImageEffect.h>
+CLANG_DIAG_ON(tautological-undefined-compare)
+CLANG_DIAG_ON(unknown-pragmas)
+#include <ofxPixels.h>
+
+#undef toupper
+#undef tolower
+#undef isalpha
+#undef isalnum
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/cstdint.hpp>
 #endif
 #include <QtCore/QForeachContainer>
@@ -27,8 +47,9 @@ CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_ON(deprecated)
 #include "Global/Enums.h"
 
-#undef foreach
-#define foreach Q_FOREACH
+// boost and C++11 also have a foreach. this breaks it. DON'T UNCOMMENT THIS.
+//#undef foreach
+//#define foreach Q_FOREACH
 
 
 typedef boost::uint32_t U32;
@@ -36,8 +57,8 @@ typedef boost::uint64_t U64;
 typedef boost::uint8_t U8;
 typedef boost::uint16_t U16;
 
-#include <ofxhImageEffect.h>
-#include <ofxPixels.h>
+
+
 
 typedef int SequenceTime;
 
@@ -71,8 +92,8 @@ typedef OfxRangeD RangeD;
 #define kBgProcessServerCreatedShort "--bg_server_created"
 
 
-#define kNodeGraphObjectName "NodeGraph"
-#define kCurveEditorObjectName "CurveEditor"
+#define kNodeGraphObjectName "nodeGraph"
+#define kCurveEditorObjectName "curveEditor"
 
 #define kCurveEditorMoveMultipleKeysCommandCompressionID 2
 #define kKnobUndoChangeCommandCompressionID 3
@@ -89,26 +110,46 @@ typedef OfxRangeD RangeD;
 #define kNodeGraphMoveNodeBackDropCommandCompressionID 14
 #define kNodeGraphResizeNodeBackDropCommandCompressionID 15
 #define kCurveEditorMoveTangentsCommandCompressionID 16
+#define kCurveEditorTransformKeysCommandCompressionID 17
 
-
-#ifdef __NATRON_WIN32__
-namespace NatronWindows {
+namespace Natron {
 /*Converts a std::string to wide string*/
 inline std::wstring
 s2ws(const std::string & s)
 {
+    
+
+#ifdef __NATRON_WIN32__
     int len;
     int slength = (int)s.length() + 1;
-
     len = MultiByteToWideChar(CP_ACP, 0, s.c_str(), slength, 0, 0);
     wchar_t* buf = new wchar_t[len];
     MultiByteToWideChar(CP_ACP, 0, s.c_str(), slength, buf, len);
     std::wstring r(buf);
     delete[] buf;
-
     return r;
-}
-}
+#else
+    std::wstring dest;
+    
+    size_t max = s.size() * 4;
+    mbtowc (NULL, NULL, max);  /* reset mbtowc */
+    
+    const char* cstr = s.c_str();
+    
+    while (max > 0) {
+        wchar_t w;
+        size_t length = mbtowc(&w,cstr,max);
+        if (length < 1) {
+            break;
+        }
+        dest.push_back(w);
+        cstr += length;
+        max -= length;
+    }
+    return dest;
 #endif
+   
+}
+}
 
 #endif // ifndef NATRON_GLOBAL_GLOBALDEFINES_H_

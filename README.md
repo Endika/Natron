@@ -1,4 +1,5 @@
-Natron [![Build Status](https://api.travis-ci.org/MrKepzie/Natron.png?branch=workshop)](https://travis-ci.org/MrKepzie/Natron)  [![Coverage Status](https://coveralls.io/repos/MrKepzie/Natron/badge.png?branch=workshop)](https://coveralls.io/r/MrKepzie/Natron?branch=workshop) [![Coverity Scan Build Status](https://scan.coverity.com/projects/2940/badge.svg)](https://scan.coverity.com/projects/2940 "Coverity Badge")
+Natron [![Build Status](https://api.travis-ci.org/MrKepzie/Natron.png?branch=workshop)](https://travis-ci.org/MrKepzie/Natron)  [![Coverage Status](https://coveralls.io/repos/MrKepzie/Natron/badge.png?branch=workshop)](https://coveralls.io/r/MrKepzie/Natron?branch=workshop) [![Coverity Scan Build Status](https://scan.coverity.com/projects/2940/badge.svg)](https://scan.coverity.com/projects/2940 "Coverity Badge") [![Documentation Status](https://readthedocs.org/projects/natron/badge/?version=workshop)](https://readthedocs.org/projects/natron/?badge=workshop)
+
 ======
 
 
@@ -26,6 +27,7 @@ Features
  * [OpenFX samples](https://github.com/devernay/openfx) (in the Support and Examples directories)
 
 - Support for commercial OpenFX plugins:
+ * [All OFX products from RevisionFX](http://www.revisionfx.com)
  * [Furnace by The Foundry](http://www.thefoundry.co.uk/products/furnace/)
  * [KeyLight by The Foundry](http://www.thefoundry.co.uk/products/plugins/keylight/)
  * [GenArts Sapphire](http://www.genarts.com/software/sapphire/overview)
@@ -73,8 +75,18 @@ with a very accurate and intuitive curve editor.
 - Rotoscoping & Tracking support
   
 - Multi-view workflow: Natron saves time by keeping all the views in the same stream. You can separate
-the views at any time with the SplitViews node. Note that currently Natron does not allow to split the 
-nodes settings for each view, this will be implemented in the future.
+the views at any time with the OneView node.
+
+- Python 3 scripting integration:
+    * Parameters expressions
+    * User-defined parameters
+    * Nodes groups as Python scripts 
+    * Script editor to control the application overall
+    * User-defined python callbacks to respond to particular checkpoints of the internals of the software (change of a parameter, before rendering a frame, etc…)
+    * Integration of Pyside to the GUI so that the interface is extensible with new menus and windows
+
+- Multi-plane: Natron is able to deal with multi-layered EXR files thanks to OpenImageIO. It is deeply integrated into the workflow and the user can choose
+to work with any layer (or plane) on any node. New custom layers can also be created. 
 
 Requirements
 ------------
@@ -96,16 +108,8 @@ The system must support one of these OpenGL configurations:
 Planned features
 ----------------
 
-### Features planned for Natron 1.1
-
-- Python 3 scripting integration. This feature is already half-way of being implemented
-    * Parameters expressions
-    * User-defined parameters
-    * Nodes groups (Same as Gizmos in Nuke) but that will be written as Python scripts 
-    * Script editor to control the application overall
-    * User-defined python callbacks to respond to particular checkpoints of the internals of the software (change of a parameter, before rendering a frame, etc…)
-    * Integration of Pyside to the GUI so that the interface will be extensible with new menus and windows
-
+### Features planned for Next major version
+    
 - Optical Flow nodes: VectorGenerator, MotionBlur, RollingShutter, Retiming
 
 - Natural matting: process of extracting a foreground without necessarily a green/blue-screen as background

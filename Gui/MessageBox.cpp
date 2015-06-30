@@ -3,21 +3,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "MessageBox.h"
 
+#include "Global/Macros.h"
+CLANG_DIAG_OFF(deprecated)
+CLANG_DIAG_OFF(uninitialized)
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QDialogButtonBox>
-#include <QLabel>
 #include <QStyle>
 #include <QPushButton>
 #include <QCheckBox>
 #include <QTextEdit>
 #include <QApplication>
 #include <QDesktopWidget>
+CLANG_DIAG_ON(deprecated)
+CLANG_DIAG_ON(uninitialized)
 
 #include "Gui/FromQtEnums.h"
 #include "Gui/GuiApplicationManager.h"
+#include "Gui/Label.h"
+
 namespace Natron {
 struct MessageBoxPrivate
 {
@@ -26,10 +36,10 @@ struct MessageBoxPrivate
     QHBoxLayout* mainLayout;
     QVBoxLayout* vLayout;
     
-    QLabel* infoLabel;
+    Natron::Label* infoLabel;
     
     QWidget* vContainer;
-    QLabel* questionLabel;
+    Natron::Label* questionLabel;
     QTextEdit* infoEdit; //< used if the text is too long so the user can scroll
     QCheckBox* checkbox;
     
@@ -78,7 +88,7 @@ MessageBox::init(const QString & title,
 {
     _imp->mainLayout = new QHBoxLayout(this);
     
-    _imp->infoLabel = new QLabel(this);
+    _imp->infoLabel = new Natron::Label(this);
     _imp->infoLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     
     QStyle::StandardPixmap pixType;
@@ -105,21 +115,21 @@ MessageBox::init(const QString & title,
     _imp->vLayout = new QVBoxLayout(_imp->vContainer);
     
     if (message.size() < 1000) {
-        _imp->questionLabel = new QLabel(message,_imp->vContainer);
+        _imp->questionLabel = new Natron::Label(message,_imp->vContainer);
         _imp->questionLabel->setTextInteractionFlags(Qt::TextInteractionFlags(style()->styleHint(QStyle::SH_MessageBox_TextInteractionFlags, 0, this)));
         _imp->questionLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
         _imp->questionLabel->setOpenExternalLinks(true);
         _imp->questionLabel->setContentsMargins(16, 0, 0, 0);
-        QFont f(appFont,appFontSize);
-        _imp->questionLabel->setFont(f);
+        //QFont f(appFont,appFontSize);
+        //_imp->questionLabel->setFont(f);
         _imp->vLayout->addWidget(_imp->questionLabel);
     } else {
         _imp->infoEdit = new QTextEdit(message,_imp->vContainer);
         _imp->infoEdit->setReadOnly(true);
         _imp->infoEdit->setContentsMargins(16, 0, 0, 0);
         _imp->infoEdit->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-        QFont f(appFont,appFontSize);
-        _imp->infoEdit->setFont(f);
+        //QFont f(appFont,appFontSize);
+        //_imp->infoEdit->setFont(f);
         _imp->vLayout->addWidget(_imp->infoEdit);
     }
     

@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include "Engine/Hash64.h"
@@ -31,9 +35,11 @@ TEST(Hash64,GeneralTest) {
     ASSERT_FALSE( hash1.valid() );
 
     srand(2000);
+    // coverity[dont_call]
     int hash1ElementCount = rand() % 100 + 80;
     std::vector<int> hash1Elements;
     for (int i = 0; i < hash1ElementCount; ++i) {
+        // coverity[dont_call]
         int v = rand();
         hash1Elements.push_back(v);
         hash1.append<int>(v);
@@ -55,8 +61,10 @@ TEST(Hash64,GeneralTest) {
     hash2.reset();
     ASSERT_FALSE( hash2.valid() );
 
+    // coverity[dont_call]
     int hash2ElementCount = hash1ElementCount + (rand() % 10 + 1);
     for (int i = 0; i < hash2ElementCount; ++i) {
+        // coverity[dont_call]
         hash2.append<int>( rand() );
     }
     hash2.computeHash();

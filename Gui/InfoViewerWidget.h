@@ -12,6 +12,10 @@
 #ifndef NATRON_GUI_INFOVIEWERWIDGET_H_
 #define NATRON_GUI_INFOVIEWERWIDGET_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
@@ -22,9 +26,12 @@ CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
 #include "Engine/Format.h"
+#include "Engine/ImageComponents.h"
 
 class ViewerGL;
-class QLabel;
+namespace Natron {
+    class Label;
+}
 class QHBoxLayout;
 
 class InfoViewerWidget
@@ -45,14 +52,20 @@ public:
 
     void setDataWindow(const RectI & r); // in canonical coordinates
 
-    void setImageFormat(Natron::ImageComponentsEnum comp,Natron::ImageBitDepthEnum depth);
+    void setImageFormat(const Natron::ImageComponents& comp,Natron::ImageBitDepthEnum depth);
 
     void setColor(float r,float g,float b,float a);
 
     void setMousePos(QPoint p);
 
     static void removeTrailingZeroes(QString& str);
-public slots:
+    
+public Q_SLOTS:
+
+    
+    void setColorValid(bool valid);
+    
+    void setColorApproximated(bool approx);
 
     void hideColorAndMouseInfo();
     void showColorAndMouseInfo();
@@ -63,24 +76,26 @@ private:
     
     virtual QSize sizeHint() const OVERRIDE FINAL;
     virtual QSize minimumSizeHint() const OVERRIDE FINAL;
-    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL;
     
 private:
     
 
     QHBoxLayout* layout;
-    QLabel* descriptionLabel;
-    QLabel* imageFormat;
-    QLabel* resolution;
+    Natron::Label* descriptionLabel;
+    Natron::Label* imageFormat;
+    Natron::Label* resolution;
     Format format;
-    QLabel* coordDispWindow;
-    QLabel* coordMouse;
-    QLabel* rgbaValues;
-    QLabel* color;
-    QLabel* hvl_lastOption;
-    QLabel* _fpsLabel;
+    Natron::Label* coordDispWindow;
+    Natron::Label* coordMouse;
+    Natron::Label* rgbaValues;
+    Natron::Label* color;
+    Natron::Label* hvl_lastOption;
+    Natron::Label* _fpsLabel;
     ViewerGL* viewer;
-    Natron::ImageComponentsEnum _comp;
+    Natron::ImageComponents _comp;
+    bool _colorValid;
+    bool _colorApprox;
+    double currentColor[4];
 };
 
 #endif /* defined(NATRON_GUI_INFOVIEWERWIDGET_H_) */

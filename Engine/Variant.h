@@ -12,6 +12,10 @@
 #ifndef NATRON_ENGINE_VARIANT_H_
 #define NATRON_ENGINE_VARIANT_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
 #include <QtCore/QVariant>
@@ -23,12 +27,12 @@ CLANG_DIAG_ON(deprecated)
 #include <QtCore/QStringList>
 
 #include "Global/Macros.h"
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 
-CLANG_DIAG_OFF(unused-parameter)
+GCC_DIAG_OFF(unused-parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/xml_iarchive.hpp>
-CLANG_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused-parameter)
 #include <boost/archive/xml_oarchive.hpp>
 #include <boost/serialization/list.hpp>
 #include <boost/serialization/split_member.hpp>

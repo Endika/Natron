@@ -10,7 +10,12 @@
 
 #ifndef PREFERENCESPANEL_H
 #define PREFERENCESPANEL_H
-#ifndef Q_MOC_RUN
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #endif
 #include "Global/Macros.h"
@@ -28,6 +33,7 @@ class QVBoxLayout;
 //class QHBoxLayout;
 class QDialogButtonBox;
 class Button;
+class KnobI;
 class Gui;
 class PreferencesPanel
     : public QWidget
@@ -41,15 +47,15 @@ public:
     {
     }
 
-public slots:
+public Q_SLOTS:
 
     void restoreDefaults();
 
     void cancelChanges();
 
-    void applyChanges();
-
-    void applyChangesAndClose();
+    void saveChangesAndClose();
+    
+    void onSettingChanged(KnobI* knob);
 
 private:
 
@@ -63,10 +69,10 @@ private:
     DockablePanel* _panel;
     QDialogButtonBox* _buttonBox;
     Button* _restoreDefaultsB;
-    Button* _applyB;
     Button* _cancelB;
     Button* _okB;
     boost::shared_ptr<Settings> _settings;
+    std::vector<KnobI*> _changedKnobs;
     bool _closeIsOK;
 };
 

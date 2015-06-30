@@ -12,18 +12,22 @@
 #ifndef NATRON_ENGINE_CURVE_H_
 #define NATRON_ENGINE_CURVE_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include <map>
 #include <set>
 
 #include "Global/Macros.h"
-#ifndef Q_MOC_RUN
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
-CLANG_DIAG_OFF(unused-parameter)
+GCC_DIAG_OFF(unused-parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/xml_iarchive.hpp>
-CLANG_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused-parameter)
 #include <boost/archive/xml_oarchive.hpp>
 #endif
 #include "Global/Macros.h"
@@ -159,6 +163,8 @@ public:
      * @brief Copies all the keyframes held by other, but does not change the pointer to the owner.
      **/
     void clone(const Curve & other);
+    
+    bool cloneAndCheckIfChanged(const Curve& other);
 
     /**
      * @brief Same as the other version clone except that keyframes will be offset by the given offset
@@ -305,6 +311,11 @@ private:
     bool mustClamp() const;
 
     KeyFrameSet::iterator setKeyframeInterpolation_internal(KeyFrameSet::iterator it,Natron::KeyframeTypeEnum type);
+    
+    /**
+     * @brief Called when the curve has changed to invalidate any cache relying on the curve values.
+     **/
+    void onCurveChanged();
 
 private:
     boost::scoped_ptr<CurvePrivate> _imp;

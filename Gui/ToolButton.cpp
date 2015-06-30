@@ -9,18 +9,25 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "ToolButton.h"
 
+#include <algorithm>
 CLANG_DIAG_OFF(deprecated)
 #include <QMenu>
 CLANG_DIAG_ON(deprecated)
 
 #include <boost/weak_ptr.hpp>
 #include "Gui/GuiAppInstance.h"
+#include "Gui/Gui.h"
+#include "Engine/Project.h"
 
 struct ToolButtonPrivate
 {
-    AppInstance* _app;
+    GuiAppInstance* _app;
     QString _id;
     int _major,_minor;
     QString _label;
@@ -30,7 +37,7 @@ struct ToolButtonPrivate
     QAction* _action;
     boost::weak_ptr<PluginGroupNode> _pluginToolButton;
 
-    ToolButtonPrivate(AppInstance* app,
+    ToolButtonPrivate(GuiAppInstance* app,
                       const boost::shared_ptr<PluginGroupNode>& pluginToolButton,
                       const QString & pluginID,
                       int major,
@@ -51,7 +58,8 @@ struct ToolButtonPrivate
     }
 };
 
-ToolButton::ToolButton(AppInstance* app,
+
+ToolButton::ToolButton(GuiAppInstance* app,
                        const boost::shared_ptr<PluginGroupNode>& pluginToolButton,
                        const QString & pluginID,
                        int major,
@@ -152,16 +160,42 @@ ToolButton::getPluginToolButton() const
 void
 ToolButton::onTriggered()
 {
+    boost::shared_ptr<NodeCollection> group = _imp->_app->getGui()->getLastSelectedNodeCollection();
+    assert(group);
     CreateNodeArgs args(_imp->_id,
-                   "",
-                   _imp->_major,_imp->_minor,
-                   -1,
-                   true,
-                   INT_MIN,INT_MIN,
-                   true,
-                   true,
-                   QString(),
-                   CreateNodeArgs::DefaultValuesList());
+                        "",
+                        _imp->_major,_imp->_minor,
+                        true,
+                        INT_MIN,INT_MIN,
+                        true,
+                        true,
+                        true,
+                        QString(),
+                        CreateNodeArgs::DefaultValuesList(),
+                        group);
     _imp->_app->createNode( args );
 }
 
+struct ToolButtonChildrenSortFunctor
+{
+    bool operator() (const ToolButton* lhs,const ToolButton* rhs) {
+        QAction* lAct = lhs->getAction();
+        QAction* rAct = rhs->getAction();
+        assert(lAct && rAct);
+        return lAct->text() < rAct->text();
+    }
+};
+
+void
+ToolButton::sortChildren()
+{
+    if (_imp->_children.empty()) {
+        return;
+    }
+    assert(_imp->_menu);
+    _imp->_menu->clear();
+    std::sort(_imp->_children.begin(), _imp->_children.end(),ToolButtonChildrenSortFunctor());
+    for (std::size_t i = 0; i < _imp->_children.size(); ++i) {
+        _imp->_menu->addAction(_imp->_children[i]->getAction());
+    }
+}

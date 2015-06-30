@@ -8,6 +8,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "PreferencesPanel.h"
 
 CLANG_DIAG_OFF(deprecated)
@@ -15,47 +19,45 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QVBoxLayout>
 #include <QDesktopWidget>
 #include <QApplication>
-#include <QTextDocument> // for Qt::convertFromPlainText
 #include <QDialogButtonBox>
 #include <QKeyEvent>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
 #include "Engine/Settings.h"
+
 #include "Gui/DockablePanel.h"
 #include "Gui/Button.h"
 #include "Gui/Gui.h"
+#include "Gui/Utils.h"
 
 PreferencesPanel::PreferencesPanel(boost::shared_ptr<Settings> settings,
                                    Gui *parent)
     : QWidget(parent)
       , _gui(parent)
       , _settings(settings)
+      , _changedKnobs()
       , _closeIsOK(false)
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-    setWindowFlags(Qt::WindowStaysOnTopHint | Qt::Window);
+    setWindowFlags(Qt::Window);
     setWindowTitle( tr("Preferences") );
     _mainLayout = new QVBoxLayout(this);
     _mainLayout->setContentsMargins(0,0,0,0);
     _mainLayout->setSpacing(0);
 
-    _panel = new DockablePanel(_gui,_settings.get(), _mainLayout, DockablePanel::eHeaderModeNoHeader,true,
-                               "", "", false,"", this);
+    _panel = new DockablePanel(_gui,_settings.get(), _mainLayout, DockablePanel::eHeaderModeNoHeader,true, boost::shared_ptr<QUndoStack>(),"", "", false,"", this);
     _panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     _mainLayout->addWidget(_panel);
 
     _buttonBox = new QDialogButtonBox(Qt::Horizontal);
-    _applyB = new Button( tr("Apply") );
-    _applyB->setToolTip( Qt::convertFromPlainText(tr("Apply changes without closing the window."),Qt::WhiteSpaceNormal) );
     _restoreDefaultsB = new Button( tr("Restore defaults") );
-    _restoreDefaultsB->setToolTip( Qt::convertFromPlainText(tr("Restore default values for all preferences."),Qt::WhiteSpaceNormal) );
-    _cancelB = new Button( tr("Cancel") );
-    _cancelB->setToolTip( Qt::convertFromPlainText(tr("Cancel changes that were not applied and close the window."),Qt::WhiteSpaceNormal) );
-    _okB = new Button( tr("OK") );
-    _okB->setToolTip( Qt::convertFromPlainText(tr("Apply changes and close the window."),Qt::WhiteSpaceNormal) );
-    _buttonBox->addButton(_applyB, QDialogButtonBox::ApplyRole);
+    _restoreDefaultsB->setToolTip( Natron::convertFromPlainText(tr("Restore default values for all preferences."), Qt::WhiteSpaceNormal) );
+    _cancelB = new Button( tr("Discard") );
+    _cancelB->setToolTip( Natron::convertFromPlainText(tr("Cancel changes that were not saved and close the window."), Qt::WhiteSpaceNormal) );
+    _okB = new Button( tr("Save") );
+    _okB->setToolTip( Natron::convertFromPlainText(tr("Save changes on disk and close the window."), Qt::WhiteSpaceNormal) );
     _buttonBox->addButton(_restoreDefaultsB, QDialogButtonBox::ResetRole);
     _buttonBox->addButton(_cancelB, QDialogButtonBox::RejectRole);
     _buttonBox->addButton(_okB, QDialogButtonBox::AcceptRole);
@@ -64,13 +66,24 @@ PreferencesPanel::PreferencesPanel(boost::shared_ptr<Settings> settings,
     _mainLayout->addWidget(_buttonBox);
 
     QObject::connect( _restoreDefaultsB, SIGNAL( clicked() ), this, SLOT( restoreDefaults() ) );
-    QObject::connect( _applyB, SIGNAL( clicked() ), this, SLOT( applyChanges() ) );
     QObject::connect( _buttonBox, SIGNAL( rejected() ), this, SLOT( cancelChanges() ) );
-    QObject::connect( _buttonBox, SIGNAL( accepted() ), this, SLOT( applyChangesAndClose() ) );
+    QObject::connect( _buttonBox, SIGNAL( accepted() ), this, SLOT( saveChangesAndClose() ) );
+    QObject::connect(_settings.get(), SIGNAL(settingChanged(KnobI*)), this,SLOT(onSettingChanged(KnobI*)));
 
     _panel->initializeKnobs();
 
     resize(900, 600);
+}
+
+void
+PreferencesPanel::onSettingChanged(KnobI* knob)
+{
+    for (U32 i = 0; i < _changedKnobs.size(); ++i) {
+        if (_changedKnobs[i] == knob) {
+            return;
+        }
+    }
+    _changedKnobs.push_back(knob);
 }
 
 void
@@ -85,21 +98,19 @@ PreferencesPanel::restoreDefaults()
 }
 
 void
-PreferencesPanel::applyChanges()
-{
-    _settings->saveSettings();
-}
-
-void
 PreferencesPanel::cancelChanges()
 {
+    _closeIsOK = false;
     close();
 }
 
 void
-PreferencesPanel::applyChangesAndClose()
+PreferencesPanel::saveChangesAndClose()
 {
-    _settings->saveSettings();
+    ///Steal focus from other widgets so that we are sure all LineEdits and Spinboxes get the focusOut event and their editingFinished
+    ///signal is emitted.
+    _okB->setFocus();
+    _settings->saveSettings(_changedKnobs,true);
     _closeIsOK = true;
     close();
 }
@@ -107,20 +118,22 @@ PreferencesPanel::applyChangesAndClose()
 void
 PreferencesPanel::showEvent(QShowEvent* /*e*/)
 {
+    
     QDesktopWidget* desktop = QApplication::desktop();
     const QRect rect = desktop->screenGeometry();
 
     move( QPoint(rect.width() / 2 - width() / 2,rect.height() / 2 - height() / 2) );
-    _settings->resetWereChangesMadeSinceLastSave();
+    
+    _changedKnobs.clear();
 }
 
 void
 PreferencesPanel::closeEvent(QCloseEvent*)
 {
-    if ( !_closeIsOK && _settings->wereChangesMadeSinceLastSave() ) {
-        _settings->blockEvaluation();
-        _settings->restoreSettings();
-        _settings->unblockEvaluation();
+    if ( !_closeIsOK && !_changedKnobs.empty() ) {
+        _settings->beginChanges();
+        _settings->restoreKnobsFromSettings(_changedKnobs);
+        _settings->endChanges();
     }
 }
 
@@ -128,6 +141,7 @@ void
 PreferencesPanel::keyPressEvent(QKeyEvent* e)
 {
     if (e->key() == Qt::Key_Escape) {
+        _closeIsOK = false;
         close();
     } else {
         QWidget::keyPressEvent(e);

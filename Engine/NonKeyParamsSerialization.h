@@ -12,16 +12,18 @@
 #ifndef NONKEYPARAMSSERIALIZATION_H
 #define NONKEYPARAMSSERIALIZATION_H
 
-#endif // NONKEYPARAMSSERIALIZATION_H
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "Engine/NonKeyParams.h"
 
 #include "Global/Macros.h"
-#ifndef Q_MOC_RUN
-CLANG_DIAG_OFF(unused-parameter)
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
+GCC_DIAG_OFF(unused-parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/binary_iarchive.hpp>
-CLANG_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused-parameter)
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/xml_iarchive.hpp>
 #include <boost/archive/xml_oarchive.hpp>
@@ -38,3 +40,5 @@ NonKeyParams::serialize(Archive & ar,
 }
 
 BOOST_SERIALIZATION_ASSUME_ABSTRACT(Natron::NonKeyParams);
+
+#endif // NONKEYPARAMSSERIALIZATION_H

@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "AboutWindow.h"
 
@@ -12,7 +15,6 @@ CLANG_DIAG_OFF(deprecated)
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QTabWidget>
-#include <QLabel>
 #include <QFile>
 #include <QTextCodec>
 CLANG_DIAG_ON(deprecated)
@@ -21,6 +23,7 @@ CLANG_DIAG_ON(deprecated)
 #include "Global/GitVersion.h"
 #include "Gui/Button.h"
 #include "Gui/Gui.h"
+#include "Gui/Label.h"
 
 AboutWindow::AboutWindow(Gui* gui,
                          QWidget* parent)
@@ -31,7 +34,7 @@ AboutWindow::AboutWindow(Gui* gui,
     _mainLayout = new QVBoxLayout(this);
     setLayout(_mainLayout);
 
-    _iconLabel = new QLabel(this);
+    _iconLabel = new Natron::Label(this);
     _iconLabel->setPixmap( QPixmap(NATRON_APPLICATION_ICON_PATH).scaled(128, 128) );
     _mainLayout->addWidget(_iconLabel);
 
@@ -89,7 +92,7 @@ AboutWindow::AboutWindow(Gui* gui,
     QString endAbout =
     QString("<p>This version was generated from the source code branch %3"
             " at commit %4.</p>"
-            "<p>Copyright (C) 2014 the %1 developers.</p>"
+            "<p>Copyright (C) 2015 the %1 developers.</p>"
             "<p>This is free software. You may redistribute copies of it "
             "under the terms of the <a href=\"http://www.mozilla.org/MPL/2.0/\">"
             "<font color=\"orange\">MPL Mozilla Public License</font></a>. "

@@ -12,13 +12,16 @@
 #ifndef NATRON_GUI_KNOBGUITYPES_H_
 #define NATRON_GUI_KNOBGUITYPES_H_
 
-#include <vector> // Int_KnobGui
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
+#include <vector> // Int_KnobGui
+#include <list>
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QtCore/QObject>
-#include <QLabel>
 #include <QStyledItemDelegate>
 #include <QTextEdit>
 CLANG_DIAG_ON(deprecated)
@@ -29,9 +32,12 @@ CLANG_DIAG_ON(uninitialized)
 
 #include "Engine/Singleton.h"
 #include "Engine/Knob.h"
+#include "Engine/ImageComponents.h"
 
 #include "Gui/CurveSelection.h"
 #include "Gui/KnobGui.h"
+#include "Gui/AnimatedCheckBox.h"
+#include "Gui/Label.h"
 
 //Define this if you want the spinbox to clamp to the plugin defined range
 //#define SPINBOX_TAKE_PLUGIN_RANGE_INTO_ACCOUNT
@@ -66,12 +72,15 @@ class Button;
 class SpinBox;
 class ComboBox;
 class ScaleSliderQWidget;
-class GroupBoxLabel;
 class CurveWidget;
 class KnobCurveGui;
+class TabGroup;
 
 // private classes, defined in KnobGuiTypes.cpp
+namespace Natron {
+class GroupBoxLabel;
 class ClickableLabel;
+}
 class AnimatedCheckBox;
 
 namespace Natron {
@@ -97,15 +106,17 @@ public:
                 DockablePanel *container);
 
     virtual ~Int_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void onSpinBoxValueChanged();
 
     void onSliderValueChanged(double);
-    void onSliderEditingFinished();
+    void onSliderEditingFinished(bool hasMovedOnce);
 
 #ifdef SPINBOX_TAKE_PLUGIN_RANGE_INTO_ACCOUNT
     void onMinMaxChanged(double mini, double maxi, int index = 0);
@@ -137,16 +148,43 @@ private:
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
     virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
+    virtual void reflectModificationsState() OVERRIDE FINAL;
 
 private:
-    std::vector<std::pair<SpinBox *, QLabel *> > _spinBoxes;
+    std::vector<std::pair<SpinBox *, Natron::Label *> > _spinBoxes;
+    QWidget *_container;
     ScaleSliderQWidget *_slider;
     Button *_dimensionSwitchButton;
-    boost::shared_ptr<Int_Knob> _knob;
+    boost::weak_ptr<Int_Knob> _knob;
 };
 
 
 //================================
+
+class Bool_CheckBox: public AnimatedCheckBox
+{
+    bool useCustomColor;
+    QColor customColor;
+    
+public:
+    
+    Bool_CheckBox(QWidget* parent = 0) : AnimatedCheckBox(parent), useCustomColor(false), customColor() {}
+    
+    virtual ~Bool_CheckBox() {}
+    
+    void setCustomColor(const QColor& color, bool useCustom)
+    {
+        useCustomColor = useCustom;
+        customColor = color;
+    }
+    
+    virtual void getBackgroundColor(double *r,double *g,double *b) const OVERRIDE FINAL;
+    
+    
+};
+
 class Bool_KnobGui
     : public KnobGui
 {
@@ -164,13 +202,15 @@ public:
                  DockablePanel *container);
 
     virtual ~Bool_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void onCheckBoxStateChanged(bool);
-
+    void onLabelClicked(bool);
 private:
 
     
@@ -182,11 +222,13 @@ private:
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
     virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
-
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
+    virtual void onLabelChanged() OVERRIDE FINAL;
 private:
 
-    AnimatedCheckBox *_checkBox;
-    boost::shared_ptr<Bool_Knob> _knob;
+    Bool_CheckBox *_checkBox;
+    boost::weak_ptr<Bool_Knob> _knob;
 };
 
 
@@ -208,13 +250,15 @@ public:
                    DockablePanel *container);
 
     virtual ~Double_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
     void onSpinBoxValueChanged();
     void onSliderValueChanged(double);
-    void onSliderEditingFinished();
+    void onSliderEditingFinished(bool hasMovedOnce);
 #ifdef SPINBOX_TAKE_PLUGIN_RANGE_INTO_ACCOUNT
     void onMinMaxChanged(double mini, double maxi, int index = 0);
 #endif
@@ -251,13 +295,15 @@ private:
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
-
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
+    virtual void reflectModificationsState() OVERRIDE FINAL;
 private:
-    std::vector<std::pair<SpinBox *, QLabel *> > _spinBoxes;
+    std::vector<std::pair<SpinBox *, Natron::Label *> > _spinBoxes;
+    QWidget *_container;
     ScaleSliderQWidget *_slider;
     Button *_dimensionSwitchButton;
-    boost::shared_ptr<Double_Knob> _knob;
-    int _digits;
+    boost::weak_ptr<Double_Knob> _knob;
 };
 
 //================================
@@ -279,6 +325,8 @@ public:
 
     virtual ~Button_KnobGui() OVERRIDE;
 
+    virtual void removeSpecificGui() OVERRIDE FINAL;
+    
     virtual bool showDescriptionLabel() const
     {
         return false;
@@ -286,7 +334,7 @@ public:
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void emitValueChanged();
 
@@ -307,10 +355,36 @@ private:
 
 private:
     Button *_button;
-    boost::shared_ptr<Button_Knob> _knob;
+    boost::weak_ptr<Button_Knob> _knob;
 };
 
 //================================
+struct NewLayerDialogPrivate;
+class NewLayerDialog : public QDialog
+{
+    Q_OBJECT
+    
+public:
+    
+    
+    NewLayerDialog(QWidget* parent);
+    
+    virtual ~NewLayerDialog();
+    
+    Natron::ImageComponents getComponents() const;
+    
+public Q_SLOTS:
+    
+    void onNumCompsChanged(double value);
+    
+    void onRGBAButtonClicked();
+    
+private:
+    
+    boost::scoped_ptr<NewLayerDialogPrivate> _imp;
+    
+};
+
 class Choice_KnobGui
     : public KnobGui
 {
@@ -327,14 +401,18 @@ public:
                    DockablePanel *container);
 
     virtual ~Choice_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void onCurrentIndexChanged(int i);
 
     void onEntriesPopulated();
+    
+    void onItemNewSelected();
 
 private:
 
@@ -346,13 +424,17 @@ private:
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
+    virtual void reflectModificationsState() OVERRIDE FINAL;
+    
     std::vector<std::string> _entries;
     ComboBox *_comboBox;
-    boost::shared_ptr<Choice_Knob> _knob;
+    boost::weak_ptr<Choice_Knob> _knob;
 };
 
-
 //=========================
+
 class Separator_KnobGui
     : public KnobGui
 {
@@ -367,6 +449,8 @@ public:
                       DockablePanel *container);
 
     virtual ~Separator_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual bool showDescriptionLabel() const
     {
@@ -399,24 +483,25 @@ private:
 
 private:
     QFrame *_line;
-    boost::shared_ptr<Separator_Knob> _knob;
+    boost::weak_ptr<Separator_Knob> _knob;
 };
 
 /******************************/
 
+class Color_KnobGui;
 class ColorPickerLabel
-    : public QLabel
+    : public Natron::Label
 {
     Q_OBJECT
 
 public:
 
-    ColorPickerLabel(QWidget* parent = NULL);
+    ColorPickerLabel(Color_KnobGui* knob,QWidget* parent = NULL);
 
     virtual ~ColorPickerLabel() OVERRIDE
     {
     }
-
+    
     bool isPickingEnabled() const
     {
         return _pickingEnabled;
@@ -424,9 +509,16 @@ public:
 
     void setColor(const QColor & color);
 
-    void setPickingEnabled(bool enabled);
+    const QColor& getCurrentColor() const
+    {
+        return _currentColor;
+    }
 
-signals:
+    void setPickingEnabled(bool enabled);
+    
+    void setEnabledMode(bool enabled);
+
+Q_SIGNALS:
 
     void pickingEnabled(bool);
 
@@ -440,6 +532,7 @@ private:
 
     bool _pickingEnabled;
     QColor _currentColor;
+    Color_KnobGui* _knob;
 };
 
 
@@ -459,10 +552,12 @@ public:
                   DockablePanel *container);
 
     virtual ~Color_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     void onColorChanged();
     void onMinMaxChanged(double mini, double maxi, int index);
@@ -478,12 +573,14 @@ public slots:
     void onDimensionSwitchClicked();
 
     void onSliderValueChanged(double v);
+    
+    void onSliderEditingFinished(bool hasMovedOnce);
 
     void onMustShowAllDimension();
 
     void onDialogCurrentColorChanged(const QColor & color);
 
-signals:
+Q_SIGNALS:
 
     void dimensionSwitchToggled(bool b);
 
@@ -501,7 +598,10 @@ private:
     virtual void updateGUI(int dimension) OVERRIDE FINAL;
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
-
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
+    virtual void reflectModificationsState() OVERRIDE FINAL;
+    
     void updateLabel(double r, double g, double b, double a);
 
 private:
@@ -511,10 +611,10 @@ private:
     QHBoxLayout *boxLayout;
     QWidget *colorContainer;
     QHBoxLayout *colorLayout;
-    QLabel *_rLabel;
-    QLabel *_gLabel;
-    QLabel *_bLabel;
-    QLabel *_aLabel;
+    Natron::Label *_rLabel;
+    Natron::Label *_gLabel;
+    Natron::Label *_bLabel;
+    Natron::Label *_aLabel;
     SpinBox *_rBox;
     SpinBox *_gBox;
     SpinBox *_bBox;
@@ -524,7 +624,7 @@ private:
     Button *_dimensionSwitchButton;
     ScaleSliderQWidget* _slider;
     int _dimension;
-    boost::shared_ptr<Color_Knob> _knob;
+    boost::weak_ptr<Color_Knob> _knob;
     std::vector<double> _lastColor;
 };
 
@@ -567,7 +667,7 @@ public:
 
     void setDirty(bool b);
 
-signals:
+Q_SIGNALS:
 
     void editingFinished();
 
@@ -600,10 +700,12 @@ public:
                    DockablePanel *container);
 
     virtual ~String_KnobGui() OVERRIDE;
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-public slots:
+public Q_SLOTS:
 
     ///if the knob is not multiline
     void onLineChanged();
@@ -629,12 +731,20 @@ public slots:
 
     ///this is a big hack: the html parser builtin QGraphicsTextItem should do this for us...but it doesn't seem to take care
     ///of the font size.
-    static void parseFont(const QString & s,QFont & f,QColor& color);
+    static void parseFont(const QString & s, QFont* f, QColor* color);
     static void findReplaceColorName(QString& text,const QColor& color);
     static QString makeFontTag(const QString& family,int fontSize,const QColor& color);
     static QString decorateTextWithFontTag(const QString& family,int fontSize,const QColor& color,const QString& text);
     static QString removeNatronHtmlTag(QString text);
 
+    static QString getNatronHtmlTagContent(QString text);
+    
+    /**
+     * @brief The goal here is to remove all the tags added automatically by Natron (like font color,size family etc...)
+     * so the user does not see them in the user interface. Those tags are  present in the internal value held by the knob.
+     **/
+    static QString removeAutoAddedHtmlTags(QString text,bool removeNatronTag = true) ;
+    
 private:
 
     virtual bool shouldAddStretch() const { return false; }
@@ -646,17 +756,15 @@ private:
     virtual void setDirty(bool dirty) OVERRIDE FINAL;
     virtual void reflectAnimationLevel(int dimension,Natron::AnimationLevelEnum level) OVERRIDE FINAL;
     virtual void setReadOnly(bool readOnly,int dimension) OVERRIDE FINAL;
-
+    virtual void reflectExpressionState(int dimension,bool hasExpr) OVERRIDE FINAL;
+    virtual void updateToolTip() OVERRIDE FINAL;
+    virtual void reflectModificationsState() OVERRIDE FINAL;
+    
     void mergeFormat(const QTextCharFormat & fmt);
 
     void restoreTextInfoFromString();
 
 
-    /**
-     * @brief The goal here is to remove all the tags added automatically by Natron (like font color,size family etc...)
-     * so the user does not see them in the user interface. Those tags are  present in the internal value held by the knob.
-     **/
-    QString removeAutoAddedHtmlTags(QString text) const;
 
     QString addHtmlTags(QString text) const;
 
@@ -682,8 +790,8 @@ private:
     bool _italicActivated;
     QString _fontFamily;
     QColor _fontColor;
-    QLabel *_label; //< if label
-    boost::shared_ptr<String_Knob> _knob;
+    Natron::Label *_label; //< if label
+    boost::weak_ptr<String_Knob> _knob;
 };
 
 /*****************************/
@@ -706,13 +814,19 @@ public:
 
     virtual ~Group_KnobGui() OVERRIDE;
 
-    void addKnob(KnobGui *child, int row);
+    virtual void removeSpecificGui() OVERRIDE FINAL;
+    
+    void addKnob(KnobGui *child);
+    
+    const std::list<KnobGui*>& getChildren() const { return _children; }
 
     bool isChecked() const;
 
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
+    
+    TabGroup* getOrCreateTabWidget();
 
-public slots:
+public Q_SLOTS:
     void setChecked(bool b);
 
 private:
@@ -733,11 +847,12 @@ private:
 
 private:
     bool _checked;
-    GroupBoxLabel *_button;
-    std::vector< std::pair< KnobGui *, int> > _children;
+    Natron::GroupBoxLabel *_button;
+    std::list<KnobGui*> _children;
     std::vector< std::pair<KnobGui*,std::vector<int> > > _childrenToEnable; //< when re-enabling a group, what are the children that we should set
+    TabGroup* _tabGroup;
     //enabled too
-    boost::shared_ptr<Group_Knob> _knob;
+    boost::weak_ptr<Group_Knob> _knob;
 };
 
 /*****************************/
@@ -756,6 +871,9 @@ public:
 
     Parametric_KnobGui(boost::shared_ptr<KnobI> knob,
                        DockablePanel *container);
+    
+    virtual void removeSpecificGui() OVERRIDE FINAL;
+    
     virtual bool showDescriptionLabel() const
     {
         return false;
@@ -764,14 +882,19 @@ public:
     virtual ~Parametric_KnobGui() OVERRIDE;
     virtual boost::shared_ptr<KnobI> getKnob() const OVERRIDE FINAL;
 
-    virtual void getSelectedCurves(std::vector<CurveGui*>* selection) OVERRIDE FINAL;
-public slots:
+    virtual void getSelectedCurves(std::vector<boost::shared_ptr<CurveGui> >* selection) OVERRIDE FINAL;
+
+    
+public Q_SLOTS:
+
 
     void onCurveChanged(int dimension);
 
     void onItemsSelectionChanged();
 
     void resetSelectedCurves();
+
+    void onColorChanged(int dimension);
 
 private:
 
@@ -791,18 +914,19 @@ private:
 
 private:
     // TODO: PIMPL
+    QWidget* treeColumn;
     CurveWidget* _curveWidget;
     QTreeWidget* _tree;
     Button* _resetButton;
     struct CurveDescriptor
     {
-        KnobCurveGui* curve;
+        boost::shared_ptr<KnobCurveGui> curve;
         QTreeWidgetItem* treeItem;
     };
 
     typedef std::map<int,CurveDescriptor> CurveGuis;
     CurveGuis _curves;
-    boost::shared_ptr<Parametric_Knob> _knob;
+    boost::weak_ptr<Parametric_Knob> _knob;
 };
 
 

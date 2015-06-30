@@ -3,8 +3,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "Button.h"
+
+#include <QApplication>
 #include "Gui/GuiApplicationManager.h"
+
 Button::Button(QWidget* parent)
     : QPushButton(parent)
 {
@@ -32,6 +39,7 @@ Button::Button(const QIcon & icon,
 void
 Button::initInternal()
 {
-    setFont( QFont(appFont,appFontSize) );
+    setFont(QApplication::font()); // necessary, or the buttons will get the default font size
+    //setFont( QFont(appFont,appFontSize) );
 }
 

@@ -12,6 +12,10 @@
 #ifndef NATRON_ENGINE_ABSTRACTCACHE_H_
 #define NATRON_ENGINE_ABSTRACTCACHE_H_
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <vector>
 #include <sstream>
 #include <fstream>
@@ -22,7 +26,7 @@
 
 #include "Global/GlobalDefines.h"
 #include "Global/MemoryInfo.h"
-CLANG_DIAG_OFF(deprecated)
+GCC_DIAG_OFF(deprecated)
 #include <QtCore/QMutex>
 #include <QtCore/QWaitCondition>
 #include <QtCore/QMutexLocker>
@@ -31,13 +35,13 @@ CLANG_DIAG_OFF(deprecated)
 #include <QtCore/QBuffer>
 #include <QtCore/QThreadPool>
 #include <QtCore/QRunnable>
-CLANG_DIAG_ON(deprecated)
-#ifndef Q_MOC_RUN
+GCC_DIAG_ON(deprecated)
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
-CLANG_DIAG_OFF(unused-parameter)
+GCC_DIAG_OFF(unused-parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/binary_iarchive.hpp>
-CLANG_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused-parameter)
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/serialization/utility.hpp>
 #include <boost/serialization/list.hpp>
@@ -178,6 +182,9 @@ private:
                     front = _entriesQueue.front();
                     _entriesQueue.pop_front();
                 }
+                if (front) {
+                    front->scheduleForDestruction();
+                }
             } // front. After this scope, the image is guarenteed to be freed
             cache->notifyMemoryDeallocated();
         }
@@ -201,33 +208,33 @@ public:
 
     void emitSignalClearedInMemoryPortion()
     {
-        emit clearedInMemoryPortion();
+        Q_EMIT clearedInMemoryPortion();
     }
 
     void emitClearedDiskPortion()
     {
-        emit clearedDiskPortion();
+        Q_EMIT clearedDiskPortion();
     }
 
     void emitAddedEntry(SequenceTime time)
     {
-        emit addedEntry(time);
+        Q_EMIT addedEntry(time);
     }
 
     void emitRemovedEntry(SequenceTime time,
                           int storage)
     {
-        emit removedEntry(time,storage);
+        Q_EMIT removedEntry(time,storage);
     }
 
     void emitEntryStorageChanged(SequenceTime time,
                                  int oldStorage,
                                  int newStorage)
     {
-        emit entryStorageChanged(time,oldStorage,newStorage);
+        Q_EMIT entryStorageChanged(time,oldStorage,newStorage);
     }
 
-signals:
+Q_SIGNALS:
 
     void clearedInMemoryPortion();
 
@@ -470,41 +477,11 @@ public:
         
     } // get
     
-    /**
-     * @brief Same as get() except that it returns an entry that exactly matches the key
-     * *AND* the params.
-     **/
-    bool getByParam(const typename EntryType::key_type & key,
-                    const ParamsTypePtr& params,
-                    EntryTypePtr* returnValue) const
-    {
-        
-        ///Be atomic, so it cannot be created by another thread in the meantime
-        QMutexLocker getlocker(&_getLock);
-        
-        ///lock the cache before reading it.
-        std::list<EntryTypePtr> entries;
-        {
-            QMutexLocker locker(&_lock);
-            return getInternal(key,entries);
-        }
-        
-        
-        for (typename std::list<EntryTypePtr>::iterator it = entries.begin(); it != entries.end(); ++it) {
-            if (*(*it)->getParams() == *params) {
-                *returnValue = *it;
-                return true;
-            }
-        }
-        return false;
-        
-    } // get
 
 private:
     
     void createInternal(const typename EntryType::key_type & key,
                 const ParamsTypePtr& params,
-                ImageLockerHelper<EntryType>* imageLocker,
                 EntryTypePtr* returnValue) const
     {
         //_lock must not be taken here
@@ -593,8 +570,12 @@ private:
             
             
             try {
-                returnValue->reset( new EntryType(key,params,this,storage,
-                                                  storage == Natron::eStorageModeDisk ? QString( getCachePath() + QDir::separator() ).toStdString() : std::string()) );
+				std::string filePath;
+				if (storage == Natron::eStorageModeDisk) {
+					filePath = getCachePath().toStdString();
+					filePath += '/';
+				}
+                returnValue->reset( new EntryType(key,params,this,storage, filePath) );
                 
                 ///Don't call allocateMemory() here because we're still under the lock and we might force tons of threads to wait unnecesserarily
                 
@@ -602,11 +583,7 @@ private:
                 *returnValue = EntryTypePtr();
             }
             
-            if (*returnValue) {
-                ///Take the lock before sealing the entry into the cache, making sure no-one will be able to get the image before it's allocated
-                assert(imageLocker);
-                imageLocker->lock(*returnValue);
-                
+            if (*returnValue) {                
                 sealEntry(*returnValue, true);
             }
             
@@ -645,7 +622,6 @@ public:
      **/
     bool getOrCreate(const typename EntryType::key_type & key,
                      const ParamsTypePtr& params,
-                     ImageLockerHelper<EntryType>* imageLocker,
                      EntryTypePtr* returnValue) const
     {
         
@@ -671,7 +647,7 @@ public:
                 }
             }
             
-            createInternal(key,params,imageLocker,returnValue);
+            createInternal(key,params,returnValue);
             return false;
             
         } // getlocker
@@ -735,7 +711,7 @@ public:
     /**
      * @brief Clears the memory portion and moves it to the disk portion if possible
      **/
-    void clearInMemoryPortion()
+    void clearInMemoryPortion(bool emitSignals = true)
     {
         if (_signalEmitter) {
             ///block signals otherwise the we would be spammed of notifications
@@ -788,7 +764,9 @@ public:
         }
 
         _signalEmitter->blockSignals(false);
-        _signalEmitter->emitSignalClearedInMemoryPortion();
+        if (emitSignals) {
+            _signalEmitter->emitSignalClearedInMemoryPortion();
+        }
     }
     
     
@@ -1037,7 +1015,7 @@ public:
     {
         QString cacheFolderName(appPTR->getDiskCacheLocation());
         if (!cacheFolderName.endsWith('\\') && !cacheFolderName.endsWith('/')) {
-            cacheFolderName.append(QDir::separator());
+            cacheFolderName.append('/');
         }
         cacheFolderName.append( cacheName().c_str() );
         return cacheFolderName;
@@ -1101,62 +1079,86 @@ public:
         if (!entry) {
             return;
         }
-
-        QMutexLocker l(&_lock);
-        CacheIterator existingEntry = _memoryCache( entry->getHashKey() );
-        if ( existingEntry != _memoryCache.end() ) {
-            std::list<EntryTypePtr> & ret = getValueFromIterator(existingEntry);
-            for (typename std::list<EntryTypePtr>::iterator it = ret.begin(); it != ret.end(); ++it) {
-                if ( (*it)->getKey() == entry->getKey() ) {
-                    (*it)->scheduleForDestruction();
-                    ret.erase(it);
-                    break;
-                }
-            }
-            if ( ret.empty() ) {
-                _memoryCache.erase(existingEntry);
-            }
-        } else {
-            existingEntry = _diskCache( entry->getHashKey() );
-            if ( existingEntry != _diskCache.end() ) {
+        std::list<EntryTypePtr> toRemove;
+        
+        {
+            QMutexLocker l(&_lock);
+            CacheIterator existingEntry = _memoryCache( entry->getHashKey() );
+            if ( existingEntry != _memoryCache.end() ) {
                 std::list<EntryTypePtr> & ret = getValueFromIterator(existingEntry);
                 for (typename std::list<EntryTypePtr>::iterator it = ret.begin(); it != ret.end(); ++it) {
                     if ( (*it)->getKey() == entry->getKey() ) {
-                        (*it)->scheduleForDestruction();
+                        toRemove.push_back(*it);
+                        //(*it)->scheduleForDestruction();
                         ret.erase(it);
                         break;
                     }
                 }
                 if ( ret.empty() ) {
-                    _diskCache.erase(existingEntry);
+                    _memoryCache.erase(existingEntry);
+                }
+            } else {
+                existingEntry = _diskCache( entry->getHashKey() );
+                if ( existingEntry != _diskCache.end() ) {
+                    std::list<EntryTypePtr> & ret = getValueFromIterator(existingEntry);
+                    for (typename std::list<EntryTypePtr>::iterator it = ret.begin(); it != ret.end(); ++it) {
+                        if ( (*it)->getKey() == entry->getKey() ) {
+                            //(*it)->scheduleForDestruction();
+                            toRemove.push_back(*it);
+                            ret.erase(it);
+                            break;
+                        }
+                    }
+                    if ( ret.empty() ) {
+                        _diskCache.erase(existingEntry);
+                    }
                 }
             }
+        } // QMutexLocker l(&_lock);
+        if (!toRemove.empty()) {
+            _deleterThread.appendToQueue(toRemove);
+            
+            ///Clearing the list here will not delete the objects pointing to by the shared_ptr's because we made a copy
+            ///that the separate thread will delete
+            toRemove.clear();
         }
     }
     
     void removeEntry(U64 hash)
     {
-        QMutexLocker l(&_lock);
-        CacheIterator existingEntry = _memoryCache( hash);
-        if ( existingEntry != _memoryCache.end() ) {
-            std::list<EntryTypePtr> & ret = getValueFromIterator(existingEntry);
-            for (typename std::list<EntryTypePtr>::iterator it = ret.begin(); it != ret.end(); ++it) {
-                (*it)->scheduleForDestruction();
-            }
-            _memoryCache.erase(existingEntry);
-            
-        } else {
-            existingEntry = _diskCache( hash );
-            if ( existingEntry != _diskCache.end() ) {
+        
+        std::list<EntryTypePtr> toRemove;
+        {
+            QMutexLocker l(&_lock);
+            CacheIterator existingEntry = _memoryCache( hash);
+            if ( existingEntry != _memoryCache.end() ) {
                 std::list<EntryTypePtr> & ret = getValueFromIterator(existingEntry);
                 for (typename std::list<EntryTypePtr>::iterator it = ret.begin(); it != ret.end(); ++it) {
-                    (*it)->scheduleForDestruction();
+                    //(*it)->scheduleForDestruction();
+                    toRemove.push_back(*it);
                 }
-                _diskCache.erase(existingEntry);
-            
+                _memoryCache.erase(existingEntry);
+                
+            } else {
+                existingEntry = _diskCache( hash );
+                if ( existingEntry != _diskCache.end() ) {
+                    std::list<EntryTypePtr> & ret = getValueFromIterator(existingEntry);
+                    for (typename std::list<EntryTypePtr>::iterator it = ret.begin(); it != ret.end(); ++it) {
+                        //(*it)->scheduleForDestruction();
+                        toRemove.push_back(*it);
+                    }
+                    _diskCache.erase(existingEntry);
+                    
+                }
             }
+        } // QMutexLocker l(&_lock);
+        if (!toRemove.empty()) {
+            _deleterThread.appendToQueue(toRemove);
+            
+            ///Clearing the list here will not delete the objects pointing to by the shared_ptr's because we made a copy
+            ///that the separate thread will delete
+            toRemove.clear();
         }
-
     }
     
     void removeAllImagesFromCacheWithMatchingKey(U64 treeVersion)
@@ -1176,7 +1178,7 @@ public:
                     if (front->getKey().getTreeVersion() == treeVersion) {
                         
                         for (typename std::list<EntryTypePtr>::iterator it = entries.begin(); it != entries.end(); ++it) {
-                            (*it)->scheduleForDestruction();
+                            //(*it)->scheduleForDestruction();
                             toDelete.push_back(*it);
                         }
                         
@@ -1197,7 +1199,7 @@ public:
                     if (front->getKey().getTreeVersion() == treeVersion) {
                         
                         for (typename std::list<EntryTypePtr>::iterator it = entries.begin(); it != entries.end(); ++it) {
-                            (*it)->scheduleForDestruction();
+                            //(*it)->scheduleForDestruction();
                             toDelete.push_back(*it);
                         }
                         
@@ -1212,7 +1214,8 @@ public:
             _diskCache = newDiskCache;
             
             
-        }
+        } // QMutexLocker locker(&_lock);
+        
         if (!toDelete.empty()) {
             _deleterThread.appendToQueue(toDelete);
             
@@ -1227,7 +1230,7 @@ public:
      */
     void save(CacheTOC* tableOfContents)
     {
-        clearInMemoryPortion();
+        clearInMemoryPortion(false);
         QMutexLocker l(&_lock);     // must be locked
 
         for (CacheIterator it = _diskCache.begin(); it != _diskCache.end(); ++it) {
@@ -1290,7 +1293,7 @@ public:
                 
                 ///This will not put the entry back into RAM, instead we just insert back the entry into the disk cache
                 value->restoreMetaDataFromFile(it->size);
-            } catch (const std::bad_alloc & e) {
+            } catch (const std::exception & e) {
                 qDebug() << e.what();
                 continue;
             }
@@ -1322,7 +1325,7 @@ private:
                 if ((*it)->getKey() == key) {
                     returnValue->push_back(*it);
                     
-                    ///emit te added signal otherwise when first reading something that's already cached
+                    ///Q_EMIT te added signal otherwise when first reading something that's already cached
                     ///the timeline wouldn't update
                     if (_signalEmitter) {
                         _signalEmitter->emitAddedEntry( key.getTime() );
@@ -1399,7 +1402,7 @@ private:
                         
                         returnValue->push_back(*it);
                         ret.erase(it);
-                        ///emit te added signal otherwise when first reading something that's already cached
+                        ///Q_EMIT te added signal otherwise when first reading something that's already cached
                         ///the timeline wouldn't update
                         if (_signalEmitter) {
                             _signalEmitter->emitAddedEntry( key.getTime() );
@@ -1486,7 +1489,7 @@ private:
                     }
                     
                     ///Erase the file from the disk if we reach the limit.
-                    evictedFromDisk.second->scheduleForDestruction();
+                    //evictedFromDisk.second->scheduleForDestruction();
                     
                     
                     entriesToBeDeleted.push_back(evictedFromDisk.second);

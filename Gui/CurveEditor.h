@@ -11,7 +11,12 @@
 
 #ifndef CURVEEDITOR_H
 #define CURVEEDITOR_H
-#ifndef Q_MOC_RUN
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
 #include <boost/scoped_ptr.hpp>
 #endif
@@ -25,6 +30,8 @@ CLANG_DIAG_ON(uninitialized)
 #include "Global/GlobalDefines.h"
 #include "Global/Macros.h"
 
+#include "Engine/ScriptObject.h"
+
 #include "Gui/CurveSelection.h"
 #include "Gui/CurveEditorUndoRedo.h"
 
@@ -34,6 +41,7 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QVBoxLayout;
 class CurveWidget;
+class CurveEditor;
 class Curve;
 class CurveGui;
 class QHBoxLayout;
@@ -42,8 +50,9 @@ class KnobGui;
 class KnobI;
 class BezierCP;
 class Bezier;
+class RotoDrawableItem;
+class RotoStrokeItem;
 class LineEdit;
-class QLabel;
 class RotoItem;
 class RotoContext;
 class KeyFrame;
@@ -67,18 +76,18 @@ class NodeCurveEditorElement
 public:
 
     NodeCurveEditorElement(QTreeWidget* tree,
-                           CurveWidget* curveWidget,
+                           CurveEditor* curveWidget,
                            KnobGui* knob,
                            int dimension,
                            QTreeWidgetItem* item,
-                           CurveGui* curve);
+                           const boost::shared_ptr<CurveGui>& curve);
     
     NodeCurveEditorElement(QTreeWidget* tree,
-                           CurveWidget* curveWidget,
+                           CurveEditor* curveWidget,
                            const boost::shared_ptr<KnobI>& internalKnob,
                            int dimension,
                            QTreeWidgetItem* item,
-                           CurveGui* curve);
+                           const boost::shared_ptr<CurveGui>& curve);
 
     NodeCurveEditorElement()
         : _treeItem(),_curve(),_curveDisplayed(false),_curveWidget(NULL)
@@ -92,7 +101,7 @@ public:
         return _treeItem;
     }
 
-    CurveGui* getCurve() const WARN_UNUSED_RETURN
+    boost::shared_ptr<CurveGui>  getCurve() const WARN_UNUSED_RETURN
     {
         return _curve;
     }
@@ -117,22 +126,25 @@ public:
     boost::shared_ptr<KnobI> getInternalKnob() const WARN_UNUSED_RETURN;
     
     void checkVisibleState(bool autoSelectOnShow);
-    
-public slots:
 
+public Q_SLOTS:
+    
+    
     /**
      * @brief This is invoked everytimes the knob has a keyframe set or removed, to determine whether we need
      * to keep this element in the tree or not.
      **/
     void checkVisibleState();
 
+    void onExpressionChanged();
+    
 private:
 
 
     QTreeWidgetItem* _treeItem;
-    CurveGui* _curve;
+    boost::shared_ptr<CurveGui> _curve;
     bool _curveDisplayed;
-    CurveWidget* _curveWidget;
+    CurveEditor* _curveWidget;
     QTreeWidget* _treeWidget;
     KnobGui* _knob;
     boost::shared_ptr<KnobI> _internalKnob;
@@ -149,7 +161,7 @@ public:
     typedef std::list< NodeCurveEditorElement* > Elements;
 
     NodeCurveEditorContext(QTreeWidget *tree,
-                           CurveWidget* curveWidget,
+                           CurveEditor* curveWidget,
                            const boost::shared_ptr<NodeGui> &node);
 
     virtual ~NodeCurveEditorContext() OVERRIDE;
@@ -177,7 +189,7 @@ public:
     NodeCurveEditorElement* findElement(KnobGui* knob,int dimension) const WARN_UNUSED_RETURN;
     NodeCurveEditorElement* findElement(QTreeWidgetItem* item) const WARN_UNUSED_RETURN;
 
-public slots:
+public Q_SLOTS:
 
     void onNameChanged(const QString & name);
 
@@ -190,44 +202,80 @@ private:
 
 
 class RotoCurveEditorContext;
-struct BezierEditorContextPrivate;
-class BezierEditorContext
+
+struct RotoItemEditorContextPrivate;
+class RotoItemEditorContext
 : public QObject
 {
     Q_OBJECT
     
 public:
     
-    BezierEditorContext(QTreeWidget* tree,
-                        CurveWidget* widget,
-                        const boost::shared_ptr<Bezier>& curve,
+    RotoItemEditorContext(QTreeWidget* tree,
+                        CurveEditor* widget,
+                        const boost::shared_ptr<RotoDrawableItem>& curve,
                         RotoCurveEditorContext* context);
     
-    virtual ~BezierEditorContext() OVERRIDE;
-    
+    virtual ~RotoItemEditorContext();
+
     //Called when the destr. of RotoCurveEditorContext is called to prevent
     //the tree items to be deleted twice due to Qt's parenting
     void preventItemDeletion();
     
-    boost::shared_ptr<Bezier> getBezier() const;
-    
     QTreeWidgetItem* getItem() const;
+    
+    boost::shared_ptr<RotoDrawableItem> getRotoItem() const;
+    
+    QString getName() const;
     
     boost::shared_ptr<RotoContext> getContext() const;
     
     const std::list<NodeCurveEditorElement*>& getElements() const;
     
-    void recursiveSelectBezier(QTreeWidgetItem* cur,bool mustSelect,
-                             std::vector<CurveGui*> *curves);
-    
     NodeCurveEditorElement* findElement(KnobGui* knob,int dimension) const;
-public slots:
+    
+    void recursiveSelect(QTreeWidgetItem* cur,bool mustSelect,
+                               std::vector<boost::shared_ptr<CurveGui> > *curves);
+    
+    CurveEditor* getWidget() const;
+
+public Q_SLOTS:
     
     void onNameChanged(const QString & name);
     
     void onKeyframeAdded();
     
     void onKeyframeRemoved();
+    
+    
+protected:
+    
+    virtual void getAnimCurveAndItem(QTreeWidgetItem** /*item*/,boost::shared_ptr<CurveGui>* /*curve*/) const {}
+    
+private:
+    
+    boost::scoped_ptr<RotoItemEditorContextPrivate> _imp;
+};
+
+struct BezierEditorContextPrivate;
+class BezierEditorContext
+: public RotoItemEditorContext
+{
+    Q_OBJECT
+    
+public:
+    
+    BezierEditorContext(QTreeWidget* tree,
+                        CurveEditor* widget,
+                        const boost::shared_ptr<Bezier>& curve,
+                        RotoCurveEditorContext* context);
+    
+    virtual ~BezierEditorContext() OVERRIDE;
+    
+    virtual void getAnimCurveAndItem(QTreeWidgetItem** item,boost::shared_ptr<CurveGui>* curve) const OVERRIDE FINAL;
+    
+    
+
 private:
        
     boost::scoped_ptr<BezierEditorContextPrivate> _imp;
@@ -243,7 +291,7 @@ class RotoCurveEditorContext
     
 public:
     
-    RotoCurveEditorContext(CurveWidget* widget,
+    RotoCurveEditorContext(CurveEditor* widget,
                            QTreeWidget *tree,
                            const boost::shared_ptr<NodeGui> &node);
     
@@ -254,15 +302,15 @@ public:
     QTreeWidgetItem* getItem() const;
     
     void recursiveSelectRoto(QTreeWidgetItem* cur,
-                             std::vector<CurveGui*> *curves);
+                             std::vector<boost::shared_ptr<CurveGui> > *curves);
     
     void setVisible(bool visible);
     
-    const std::list<BezierEditorContext*>& getElements() const;
+    const std::list<RotoItemEditorContext*>& getElements() const;
 
     std::list<NodeCurveEditorElement*> findElement(KnobGui* knob,int dimension) const;
     
-public slots:
+public Q_SLOTS:
     
     void onNameChanged(const QString & name);
     
@@ -282,6 +330,7 @@ struct CurveEditorPrivate;
 class CurveEditor
     : public QWidget
     , public CurveSelection
+    , public ScriptObject
 {
     Q_OBJECT
 
@@ -303,7 +352,7 @@ public:
     void centerOn(const std::vector<boost::shared_ptr<Curve> > & curves);
 
     std::pair<QAction*,QAction*> getUndoRedoActions() const WARN_UNUSED_RETURN;
-    std::list<CurveGui*> findCurve(KnobGui* knob,int dimension) const WARN_UNUSED_RETURN;
+    std::list<boost::shared_ptr<CurveGui> > findCurve(KnobGui* knob,int dimension) const WARN_UNUSED_RETURN;
 
     void hideCurves(KnobGui* knob);
 
@@ -315,8 +364,17 @@ public:
 
     CurveWidget* getCurveWidget() const WARN_UNUSED_RETURN;
 
-    virtual void getSelectedCurves(std::vector<CurveGui*>* selection) OVERRIDE FINAL;
-public slots:
+    virtual void getSelectedCurves(std::vector<boost::shared_ptr<CurveGui> >* selection) OVERRIDE FINAL;
+    
+    void setSelectedCurve(const boost::shared_ptr<CurveGui>& curve);
+    
+    boost::shared_ptr<CurveGui> getSelectedCurve() const;
+
+    void refreshCurrentExpression();
+    
+    void setSelectedCurveExpression(const QString& expression);
+    
+public Q_SLOTS:
 
     void onFilterTextChanged(const QString& filter);
     
@@ -324,11 +382,13 @@ public slots:
         
     void onItemDoubleClicked(QTreeWidgetItem* item,int);
     
+    void onExprLineEditFinished();
+    
 private:
 
     virtual void keyPressEvent(QKeyEvent* e) OVERRIDE FINAL;
     
-    void recursiveSelect(QTreeWidgetItem* cur,std::vector<CurveGui*> *curves,bool inspectRotos = true);
+    void recursiveSelect(QTreeWidgetItem* cur,std::vector<boost::shared_ptr<CurveGui> > *curves,bool inspectRotos = true);
 
     boost::scoped_ptr<CurveEditorPrivate> _imp;
 };

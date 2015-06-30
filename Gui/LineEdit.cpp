@@ -9,6 +9,10 @@
  *
  */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include "LineEdit.h"
 
 CLANG_DIAG_OFF(deprecated)
@@ -34,6 +38,7 @@ LineEdit::LineEdit(QWidget* parent)
     : QLineEdit(parent)
       , animation(0)
       , dirty(false)
+      , altered(false)
 {
     setAttribute(Qt::WA_MacShowFocusRect,0);
     connect( this, SIGNAL( editingFinished() ), this, SLOT( onEditingFinished() ) );
@@ -69,7 +74,7 @@ LineEdit::dropEvent(QDropEvent* e)
     }
     if ( !path.isEmpty() ) {
         setText(path);
-        emit textDropped();
+        Q_EMIT textDropped();
     }
 }
 
@@ -115,12 +120,20 @@ LineEdit::setDirty(bool b)
     repaint();
 }
 
+void
+LineEdit::setAltered(bool b)
+{
+    altered = b;
+    style()->unpolish(this);
+    style()->polish(this);
+    repaint();
+}
 
 void
 LineEdit::keyPressEvent(QKeyEvent* e)
 {
     QLineEdit::keyPressEvent(e);
     if (e->matches(QKeySequence::Paste)) {
-        emit textPasted();
+        Q_EMIT textPasted();
     }
 }

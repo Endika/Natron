@@ -210,7 +210,20 @@ enum PixmapEnum
     NATRON_PIXMAP_FEATHER_UNVISIBLE,
     NATRON_PIXMAP_RIPPLE_EDIT_ENABLED,
     NATRON_PIXMAP_RIPPLE_EDIT_DISABLED,
-
+    NATRON_PIXMAP_ROTOPAINT_BLUR,
+    NATRON_PIXMAP_ROTOPAINT_BUILDUP_ENABLED,
+    NATRON_PIXMAP_ROTOPAINT_BUILDUP_DISABLED,
+    NATRON_PIXMAP_ROTOPAINT_BURN,
+    NATRON_PIXMAP_ROTOPAINT_CLONE,
+    NATRON_PIXMAP_ROTOPAINT_DODGE,
+    NATRON_PIXMAP_ROTOPAINT_ERASER,
+    NATRON_PIXMAP_ROTOPAINT_PRESSURE_ENABLED,
+    NATRON_PIXMAP_ROTOPAINT_PRESSURE_DISABLED,
+    NATRON_PIXMAP_ROTOPAINT_REVEAL,
+    NATRON_PIXMAP_ROTOPAINT_SHARPEN,
+    NATRON_PIXMAP_ROTOPAINT_SMEAR,
+    NATRON_PIXMAP_ROTOPAINT_SOLID,
+    
     NATRON_PIXMAP_BOLD_CHECKED,
     NATRON_PIXMAP_BOLD_UNCHECKED,
     NATRON_PIXMAP_ITALIC_CHECKED,
@@ -223,6 +236,8 @@ enum PixmapEnum
     NATRON_PIXMAP_UPDATE_VIEWER_DISABLED,
     NATRON_PIXMAP_ADD_TRACK,
     
+    NATRON_PIXMAP_ENTER_GROUP,
+    
     NATRON_PIXMAP_SETTINGS,
     NATRON_PIXMAP_FREEZE_ENABLED,
     NATRON_PIXMAP_FREEZE_DISABLED,
@@ -232,6 +247,59 @@ enum PixmapEnum
     NATRON_PIXMAP_VIEWER_CHECKERBOARD_DISABLED,
     NATRON_PIXMAP_VIEWER_ZEBRA_ENABLED,
     NATRON_PIXMAP_VIEWER_ZEBRA_DISABLED,
+    NATRON_PIXMAP_VIEWER_GAMMA_ENABLED,
+    NATRON_PIXMAP_VIEWER_GAMMA_DISABLED,
+    NATRON_PIXMAP_VIEWER_GAIN_ENABLED,
+    NATRON_PIXMAP_VIEWER_GAIN_DISABLED,
+    
+    NATRON_PIXMAP_SCRIPT_CLEAR_OUTPUT,
+    NATRON_PIXMAP_SCRIPT_EXEC_SCRIPT,
+    NATRON_PIXMAP_SCRIPT_LOAD_EXEC_SCRIPT,
+    NATRON_PIXMAP_SCRIPT_LOAD_SCRIPT,
+    NATRON_PIXMAP_SCRIPT_NEXT_SCRIPT,
+    NATRON_PIXMAP_SCRIPT_OUTPUT_PANE_ACTIVATED,
+    NATRON_PIXMAP_SCRIPT_OUTPUT_PANE_DEACTIVATED,
+    NATRON_PIXMAP_SCRIPT_PREVIOUS_SCRIPT,
+    NATRON_PIXMAP_SCRIPT_SAVE_SCRIPT,
+    
+    NATRON_PIXMAP_MERGE_ATOP,
+    NATRON_PIXMAP_MERGE_AVERAGE,
+    NATRON_PIXMAP_MERGE_COLOR_BURN,
+    NATRON_PIXMAP_MERGE_COLOR_DODGE,
+    NATRON_PIXMAP_MERGE_CONJOINT_OVER,
+    NATRON_PIXMAP_MERGE_COPY,
+    NATRON_PIXMAP_MERGE_DIFFERENCE,
+    NATRON_PIXMAP_MERGE_DISJOINT_OVER,
+    NATRON_PIXMAP_MERGE_DIVIDE,
+    NATRON_PIXMAP_MERGE_EXCLUSION,
+    NATRON_PIXMAP_MERGE_FREEZE,
+    NATRON_PIXMAP_MERGE_FROM,
+    NATRON_PIXMAP_MERGE_GEOMETRIC,
+    NATRON_PIXMAP_MERGE_HARD_LIGHT,
+    NATRON_PIXMAP_MERGE_HYPOT,
+    NATRON_PIXMAP_MERGE_IN,
+    NATRON_PIXMAP_MERGE_INTERPOLATED,
+    NATRON_PIXMAP_MERGE_MASK,
+    NATRON_PIXMAP_MERGE_MATTE,
+    NATRON_PIXMAP_MERGE_MAX,
+    NATRON_PIXMAP_MERGE_MIN,
+    NATRON_PIXMAP_MERGE_MINUS,
+    NATRON_PIXMAP_MERGE_MULTIPLY,
+    NATRON_PIXMAP_MERGE_OUT,
+    NATRON_PIXMAP_MERGE_OVER,
+    NATRON_PIXMAP_MERGE_OVERLAY,
+    NATRON_PIXMAP_MERGE_PINLIGHT,
+    NATRON_PIXMAP_MERGE_PLUS,
+    NATRON_PIXMAP_MERGE_REFLECT,
+    NATRON_PIXMAP_MERGE_SCREEN,
+    NATRON_PIXMAP_MERGE_SOFT_LIGHT,
+    NATRON_PIXMAP_MERGE_STENCIL,
+    NATRON_PIXMAP_MERGE_UNDER,
+    NATRON_PIXMAP_MERGE_XOR,
+    
+    NATRON_PIXMAP_ROTO_NODE_ICON,
+    
+    NATRON_PIXMAP_LINK_CURSOR,
     
     NATRON_PIXMAP_APP_ICON
 };
@@ -273,7 +341,8 @@ enum ImageComponentsEnum
     eImageComponentNone = 0,
     eImageComponentAlpha,
     eImageComponentRGB,
-    eImageComponentRGBA
+    eImageComponentRGBA,
+    eImageComponentXY
 };
 
 enum ImagePremultiplicationEnum
@@ -340,6 +409,102 @@ enum SchedulingPolicyEnum
     eSchedulingPolicyOrdered ///frames will be rendered in order
 };
     
+enum DisplayChannelsEnum
+{
+    eDisplayChannelsRGB = 0,
+    eDisplayChannelsR,
+    eDisplayChannelsG,
+    eDisplayChannelsB,
+    eDisplayChannelsA,
+    eDisplayChannelsY
+};
+    
+    /** @brief Enumerates the contexts a plugin can be used in */
+enum ContextEnum
+{
+    eContextNone,
+    eContextGenerator,
+    eContextFilter,
+    eContextTransition,
+    eContextPaint,
+    eContextGeneral,
+    eContextRetimer,
+    eContextReader,
+    eContextWriter,
+    eContextTracker
+};
+    
+enum RotoStrokeType
+{
+    eRotoStrokeTypeSolid,
+    eRotoStrokeTypeEraser,
+    eRotoStrokeTypeClone,
+    eRotoStrokeTypeReveal,
+    eRotoStrokeTypeBlur,
+    eRotoStrokeTypeSharpen,
+    eRotoStrokeTypeSmear,
+    eRotoStrokeTypeDodge,
+    eRotoStrokeTypeBurn,
+};
+
+///Keep this in sync with @openfx-supportext/ofxsMerging.h
+enum MergingFunctionEnum
+{
+    eMergeATop = 0,
+    eMergeAverage,
+    eMergeColor,
+    eMergeColorBurn,
+    eMergeColorDodge,
+    eMergeConjointOver,
+    eMergeCopy,
+    eMergeDifference,
+    eMergeDisjointOver,
+    eMergeDivide,
+    eMergeExclusion,
+    eMergeFreeze,
+    eMergeFrom,
+    eMergeGeometric,
+    eMergeHardLight,
+    eMergeHue,
+    eMergeHypot,
+    eMergeIn,
+   // eMergeInterpolated,
+    eMergeLuminosity,
+    eMergeMask,
+    eMergeMatte,
+    eMergeMax,
+    eMergeMin,
+    eMergeMinus,
+    eMergeMultiply,
+    eMergeOut,
+    eMergeOver,
+    eMergeOverlay,
+    eMergePinLight,
+    eMergePlus,
+    eMergeReflect,
+    eMergeSaturation,
+    eMergeScreen,
+    eMergeSoftLight,
+    eMergeStencil,
+    eMergeUnder,
+    eMergeXOR
+};
+  
+enum RenderSafetyEnum
+{
+    eRenderSafetyUnsafe = 0,
+    eRenderSafetyInstanceSafe = 1,
+    eRenderSafetyFullySafe = 2,
+    eRenderSafetyFullySafeFrame = 3,
+};
+    
+enum PenType
+{
+    ePenTypePen,
+    ePenTypeCursor,
+    ePenTypeEraser
+};
+
 }
 Q_DECLARE_METATYPE(Natron::StandardButtons)
 

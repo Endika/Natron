@@ -12,6 +12,10 @@
 #ifndef CURVEEDITORUNDOREDO_H
 #define CURVEEDITORUNDOREDO_H
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
 #include <list>
 #include <vector>
 #include "Global/Macros.h"
@@ -20,26 +24,35 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QUndoCommand> // in QtGui on Qt4, in QtWidgets on Qt5
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
-
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
+#include <boost/weak_ptr.hpp>
+#endif
 #include "Engine/Curve.h"
 
+namespace Transform
+{
+    struct Matrix3x3;
+}
 class CurveGui;
 class KnobGui;
+class Curve;
 class CurveWidget;
 class NodeCurveEditorElement;
 
 struct SelectedKey
 {
-    CurveGui* curve;
+    boost::shared_ptr<CurveGui> curve;
     KeyFrame key;
     std::pair<double,double> leftTan, rightTan;
 
     SelectedKey()
-        : curve(NULL), key()
+        : curve(), key()
     {
     }
 
-    SelectedKey(CurveGui* c,
+    SelectedKey(const boost::shared_ptr<CurveGui>& c,
                 const KeyFrame & k)
         : curve(c)
           , key(k)
@@ -76,38 +89,65 @@ class AddKeysCommand
 {
 public:
 
-    struct KeysForCurve
-    {
-        CurveGui* curve;
-        std::vector<KeyFrame> keys;
-    };
-
-    typedef std::list< boost::shared_ptr<KeysForCurve> > KeysToAddList;
+    typedef std::map< boost::shared_ptr<CurveGui>, std::vector<KeyFrame> > KeysToAddList;
 
     AddKeysCommand(CurveWidget *editor,
                    const KeysToAddList & keys,
                    QUndoCommand *parent = 0);
 
     AddKeysCommand(CurveWidget *editor,
-                   CurveGui* curve,
+                   const boost::shared_ptr<CurveGui>& curve,
                    const std::vector<KeyFrame> & keys,
                    QUndoCommand *parent = 0);
 
     virtual ~AddKeysCommand() OVERRIDE
     {
     }
+    
 
-private:
-    virtual void undo() OVERRIDE FINAL;
-    virtual void redo() OVERRIDE FINAL;
+protected:
+    
+    void addOrRemoveKeyframe(bool isSetKeyCommand, bool add);
 
-    void addOrRemoveKeyframe(bool add);
+    
+    virtual void undo() OVERRIDE;
+    virtual void redo() OVERRIDE;
+
 
 private:
     KeysToAddList _keys;
     CurveWidget *_curveWidget;
 };
 
+
+
+class SetKeysCommand
+: public AddKeysCommand
+{
+public:
+    
+    
+    SetKeysCommand(CurveWidget *editor,
+                   const AddKeysCommand::KeysToAddList & keys,
+                   QUndoCommand *parent = 0);
+    
+    SetKeysCommand(CurveWidget *editor,
+                   const boost::shared_ptr<CurveGui>& curve,
+                   const std::vector<KeyFrame> & keys,
+                   QUndoCommand *parent = 0);
+    
+    virtual ~SetKeysCommand() OVERRIDE
+    {
+    }
+    
+private:
+    virtual void undo() OVERRIDE FINAL;
+    virtual void redo() OVERRIDE FINAL;
+    
+private:
+    boost::shared_ptr<CurveGui> _guiCurve;
+    boost::shared_ptr<Curve> _oldCurve;
+};
 
 //////////////////////////////REMOVE  MULTIPLE KEYS COMMAND//////////////////////////////////////////////
 
@@ -116,7 +156,7 @@ class RemoveKeysCommand
 {
 public:
     RemoveKeysCommand(CurveWidget* editor,
-                      const std::vector< std::pair<CurveGui*,KeyFrame > > & curveEditorElement
+                      const std::map<boost::shared_ptr<CurveGui> ,std::vector<KeyFrame> > & curveEditorElement
                       ,
                       QUndoCommand *parent = 0);
     virtual ~RemoveKeysCommand() OVERRIDE
@@ -130,7 +170,7 @@ private:
     void addOrRemoveKeyframe(bool add);
 
 private:
-    std::vector<std::pair<CurveGui*,KeyFrame > > _keys;
+    std::map<boost::shared_ptr<CurveGui> ,std::vector<KeyFrame> > _keys;
     CurveWidget* _curveWidget;
 };
 
@@ -263,5 +303,40 @@ private:
     bool _updateOnFirstRedo;
     bool _firstRedoCalled;
 };
+
+class TransformKeysCommand
+: public QUndoCommand
+{
+public:
+    
+    TransformKeysCommand(CurveWidget* widget,
+                         const SelectedKeys & keys,
+                         double centerX,
+                         double centerY,
+                         double tx,
+                         double ty,
+                         double sx,
+                         double sy,
+                         bool updateOnFirstRedo,
+                         QUndoCommand *parent = 0);
+    virtual ~TransformKeysCommand();
+    
+private:
+    virtual void undo() OVERRIDE FINAL;
+    virtual void redo() OVERRIDE FINAL;
+    virtual int id() const OVERRIDE FINAL;
+    virtual bool mergeWith(const QUndoCommand * command) OVERRIDE FINAL;
+    
+    void transform(const KeyPtr& k);
+    
+private:
+    bool _firstRedoCalled;
+    bool _updateOnFirstRedo;
+    SelectedKeys _keys;
+    CurveWidget* _widget;
+    std::list<std::pair<boost::shared_ptr<Curve>,boost::shared_ptr<Curve> > > _curves;
+    boost::shared_ptr<Transform::Matrix3x3> _matrix;
+};
+
 
 #endif // CURVEEDITORUNDOREDO_H

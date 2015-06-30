@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
 
 #include "TrackerGui.h"
 
@@ -28,6 +31,7 @@ CLANG_DIAG_ON(uninitialized)
 #include "Gui/ViewerGL.h"
 #include "Gui/GuiMacros.h"
 #include "Gui/ActionShortcuts.h"
+#include "Gui/Utils.h"
 
 #define POINT_SIZE 5
 #define CROSS_SIZE 6
@@ -104,9 +108,11 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     _imp->addTrackButton->setCheckable(true);
     _imp->addTrackButton->setChecked(false);
     _imp->addTrackButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->addTrackButton->setToolTip( tr( Qt::convertFromPlainText("When enabled you can add new tracks by clicking on the Viewer. "
-                                                                   "Holding the Control + Alt keys is the same as pressing this button."
-                                                                   ,Qt::WhiteSpaceNormal).toStdString().c_str() ) );
+    _imp->addTrackButton->setToolTip(Natron::convertFromPlainText(tr("When enabled you can add new tracks "
+                                                                 "by clicking on the Viewer. "
+                                                                 "Holding the Control + Alt keys is the "
+                                                                 "same as pressing this button."),
+                                                              Qt::WhiteSpaceNormal) );
     _imp->buttonsLayout->addWidget(_imp->addTrackButton);
     QObject::connect( _imp->addTrackButton, SIGNAL( clicked(bool) ), this, SLOT( onAddTrackClicked(bool) ) );
     QPixmap pixPrev,pixNext,pixClearAll,pixClearBw,pixClearFw,pixUpdateViewerEnabled,pixUpdateViewerDisabled,pixStop;
@@ -129,8 +135,8 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     bwIcon.addPixmap(bwDisabled,QIcon::Normal,QIcon::Off);
     _imp->trackBwButton = new Button(bwIcon,"",_imp->buttonsBar);
     _imp->trackBwButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->trackBwButton->setToolTip(tr("Track selected tracks backward until left bound of the timeline.") +
-                                    "<p><b>" + tr("Keyboard shortcut") + ": Z</b></p>");
+    _imp->trackBwButton->setToolTip("<p>" + tr("Track selected tracks backward until left bound of the timeline.") +
+                                    "</p><p><b>" + tr("Keyboard shortcut:") + " Z</b></p>");
     _imp->trackBwButton->setCheckable(true);
     _imp->trackBwButton->setChecked(false);
     QObject::connect( _imp->trackBwButton,SIGNAL( clicked(bool) ),this,SLOT( onTrackBwClicked() ) );
@@ -138,22 +144,22 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
 
     _imp->trackPrevButton = new Button(QIcon(pixPrev),"",_imp->buttonsBar);
     _imp->trackPrevButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->trackPrevButton->setToolTip(tr("Track selected tracks on the previous frame.") +
-                                      "<p><b>" + tr("Keyboard shortcut") + ": X</b></p>");
+    _imp->trackPrevButton->setToolTip("<p>" + tr("Track selected tracks on the previous frame.") +
+                                      "</p><p><b>" + tr("Keyboard shortcut:") + " X</b></p>");
     QObject::connect( _imp->trackPrevButton,SIGNAL( clicked(bool) ),this,SLOT( onTrackPrevClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->trackPrevButton);
 
     _imp->stopTrackingButton = new Button(QIcon(pixStop),"",_imp->buttonsBar);
     _imp->stopTrackingButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->stopTrackingButton->setToolTip(tr("Stop the ongoing tracking if any")  +
-                                         "<p><b>" + tr("Keyboard shortcut") + ": Escape</b></p>");
+    _imp->stopTrackingButton->setToolTip("<p>" + tr("Stop the ongoing tracking if any")  +
+                                         "</p><p><b>" + tr("Keyboard shortcut:") + " Escape</b></p>");
     QObject::connect( _imp->stopTrackingButton,SIGNAL( clicked(bool) ),this,SLOT( onStopButtonClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->stopTrackingButton);
 
     _imp->trackNextButton = new Button(QIcon(pixNext),"",_imp->buttonsBar);
     _imp->trackNextButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->trackNextButton->setToolTip(tr("Track selected tracks on the next frame.") +
-                                      "<p><b>" + tr("Keyboard shortcut") + ": C</b></p>");
+    _imp->trackNextButton->setToolTip("<p>" + tr("Track selected tracks on the next frame.") +
+                                      "</p><p><b>" + tr("Keyboard shortcut:") + " C</b></p>");
     QObject::connect( _imp->trackNextButton,SIGNAL( clicked(bool) ),this,SLOT( onTrackNextClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->trackNextButton);
 
@@ -162,8 +168,8 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     fwIcon.addPixmap(fwDisabled,QIcon::Normal,QIcon::Off);
     _imp->trackFwButton = new Button(fwIcon,"",_imp->buttonsBar);
     _imp->trackFwButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->trackFwButton->setToolTip(tr("Track selected tracks forward until right bound of the timeline.") +
-                                    "<p><b>" + tr("Keyboard shortcut") + ": V</b></p>");
+    _imp->trackFwButton->setToolTip("<p>" + tr("Track selected tracks forward until right bound of the timeline.") +
+                                    "</p><p><b>" + tr("Keyboard shortcut:") + " V</b></p>");
     _imp->trackFwButton->setCheckable(true);
     _imp->trackFwButton->setChecked(false);
     QObject::connect( _imp->trackFwButton,SIGNAL( clicked(bool) ),this,SLOT( onTrackFwClicked() ) );
@@ -172,22 +178,19 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
 
     _imp->clearAllAnimationButton = new Button(QIcon(pixClearAll),"",_imp->buttonsBar);
     _imp->clearAllAnimationButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->clearAllAnimationButton->setToolTip( tr( Qt::convertFromPlainText("Clear all animation for selected tracks.",
-                                                                            Qt::WhiteSpaceNormal).toStdString().c_str() ) );
+    _imp->clearAllAnimationButton->setToolTip(Natron::convertFromPlainText(tr("Clear all animation for selected tracks."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->clearAllAnimationButton,SIGNAL( clicked(bool) ),this,SLOT( onClearAllAnimationClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->clearAllAnimationButton);
 
     _imp->clearBwAnimationButton = new Button(QIcon(pixClearBw),"",_imp->buttonsBar);
     _imp->clearBwAnimationButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->clearBwAnimationButton->setToolTip( tr( Qt::convertFromPlainText("Clear animation backward from the current frame.",
-                                                                           Qt::WhiteSpaceNormal).toStdString().c_str() ) );
+    _imp->clearBwAnimationButton->setToolTip(Natron::convertFromPlainText(tr("Clear animation backward from the current frame."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->clearBwAnimationButton,SIGNAL( clicked(bool) ),this,SLOT( onClearBwAnimationClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->clearBwAnimationButton);
 
     _imp->clearFwAnimationButton = new Button(QIcon(pixClearFw),"",_imp->buttonsBar);
     _imp->clearFwAnimationButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
-    _imp->clearFwAnimationButton->setToolTip( tr( Qt::convertFromPlainText("Clear animation forward from the current frame.",
-                                                                           Qt::WhiteSpaceNormal).toStdString().c_str() ) );
+    _imp->clearFwAnimationButton->setToolTip(Natron::convertFromPlainText(tr("Clear animation forward from the current frame."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->clearFwAnimationButton,SIGNAL( clicked(bool) ),this,SLOT( onClearFwAnimationClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->clearFwAnimationButton);
 
@@ -199,8 +202,7 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     _imp->updateViewerButton->setCheckable(true);
     _imp->updateViewerButton->setChecked(true);
     _imp->updateViewerButton->setDown(true);
-    _imp->updateViewerButton->setToolTip( tr( Qt::convertFromPlainText("Update viewer during tracking for each frame instead of just the tracks."
-                                                                       , Qt::WhiteSpaceNormal).toStdString().c_str() ) );
+    _imp->updateViewerButton->setToolTip(Natron::convertFromPlainText(tr("Update viewer during tracking for each frame instead of just the tracks."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->updateViewerButton,SIGNAL( clicked(bool) ),this,SLOT( onUpdateViewerClicked(bool) ) );
     _imp->buttonsLayout->addWidget(_imp->updateViewerButton);
 
@@ -239,31 +241,37 @@ TrackerGui::drawOverlays(double scaleX,
         GLProtectAttrib a(GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_ENABLE_BIT | GL_HINT_BIT | GL_TRANSFORM_BIT);
 
         ///For each instance: <pointer,selected ? >
-        const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
-        for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-            if (it->first->isNodeDisabled()) {
+        const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+        for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+            
+            boost::shared_ptr<Natron::Node> instance = it->first.lock();
+            
+            if (instance->isNodeDisabled()) {
                 continue;
             }
             if (it->second) {
                 ///The track is selected, use the plug-ins interact
-                Natron::EffectInstance* effect = it->first->getLiveInstance();
+                Natron::EffectInstance* effect = instance->getLiveInstance();
                 assert(effect);
-                effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
+                effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
                 effect->drawOverlay_public(scaleX,scaleY);
             } else {
                 ///Draw a custom interact, indicating the track isn't selected
-                boost::shared_ptr<KnobI> newInstanceKnob = it->first->getKnobByName("center");
+                boost::shared_ptr<KnobI> newInstanceKnob = instance->getKnobByName("center");
                 assert(newInstanceKnob); //< if it crashes here that means the parameter's name changed in the OpenFX plug-in.
                 Double_Knob* dblKnob = dynamic_cast<Double_Knob*>( newInstanceKnob.get() );
                 assert(dblKnob);
 
-                for (int i = 0; i < 2; ++i) {
-                    if (i == 0) {
-                        // Draw a shadow for the cross hair
-                        // shift by (1,1) pixel
-                        glMatrixMode(GL_PROJECTION);
-                        glPushMatrix();
-                        glTranslated(pixelScaleX, -pixelScaleY, 0);
+                //GLProtectMatrix p(GL_PROJECTION); // useless (we do two glTranslate in opposite directions)
+                for (int l = 0; l < 2; ++l) {
+                    // shadow (uses GL_PROJECTION)
+                    glMatrixMode(GL_PROJECTION);
+                    int direction = (l == 0) ? 1 : -1;
+                    // translate (1,-1) pixels
+                    glTranslated(direction * pixelScaleX / 256, -direction * pixelScaleY / 256, 0);
+                    glMatrixMode(GL_MODELVIEW);
+
+                    if (l == 0) {
                         glColor4d(0., 0., 0., 1.);
                     } else {
                         glColor4f(1., 1., 1., 1.);
@@ -283,11 +291,6 @@ TrackerGui::drawOverlays(double scaleX,
                     glVertex2d(x, y - CROSS_SIZE * pixelScaleY);
                     glVertex2d(x, y + CROSS_SIZE * pixelScaleY);
                     glEnd();
-
-                    if (i == 0) {
-                        glMatrixMode(GL_PROJECTION);
-                        glPopMatrix();
-                    }
                 }
                 glPointSize(1.);
             }
@@ -300,14 +303,16 @@ TrackerGui::drawOverlays(double scaleX,
             glEnable(GL_LINE_SMOOTH);
             glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
             glLineWidth(1.5);
-            glMatrixMode(GL_PROJECTION);
-            for (int i = 0; i < 2; ++i) {
-                if (i == 0) {
-                    // Draw a shadow for the cross hair
-                    // shift by (1,1) pixel
-                    glMatrixMode(GL_PROJECTION);
-                    glPushMatrix();
-                    glTranslated(pixelScaleX, -pixelScaleY, 0);
+            //GLProtectMatrix p(GL_PROJECTION); // useless (we do two glTranslate in opposite directions)
+            for (int l = 0; l < 2; ++l) {
+                // shadow (uses GL_PROJECTION)
+                glMatrixMode(GL_PROJECTION);
+                int direction = (l == 0) ? 1 : -1;
+                // translate (1,-1) pixels
+                glTranslated(direction * pixelScaleX / 256, -direction * pixelScaleY / 256, 0);
+                glMatrixMode(GL_MODELVIEW);
+
+                if (l == 0) {
                     glColor4d(0., 0., 0., 0.8);
                 } else {
                     glColor4d(0., 1., 0.,0.8);
@@ -327,11 +332,6 @@ TrackerGui::drawOverlays(double scaleX,
                 glVertex2d(_imp->lastMousePos.x(), _imp->lastMousePos.y() - ADDTRACK_SIZE * pixelScaleY);
                 glVertex2d(_imp->lastMousePos.x(), _imp->lastMousePos.y() + ADDTRACK_SIZE * pixelScaleY);
                 glEnd();
-
-                if (i == 0) {
-                    glMatrixMode(GL_PROJECTION);
-                    glPopMatrix();
-                }
             }
         }
     } // GLProtectAttrib a(GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_LINE_BIT | GL_ENABLE_BIT | GL_HINT_BIT);
@@ -342,25 +342,30 @@ TrackerGui::penDown(double scaleX,
                     double scaleY,
                     const QPointF & viewportPos,
                     const QPointF & pos,
+                    double pressure,
                     QMouseEvent* e)
 {
     std::pair<double,double> pixelScale;
 
     _imp->viewer->getViewer()->getPixelScale(pixelScale.first, pixelScale.second);
     bool didSomething = false;
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        if ( it->second && !it->first->isNodeDisabled() ) {
-            Natron::EffectInstance* effect = it->first->getLiveInstance();
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        if ( it->second && !instance->isNodeDisabled() ) {
+            Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
-            didSomething = effect->onOverlayPenDown_public(scaleX,scaleY,viewportPos, pos);
+            effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
+            didSomething = effect->onOverlayPenDown_public(scaleX, scaleY, viewportPos, pos, pressure);
         }
     }
 
     double selectionTol = pixelScale.first * 10.;
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        boost::shared_ptr<KnobI> newInstanceKnob = it->first->getKnobByName("center");
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        boost::shared_ptr<KnobI> newInstanceKnob = instance->getKnobByName("center");
         assert(newInstanceKnob); //< if it crashes here that means the parameter's name changed in the OpenFX plug-in.
         Double_Knob* dblKnob = dynamic_cast<Double_Knob*>( newInstanceKnob.get() );
         assert(dblKnob);
@@ -371,7 +376,8 @@ TrackerGui::penDown(double scaleX,
         if ( ( pos.x() >= (x - selectionTol) ) && ( pos.x() <= (x + selectionTol) ) &&
              ( pos.y() >= (y - selectionTol) ) && ( pos.y() <= (y + selectionTol) ) ) {
             if (!it->second) {
-                _imp->panel->selectNode( it->first, modCASIsShift(e) );
+                _imp->panel->selectNode( instance, modCASIsShift(e) );
+
             }
             didSomething = true;
         }
@@ -383,10 +389,12 @@ TrackerGui::penDown(double scaleX,
         assert(newInstanceKnob); //< if it crashes here that means the parameter's name changed in the OpenFX plug-in.
         Double_Knob* dblKnob = dynamic_cast<Double_Knob*>( newInstanceKnob.get() );
         assert(dblKnob);
-        dblKnob->blockEvaluation();
+        dblKnob->beginChanges();
+        dblKnob->blockValueChanges();
         dblKnob->setValue(pos.x(), 0);
-        dblKnob->unblockEvaluation();
         dblKnob->setValue(pos.y(), 1);
+        dblKnob->unblockValueChanges();
+        dblKnob->endChanges();
         didSomething = true;
     }
 
@@ -416,17 +424,20 @@ TrackerGui::penMotion(double scaleX,
                       double scaleY,
                       const QPointF & viewportPos,
                       const QPointF & pos,
-                      QMouseEvent* /*e*/)
+                      double pressure,
+                      QInputEvent* /*e*/)
 {
     bool didSomething = false;
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
 
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        if ( it->second && !it->first->isNodeDisabled() ) {
-            Natron::EffectInstance* effect = it->first->getLiveInstance();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        if ( it->second && !instance->isNodeDisabled() ) {
+            Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
-            if ( effect->onOverlayPenMotion_public(scaleX,scaleY,viewportPos, pos) ) {
+            effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
+            if ( effect->onOverlayPenMotion_public(scaleX, scaleY, viewportPos, pos, pressure) ) {
                 didSomething = true;
             }
         }
@@ -446,17 +457,20 @@ TrackerGui::penUp(double scaleX,
                   double scaleY,
                   const QPointF & viewportPos,
                   const QPointF & pos,
+                  double pressure,
                   QMouseEvent* /*e*/)
 {
     bool didSomething = false;
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
 
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        if ( it->second && !it->first->isNodeDisabled() ) {
-            Natron::EffectInstance* effect = it->first->getLiveInstance();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        if ( it->second && !instance->isNodeDisabled() ) {
+            Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
-            didSomething = effect->onOverlayPenUp_public(scaleX,scaleY,viewportPos, pos);
+            effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
+            didSomething = effect->onOverlayPenUp_public(scaleX, scaleY, viewportPos, pos, pressure);
             if (didSomething) {
                 return true;
             }
@@ -482,12 +496,14 @@ TrackerGui::keyDown(double scaleX,
 
     Natron::Key natronKey = QtEnumConvert::fromQtKey( (Qt::Key)e->key() );
     Natron::KeyboardModifiers natronMod = QtEnumConvert::fromQtModifiers( e->modifiers() );
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        if ( it->second && !it->first->isNodeDisabled() ) {
-            Natron::EffectInstance* effect = it->first->getLiveInstance();
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        if ( it->second && !instance->isNodeDisabled() ) {
+            Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
+            effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
             didSomething = effect->onOverlayKeyDown_public(scaleX, scaleY, natronKey, natronMod);
             if (didSomething) {
                 return true;
@@ -554,12 +570,14 @@ TrackerGui::keyUp(double scaleX,
 
     Natron::Key natronKey = QtEnumConvert::fromQtKey( (Qt::Key)e->key() );
     Natron::KeyboardModifiers natronMod = QtEnumConvert::fromQtModifiers( e->modifiers() );
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        if ( it->second && !it->first->isNodeDisabled() ) {
-            Natron::EffectInstance* effect = it->first->getLiveInstance();
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        if ( it->second && !instance->isNodeDisabled() ) {
+            Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
+            effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
             didSomething = effect->onOverlayKeyUp_public(scaleX, scaleY, natronKey, natronMod);
             if (didSomething) {
                 return true;
@@ -585,12 +603,14 @@ TrackerGui::loseFocus(double scaleX,
 
     _imp->controlDown = 0;
 
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        if ( it->second && !it->first->isNodeDisabled() ) {
-            Natron::EffectInstance* effect = it->first->getLiveInstance();
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        if ( it->second && !instance->isNodeDisabled() ) {
+            Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
-            effect->setCurrentViewportForOverlays( _imp->viewer->getViewer() );
+            effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
             didSomething |= effect->onOverlayFocusLost_public(scaleX, scaleY);
         }
     }
@@ -608,9 +628,11 @@ TrackerGui::updateSelectionFromSelectionRectangle(bool onRelease)
     _imp->viewer->getViewer()->getSelectionRectangle(l, r, b, t);
 
     std::list<Natron::Node*> currentSelection;
-    const std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
-    for (std::list<std::pair<boost::shared_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
-        boost::shared_ptr<KnobI> newInstanceKnob = it->first->getKnobByName("center");
+    const std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> > & instances = _imp->panel->getInstances();
+    for (std::list<std::pair<boost::weak_ptr<Natron::Node>,bool> >::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+        
+        boost::shared_ptr<Node> instance = it->first.lock();
+        boost::shared_ptr<KnobI> newInstanceKnob = instance->getKnobByName("center");
         assert(newInstanceKnob); //< if it crashes here that means the parameter's name changed in the OpenFX plug-in.
         Double_Knob* dblKnob = dynamic_cast<Double_Knob*>( newInstanceKnob.get() );
         assert(dblKnob);
@@ -619,8 +641,8 @@ TrackerGui::updateSelectionFromSelectionRectangle(bool onRelease)
         y = dblKnob->getValue(1);
         if ( (x >= l) && (x <= r) && (y >= b) && (y <= t) ) {
             ///assert that the node is really not part of the selection
-            assert( std::find( currentSelection.begin(),currentSelection.end(),it->first.get() ) == currentSelection.end() );
-            currentSelection.push_back( it->first.get() );
+            assert( std::find( currentSelection.begin(),currentSelection.end(),instance.get() ) == currentSelection.end() );
+            currentSelection.push_back( instance.get() );
         }
     }
     _imp->panel->selectNodes( currentSelection, (_imp->controlDown > 0) );

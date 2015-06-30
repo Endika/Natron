@@ -11,11 +11,17 @@
 
 #ifndef NATRON_GUI_FEEDBACKSPINBOX_H_
 #define NATRON_GUI_FEEDBACKSPINBOX_H_
-#ifndef Q_MOC_RUN
+
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+
+#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #endif
 #include "Gui/LineEdit.h"
 
+class QColor;
 class QMenu;
 
 struct SpinBoxPrivate;
@@ -25,7 +31,7 @@ class SpinBox
     Q_OBJECT Q_PROPERTY(int animation READ getAnimation WRITE setAnimation)
 
     Q_PROPERTY(bool dirty READ getDirty WRITE setDirty)
-
+    
 public:
 
     enum SpinBoxTypeEnum
@@ -38,6 +44,8 @@ public:
                      SpinBoxTypeEnum type = eSpinBoxTypeInt);
 
     virtual ~SpinBox() OVERRIDE;
+    
+    void setType(SpinBoxTypeEnum type);
 
     ///Set the digits after the decimal point.
     void decimals(int d);
@@ -72,6 +80,8 @@ public:
         return dirty;
     }
 
+    void setUseLineColor(bool use, const QColor& color);
+    
 private:
 
     void increment(int delta, int shift);
@@ -82,14 +92,15 @@ private:
     //virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void focusInEvent(QFocusEvent* e) OVERRIDE FINAL;
     virtual void focusOutEvent(QFocusEvent* e) OVERRIDE FINAL;
+    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL;
 
     bool validateText();
 
-signals:
+Q_SIGNALS:
 
     void valueChanged(double d);
 
-public slots:
+public Q_SLOTS:
 
     void setValue(double d);
 
@@ -100,6 +111,7 @@ public slots:
 
 private:
 
+
     void setValue_internal(double d, bool reformat);
 
     void setText(const QString &str, int cursorPos);
@@ -107,6 +119,7 @@ private:
     ///Used by the stylesheet , they are Q_PROPERTIES
     int animation; // 0 = no animation, 1 = interpolated, 2 = equals keyframe value
     bool dirty;
+    bool altered;
     boost::scoped_ptr<SpinBoxPrivate> _imp;
 };
 
