@@ -1051,11 +1051,15 @@ Node::computeHashInternal(std::list<Natron::Node*>& marked)
             }
         }
         
-        boost::shared_ptr<RotoContext> roto = attachedStroke ? attachedStroke->getContext() : getRotoContext();
-        if (roto) {
-            U64 rotoAge = roto->getAge();
-            _imp->hash.append(rotoAge);
-        }
+        // We do not append the roto age any longer since now every tool in the RotoContext is backed-up by nodes which
+        // have their own age. Instead each action in the Rotocontext is followed by a incrementNodesAge() call so that each
+        // node respecitively have their hash correctly set.
+        
+//        boost::shared_ptr<RotoContext> roto = attachedStroke ? attachedStroke->getContext() : getRotoContext();
+//        if (roto) {
+//            U64 rotoAge = roto->getAge();
+//            _imp->hash.append(rotoAge);
+//        }
         
         ///Also append the effect's label to distinguish 2 instances with the same parameters
         ::Hash64_appendQString( &_imp->hash, QString( getScriptName().c_str() ) );
@@ -3433,27 +3437,32 @@ Node::disconnectInput(int inputNumber)
     assert( QThread::currentThread() == qApp->thread() );
     assert(_imp->inputsInitialized);
     
+    NodePtr inputShared;
     {
         QMutexLocker l(&_imp->inputsMutex);
         if ( (inputNumber < 0) || ( inputNumber > (int)_imp->inputs.size() ) || (!_imp->inputs[inputNumber]) ) {
             return -1;
         }
-        
-        ///If the node is currently rendering, queue the action instead of executing it
-        {
-            if (isNodeRendering() && !appPTR->isBackground()) {
-                _imp->liveInstance->abortAnyEvaluation();
-                ConnectInputAction action(_imp->inputs[inputNumber],eInputActionDisconnect,inputNumber);
-                QMutexLocker cql(&_imp->connectionQueueMutex);
-                _imp->connectionQueue.push_back(action);
-                return inputNumber;
-            }
+        inputShared = _imp->inputs[inputNumber];
+    }
+    
+    ///If the node is currently rendering, queue the action instead of executing it
+    {
+        if (isNodeRendering() && !appPTR->isBackground()) {
+            _imp->liveInstance->abortAnyEvaluation();
+            ConnectInputAction action(inputShared,eInputActionDisconnect,inputNumber);
+            QMutexLocker cql(&_imp->connectionQueueMutex);
+            _imp->connectionQueue.push_back(action);
+            return inputNumber;
         }
-        
-        QObject::disconnect( _imp->inputs[inputNumber].get(), SIGNAL( labelChanged(QString) ), this, SLOT( onInputLabelChanged(QString) ) );
-        _imp->inputs[inputNumber]->disconnectOutput(this);
+    }
+    
+    QObject::disconnect( inputShared.get(), SIGNAL( labelChanged(QString) ), this, SLOT( onInputLabelChanged(QString) ) );
+    inputShared->disconnectOutput(this);
+    
+    {
+        QMutexLocker l(&_imp->inputsMutex);
         _imp->inputs[inputNumber].reset();
-        
     }
     
     if (_imp->isBeingDestroyed) {
@@ -3479,41 +3488,47 @@ Node::disconnectInput(Node* input)
     ////Only called by the main-thread
     assert( QThread::currentThread() == qApp->thread() );
     assert(_imp->inputsInitialized);
+    int found = -1;
+    NodePtr inputShared;
     {
         QMutexLocker l(&_imp->inputsMutex);
         for (U32 i = 0; i < _imp->inputs.size(); ++i) {
             if (_imp->inputs[i].get() == input) {
-                
-                ///If the node is currently rendering, queue the action instead of executing it
-                {
-                    if (isNodeRendering() && !appPTR->isBackground()) {
-                        _imp->liveInstance->abortAnyEvaluation();
-                        ConnectInputAction action(_imp->inputs[i],eInputActionDisconnect,i);
-                        QMutexLocker cql(&_imp->connectionQueueMutex);
-                        _imp->connectionQueue.push_back(action);
-                        return i;
-                    }
-                }
-                
-                _imp->inputs[i].reset();
-                l.unlock();
-                input->disconnectOutput(this);
-                Q_EMIT inputChanged(i);
-                onInputChanged(i);
-                computeHash();
-                
-                _imp->ifGroupForceHashChangeOfInputs();
-                
-                std::string inputChangedCB = getInputChangedCallback();
-                if (!inputChangedCB.empty()) {
-                    _imp->runInputChangedCallback(i, inputChangedCB);
-                }
-                
-                l.relock();
-                
-                return i;
+                inputShared = _imp->inputs[i];
+                found = (int)i;
+                break;
             }
         }
+    }
+    if (found != -1) {
+        ///If the node is currently rendering, queue the action instead of executing it
+        {
+            if (isNodeRendering() && !appPTR->isBackground()) {
+                _imp->liveInstance->abortAnyEvaluation();
+                ConnectInputAction action(inputShared,eInputActionDisconnect,found);
+                QMutexLocker cql(&_imp->connectionQueueMutex);
+                _imp->connectionQueue.push_back(action);
+                return found;
+            }
+        }
+        
+        {
+            QMutexLocker l(&_imp->inputsMutex);
+            _imp->inputs[found].reset();
+        }
+        input->disconnectOutput(this);
+        Q_EMIT inputChanged(found);
+        onInputChanged(found);
+        computeHash();
+        
+        _imp->ifGroupForceHashChangeOfInputs();
+        
+        std::string inputChangedCB = getInputChangedCallback();
+        if (!inputChangedCB.empty()) {
+            _imp->runInputChangedCallback(found, inputChangedCB);
+        }
+        
+        return found;
     }
     
     return -1;
