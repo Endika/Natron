@@ -1,21 +1,37 @@
 #ifndef ACTIONSHORTCUTS_H
 #define ACTIONSHORTCUTS_H
 
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 /**
  * @brief In this file all Natron's actions that can have their shortcut edited should be listed.
  **/
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <map>
 #include <list>
+#include <vector>
 
 #include "Global/Macros.h"
 CLANG_DIAG_OFF(deprecated)
@@ -101,6 +117,9 @@ CLANG_DIAG_ON(uninitialized)
 #define kShortcutIDActionRenderSelected "renderSelect"
 #define kShortcutDescActionRenderSelected "Render Selected Writers"
 
+#define kShortcutIDActionEnableRenderStats "enableRenderStats"
+#define kShortcutDescActionEnableRenderStats "Enable render statistics"
+
 #define kShortcutIDActionRenderAll "renderAll"
 #define kShortcutDescActionRenderAll "Render All Writers"
 
@@ -149,24 +168,42 @@ CLANG_DIAG_ON(uninitialized)
 #define kShortcutIDActionNextTab "nextTab"
 #define kShortcutDescActionNextTab "Next Tab"
 
+#define kShortcutIDActionPrevTab "prevTab"
+#define kShortcutDescActionPrevTab "Previous Tab"
+
 #define kShortcutIDActionCloseTab "closeTab"
 #define kShortcutDescActionCloseTab "Close Tab"
 
 /////////VIEWER SHORTCUTS
 #define kShortcutIDActionLuminance "luminance"
-#define kShortcutDescActionLuminance "Luminance"
+#define kShortcutDescActionLuminance "Display Luminance"
 
-#define kShortcutIDActionR "channelR"
-#define kShortcutDescActionR "Red"
+#define kShortcutIDActionRed "channelR"
+#define kShortcutDescActionRed "Display Red Channel"
 
-#define kShortcutIDActionG "channelG"
-#define kShortcutDescActionG "Green"
+#define kShortcutIDActionGreen "channelG"
+#define kShortcutDescActionGreen "Display Green Channel"
 
-#define kShortcutIDActionB "channelB"
-#define kShortcutDescActionB "Blue"
+#define kShortcutIDActionBlue "channelB"
+#define kShortcutDescActionBlue "Display Blue Channel"
 
-#define kShortcutIDActionA "channelA"
-#define kShortcutDescActionA "Alpha"
+#define kShortcutIDActionAlpha "channelA"
+#define kShortcutDescActionAlpha "Display Alpha Channel"
+
+#define kShortcutIDActionLuminanceA "luminanceA"
+#define kShortcutDescActionLuminanceA "Display Luminance on input A only"
+
+#define kShortcutIDActionRedA "channelRA"
+#define kShortcutDescActionRedA "Display Red Channel on input A only"
+
+#define kShortcutIDActionGreenA "channelGA"
+#define kShortcutDescActionGreenA "Display Green Channel on input A only"
+
+#define kShortcutIDActionBlueA "channelBA"
+#define kShortcutDescActionBlueA "Display Blue Channel on input A only"
+
+#define kShortcutIDActionAlphaA "channelAA"
+#define kShortcutDescActionAlphaA "Display Alpha Channel on input A only"
 
 #define kShortcutIDActionFitViewer "fitViewer"
 #define kShortcutDescActionFitViewer "Fit Image to Viewer"
@@ -177,29 +214,42 @@ CLANG_DIAG_ON(uninitialized)
 #define kShortcutIDActionRefresh "refresh"
 #define kShortcutDescActionRefresh "Refresh Image"
 
+#define kShortcutIDActionRefreshWithStats "refreshWithStats"
+#define kShortcutDescActionRefreshWithStats "Refresh Image and show render statistics"
+
 #define kShortcutIDActionROIEnabled "userRoiEnabled"
 #define kShortcutDescActionROIEnabled "Enable User RoI"
+
+#define kShortcutIDActionNewROI "newRoi"
+#define kShortcutDescActionNewROI "New user RoI"
+
 
 #define kShortcutIDActionProxyEnabled "proxyEnabled"
 #define kShortcutDescActionProxyEnabled "Enable Proxy Rendering"
 
 #define kShortcutIDActionProxyLevel2 "proxy2"
-#define kShortcutDescActionProxyLevel2 "2"
+#define kShortcutDescActionProxyLevel2 "Proxy Level 2"
 
 #define kShortcutIDActionProxyLevel4 "proxy4"
-#define kShortcutDescActionProxyLevel4 "4"
+#define kShortcutDescActionProxyLevel4 "Proxy Level 4"
 
 #define kShortcutIDActionProxyLevel8 "proxy8"
-#define kShortcutDescActionProxyLevel8 "8"
+#define kShortcutDescActionProxyLevel8 "Proxy Level 8"
 
 #define kShortcutIDActionProxyLevel16 "proxy16"
-#define kShortcutDescActionProxyLevel16 "16"
+#define kShortcutDescActionProxyLevel16 "Proxy Level 16"
 
 #define kShortcutIDActionProxyLevel32 "proxy32"
-#define kShortcutDescActionProxyLevel32 "32"
+#define kShortcutDescActionProxyLevel32 "Proxy Level 32"
 
-#define kShortcutIDActionZoomLevel100 "100%"
-#define kShortcutDescActionZoomLevel100 "100%"
+#define kShortcutIDActionZoomLevel100 "zoom100"
+#define kShortcutDescActionZoomLevel100 "Set Zoom to 100%"
+
+#define kShortcutIDActionZoomIn "zoomIn"
+#define kShortcutDescActionZoomIn "Zoom In"
+
+#define kShortcutIDActionZoomOut "zoomOut"
+#define kShortcutDescActionZoomOut "Zoom Out"
 
 #define kShortcutIDActionHideOverlays "hideOverlays"
 #define kShortcutDescActionHideOverlays "Show/Hide Overlays"
@@ -498,8 +548,8 @@ CLANG_DIAG_ON(uninitialized)
 #define kShortcutIDActionDopeSheetEditorFrameSelection "frameonselection"
 #define kShortcutDescActionDopeSheetEditorFrameSelection "Frame on selection"
 
-#define kShortcutIDActionDopeSheetEditorSelectAllKeyframes "selectallkeyframes"
-#define kShortcutDescActionDopeSheetEditorSelectAllKeyframes "Select all keyframes"
+#define kShortcutIDActionDopeSheetEditorSelectAllKeyframes "selectall"
+#define kShortcutDescActionDopeSheetEditorSelectAllKeyframes "Select all"
 
 #define kShortcutIDActionDopeSheetEditorRenameNode "renamenode"
 #define kShortcutDescActionDopeSheetEditorRenameNode "Rename node label"
@@ -510,6 +560,7 @@ CLANG_DIAG_ON(uninitialized)
 #define kShortcutIDActionDopeSheetEditorPasteKeyframes "pastekeyframes"
 #define kShortcutDescActionDopeSheetEditorPasteKeyframes "Paste keyframes"
 
+class QWidget;
 
 inline
 QKeySequence
@@ -583,6 +634,7 @@ public:
 
     bool editable;
     QString grouping; //< the grouping of the action, such as CurveEditor/
+    QString actionID; //< the unique ID within the grouping
     QString description; //< the description that will be in the shortcut editor
     Qt::KeyboardModifiers modifiers; //< the keyboard modifiers that must be held down during the action
     Qt::KeyboardModifiers defaultModifiers; //< the default keyboard modifiers
@@ -597,6 +649,92 @@ public:
     }
 };
 
+
+class ActionWithShortcut
+: public QAction
+{
+        
+    QString _group;
+    
+protected:
+    
+    std::vector<std::pair<QString,QKeySequence> > _shortcuts;
+    
+public:
+    
+    ActionWithShortcut(const QString & group,
+                       const QString & actionID,
+                       const QString & actionDescription,
+                       QObject* parent,
+                       bool setShortcutOnAction = true);
+    
+    ActionWithShortcut(const QString & group,
+                       const QStringList & actionIDs,
+                       const QString & actionDescription,
+                       QObject* parent,
+                       bool setShortcutOnAction = true);
+
+    
+    virtual ~ActionWithShortcut();
+    
+    virtual void setShortcutWrapper(const QString& actionID, const QKeySequence& shortcut);
+
+    
+};
+
+/**
+ * @brief Set the widget's tooltip and append in the tooltip the shortcut associated to the action.
+ * This will be dynamically changed when the user edits the shortcuts from the editor.
+ **/
+#define setTooltipWithShortcut(group,actionID,tooltip,widget) ( widget->addAction(new TooltipActionShortcut(group,actionID,tooltip,widget)) )
+#define setTooltipWithShortcut2(group,actionIDs,tooltip,widget) ( widget->addAction(new TooltipActionShortcut(group,actionIDs,tooltip,widget)) )
+
+class TooltipActionShortcut
+: public ActionWithShortcut
+{
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
+
+    QWidget* _widget;
+    QString _originalTooltip;
+    bool _tooltipSetInternally;
+    
+public:
+    
+    /**
+     * @brief Set a dynamic shortcut in the tooltip. Reference it with %1 where you want to place the shortcut.
+     **/
+    TooltipActionShortcut(const QString & group,
+                          const QString & actionID,
+                          const QString & toolip,
+                          QWidget* parent);
+    
+    /**
+     * @brief Same as above except that the tooltip can contain multiple shortcuts.
+     * In that case the tooltip should reference shortcuts by doing so %1, %2 etc... where
+     * %1 references the first actionID, %2 the second ,etc...
+     **/
+    TooltipActionShortcut(const QString & group,
+                          const QStringList & actionIDs,
+                          const QString & toolip,
+                          QWidget* parent);
+    
+    virtual ~TooltipActionShortcut() {
+        
+    }
+    
+    virtual void setShortcutWrapper(const QString& actionID, const QKeySequence& shortcut) OVERRIDE FINAL;
+    
+private:
+    
+    virtual bool eventFilter(QObject* watched, QEvent* event) OVERRIDE FINAL;
+    
+    
+    void setTooltipFromOriginalTooltip();
+    
+};
+
 class KeyBoundAction
     : public BoundAction
 {
@@ -604,7 +742,7 @@ public:
 
     Qt::Key currentShortcut; //< the actual shortcut for the keybind
     Qt::Key defaultShortcut; //< the default shortcut proposed by the dev team
-    std::list<QAction*> actions; //< list of actions using this shortcut
+    std::list<ActionWithShortcut*> actions; //< list of actions using this shortcut
 
     KeyBoundAction()
         : BoundAction()
@@ -619,8 +757,8 @@ public:
 
     void updateActionsShortcut()
     {
-        for (std::list<QAction*>::iterator it = actions.begin(); it != actions.end(); ++it) {
-            (*it)->setShortcut( makeKeySequence(modifiers, currentShortcut) );
+        for (std::list<ActionWithShortcut*>::iterator it = actions.begin(); it != actions.end(); ++it) {
+            (*it)->setShortcutWrapper( actionID, makeKeySequence(modifiers, currentShortcut) );
         }
     }
 };
@@ -651,19 +789,5 @@ typedef std::map<QString,BoundAction*> GroupShortcuts;
 ///All groups shortcuts mapped against the name of the group
 typedef std::map<QString,GroupShortcuts> AppShortcuts;
 
-class ActionWithShortcut
-: public QAction
-{
-    QString _group;
-    QString _actionID;
-    
-public:
-    
-    ActionWithShortcut(const QString & group,
-                       const QString & actionID,
-                       const QString & actionDescription,
-                       QObject* parent);
-    
-    virtual ~ActionWithShortcut();};
 
 #endif // ACTIONSHORTCUTS_H

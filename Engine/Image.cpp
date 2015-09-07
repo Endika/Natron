@@ -1,24 +1,33 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Image.h"
 
+#include <algorithm> // min, max
+
 #include <QDebug>
-//#ifndef Q_MOC_RUN
-//#include <boost/math/special_functions/fpclassify.hpp>
-//#endif
+
 #include "Engine/AppManager.h"
 
 using namespace Natron;
@@ -625,7 +634,7 @@ Image::Image(const ImageComponents& components,
     , _useBitmap(useBitmap)
 {
     
-    setCacheEntry(makeKey(0,false,0,0),
+    setCacheEntry(makeKey(0,false,0,0, false),
                   boost::shared_ptr<ImageParams>( new ImageParams( mipMapLevel,
                                                                    regionOfDefinition,
                                                                    par,
@@ -676,17 +685,18 @@ Image::onMemoryAllocated(bool diskRestoration)
 void
 Image::setBitmapDirtyZone(const RectI& zone)
 {
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     _bitmap.setDirtyZone(zone);
 }
 
 ImageKey  
 Image::makeKey(U64 nodeHashKey,
                bool frameVaryingOrAnimated,
-               SequenceTime time,
-               int view)
+               double time,
+               int view,
+               bool draftMode)
 {
-    return ImageKey(nodeHashKey,frameVaryingOrAnimated,time,view);
+    return ImageKey(nodeHashKey,frameVaryingOrAnimated,time,view, 1., draftMode);
 }
 
 boost::shared_ptr<ImageParams>
@@ -759,11 +769,11 @@ Image::pasteFromForDepth(const Natron::Image & srcImg,
     assert( (getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4) );
     // NOTE: before removing the following asserts, please explain why an empty image may happen
     
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     
-    boost::shared_ptr<QReadLocker> k2;
+    boost::shared_ptr<QMutexLocker> k2;
     if (takeSrcLock) {
-        k2.reset(new QReadLocker(&srcImg._entryLock));
+        k2.reset(new QMutexLocker(&srcImg._entryLock));
     }
     
     const RectI & bounds = _bounds;
@@ -812,7 +822,7 @@ Image::pasteFromForDepth(const Natron::Image & srcImg,
 void
 Image::setRoD(const RectD& rod)
 {
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     _rod = rod;
     _params->setRoD(rod);
 }
@@ -826,7 +836,7 @@ Image::ensureBounds(const RectI& newBounds, bool fillWithBlackAndTransparant, bo
         return false;
     }
     
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     
     RectI merge = newBounds;
     merge.merge(_bounds);
@@ -882,20 +892,7 @@ Image::ensureBounds(const RectI& newBounds, bool fillWithBlackAndTransparant, bo
         dRect.y2 = _bounds.y2;
         
         WriteAccess wacc(tmpImg.get());
-        std::size_t pixelSize = getComponentsCount();
-        switch (depth) {
-            case eImageBitDepthByte:
-                pixelSize *= sizeof(unsigned char);
-                break;
-            case eImageBitDepthShort:
-                pixelSize *= sizeof(unsigned short);
-                break;
-            case eImageBitDepthFloat:
-                pixelSize *= sizeof(float);
-                break;
-            case eImageBitDepthNone:
-                break;
-        }
+        std::size_t pixelSize = getComponentsCount() * getSizeOfForBitDepth(depth);
         
         if (!aRect.isNull()) {
             char* pix = (char*)tmpImg->pixelAt(aRect.x1, aRect.y1);
@@ -969,6 +966,9 @@ Image::ensureBounds(const RectI& newBounds, bool fillWithBlackAndTransparant, bo
         case eImageBitDepthShort:
             tmpImg->pasteFromForDepth<unsigned short>(*this, _bounds, usesBitMap(), false);
             break;
+        case eImageBitDepthHalf:
+            assert(false);
+            break;
         case eImageBitDepthFloat:
             tmpImg->pasteFromForDepth<float>(*this, _bounds, usesBitMap(), false);
             break;
@@ -1005,6 +1005,9 @@ Image::pasteFrom(const Natron::Image & src,
         break;
     case eImageBitDepthShort:
         pasteFromForDepth<unsigned short>(src, srcRoi, copyBitmap, true);
+        break;
+    case eImageBitDepthHalf:
+        assert(false);
         break;
     case eImageBitDepthFloat:
         pasteFromForDepth<float>(src, srcRoi, copyBitmap, true);
@@ -1092,7 +1095,7 @@ Image::fill(const RectI & roi,
             float a)
 {
     
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     
     switch ( getBitDepth() ) {
     case eImageBitDepthByte:
@@ -1100,6 +1103,9 @@ Image::fill(const RectI & roi,
         break;
     case eImageBitDepthShort:
         fillForDepth<unsigned short, 65535>(roi, r, g, b, a);
+        break;
+    case eImageBitDepthHalf:
+        assert(false);
         break;
     case eImageBitDepthFloat:
         fillForDepth<float, 1>(roi, r, g, b, a);
@@ -1112,7 +1118,7 @@ Image::fill(const RectI & roi,
 void
 Image::fillZero(const RectI& roi)
 {
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     RectI intersection;
     if (!roi.intersect(_bounds, &intersection)) {
         return;
@@ -1123,6 +1129,9 @@ Image::fillZero(const RectI& roi)
             rowSize *= sizeof(unsigned char);
             break;
         case eImageBitDepthShort:
+            rowSize *= sizeof(unsigned short);
+            break;
+        case eImageBitDepthHalf:
             rowSize *= sizeof(unsigned short);
             break;
         case eImageBitDepthFloat:
@@ -1145,7 +1154,7 @@ Image::fillZero(const RectI& roi)
 void
 Image::fillBoundsZero()
 {
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     
     std::size_t rowSize =  getComponents().getNumComponents();
     switch ( getBitDepth() ) {
@@ -1153,6 +1162,9 @@ Image::fillBoundsZero()
             rowSize *= sizeof(unsigned char);
             break;
         case eImageBitDepthShort:
+            rowSize *= sizeof(unsigned short);
+            break;
+        case eImageBitDepthHalf:
             rowSize *= sizeof(unsigned short);
             break;
         case eImageBitDepthFloat:
@@ -1179,9 +1191,13 @@ Image::pixelAt(int x,
     } else {
         int compDataSize = getSizeOfForBitDepth( getBitDepth() ) * compsCount;
         
-        return (unsigned char*)(this->_data.writable())
-        + (qint64)( y - _bounds.bottom() ) * compDataSize * _bounds.width()
+        unsigned char* ret =  (unsigned char*)this->_data.writable();
+        if (!ret) {
+            return 0;
+        }
+        ret = ret + (qint64)( y - _bounds.bottom() ) * compDataSize * _bounds.width()
         + (qint64)( x - _bounds.left() ) * compDataSize;
+        return ret;
     }
 }
 
@@ -1196,9 +1212,13 @@ Image::pixelAt(int x,
     } else {
         int compDataSize = getSizeOfForBitDepth( getBitDepth() ) * compsCount;
         
-        return (unsigned char*)(this->_data.readable())
-        + (qint64)( y - _bounds.bottom() ) * compDataSize * _bounds.width()
+        unsigned char* ret = (unsigned char*)this->_data.readable();
+        if (!ret) {
+            return 0;
+        }
+        ret = ret + (qint64)( y - _bounds.bottom() ) * compDataSize * _bounds.width()
         + (qint64)( x - _bounds.left() ) * compDataSize;
+        return ret;
     }
 }
 
@@ -1279,6 +1299,9 @@ Image::getDepthString(Natron::ImageBitDepthEnum depth)
     case Natron::eImageBitDepthShort:
         s += "16u";
         break;
+    case Natron::eImageBitDepthHalf:
+        s += "16f";
+        break;
     case Natron::eImageBitDepthFloat:
         s += "32f";
         break;
@@ -1303,7 +1326,7 @@ Image::isBitDepthConversionLossy(Natron::ImageBitDepthEnum from,
 unsigned int
 Image::getRowElements() const
 {
-    QReadLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     return getComponentsCount() * _bounds.width();
 }
 
@@ -1327,8 +1350,8 @@ Image::halveRoIForDepth(const RectI & roi,
     }
     
     /// Take the lock for both bitmaps since we're about to read/write from them!
-    QWriteLocker k1(&output->_entryLock);
-    QReadLocker k2(&_entryLock);
+    QMutexLocker k1(&output->_entryLock);
+    QMutexLocker k2(&_entryLock);
 
     ///The source rectangle, intersected to this image region of definition in pixels
     const RectI &srcBounds = _bounds;
@@ -1476,6 +1499,9 @@ Image::halveRoI(const RectI & roi,
     case eImageBitDepthShort:
         halveRoIForDepth<unsigned short,65535>(roi,copyBitMap, output);
         break;
+    case eImageBitDepthHalf:
+        assert(false);
+        break;
     case eImageBitDepthFloat:
         halveRoIForDepth<float,1>(roi,copyBitMap,output);
         break;
@@ -1497,8 +1523,8 @@ Image::halve1DImageForDepth(const RectI & roi,
     assert( output->getComponents() == getComponents() );
     
     /// Take the lock for both bitmaps since we're about to read/write from them!
-    QWriteLocker k1(&output->_entryLock);
-    QReadLocker k2(&_entryLock);
+    QMutexLocker k1(&output->_entryLock);
+    QMutexLocker k2(&_entryLock);
 
     
     const RectI & srcBounds = _bounds;
@@ -1556,6 +1582,9 @@ Image::halve1DImage(const RectI & roi,
     case eImageBitDepthShort:
         halve1DImageForDepth<unsigned short, 65535>(roi, output);
         break;
+    case eImageBitDepthHalf:
+        assert(false);
+        break;
     case eImageBitDepthFloat:
         halve1DImageForDepth<float, 1>(roi, output);
         break;
@@ -1611,7 +1640,7 @@ Image::checkForNaNs(const RectI& roi)
         return false;
     }
  
-    QWriteLocker k(&_entryLock);
+    QMutexLocker k(&_entryLock);
     
     unsigned int compsCount = getComponentsCount();
 
@@ -1668,8 +1697,8 @@ Image::upscaleMipMapForDepth(const RectI & roi,
         return;
     }
     
-    QWriteLocker k1(&output->_entryLock);
-    QReadLocker k2(&_entryLock);
+    QMutexLocker k1(&output->_entryLock);
+    QMutexLocker k2(&_entryLock);
     
     int srcRowSize = _bounds.width() * components;
     int dstRowSize = output->_bounds.width() * components;
@@ -1728,6 +1757,9 @@ Image::upscaleMipMap(const RectI & roi,
     case eImageBitDepthShort:
         upscaleMipMapForDepth<unsigned short, 65535>(roi, fromLevel, toLevel, output);
         break;
+    case eImageBitDepthHalf:
+        assert(false);
+        break;
     case eImageBitDepthFloat:
         upscaleMipMapForDepth<float,1>(roi, fromLevel, toLevel, output);
         break;
@@ -1748,8 +1780,8 @@ Image::scaleBoxForDepth(const RectI & roi,
     assert( (getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4) );
 
     
-    QWriteLocker k1(&output->_entryLock);
-    QReadLocker k2(&_entryLock);
+    QMutexLocker k1(&output->_entryLock);
+    QMutexLocker k2(&_entryLock);
     
     ///The destination rectangle
     const RectI & dstBounds = output->_bounds;
@@ -1979,6 +2011,9 @@ Image::scaleBox(const RectI & roi,
         break;
     case eImageBitDepthShort:
         scaleBoxForDepth<unsigned short>(roi, output);
+        break;
+    case eImageBitDepthHalf:
+        assert(false);
         break;
     case eImageBitDepthFloat:
         scaleBoxForDepth<float>(roi, output);

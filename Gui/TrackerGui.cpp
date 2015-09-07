@@ -1,11 +1,26 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "TrackerGui.h"
 
@@ -25,7 +40,7 @@ CLANG_DIAG_ON(uninitialized)
 
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/Button.h"
-#include "Gui/FromQtEnums.h"
+#include "Gui/QtEnumConvert.h"
 #include "Gui/MultiInstancePanel.h"
 #include "Gui/ViewerTab.h"
 #include "Gui/ViewerGL.h"
@@ -108,6 +123,7 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     _imp->addTrackButton->setCheckable(true);
     _imp->addTrackButton->setChecked(false);
     _imp->addTrackButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->addTrackButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->addTrackButton->setToolTip(Natron::convertFromPlainText(tr("When enabled you can add new tracks "
                                                                  "by clicking on the Viewer. "
                                                                  "Holding the Control + Alt keys is the "
@@ -135,6 +151,7 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     bwIcon.addPixmap(bwDisabled,QIcon::Normal,QIcon::Off);
     _imp->trackBwButton = new Button(bwIcon,"",_imp->buttonsBar);
     _imp->trackBwButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->trackBwButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->trackBwButton->setToolTip("<p>" + tr("Track selected tracks backward until left bound of the timeline.") +
                                     "</p><p><b>" + tr("Keyboard shortcut:") + " Z</b></p>");
     _imp->trackBwButton->setCheckable(true);
@@ -144,13 +161,15 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
 
     _imp->trackPrevButton = new Button(QIcon(pixPrev),"",_imp->buttonsBar);
     _imp->trackPrevButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->trackPrevButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->trackPrevButton->setToolTip("<p>" + tr("Track selected tracks on the previous frame.") +
                                       "</p><p><b>" + tr("Keyboard shortcut:") + " X</b></p>");
     QObject::connect( _imp->trackPrevButton,SIGNAL( clicked(bool) ),this,SLOT( onTrackPrevClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->trackPrevButton);
 
     _imp->stopTrackingButton = new Button(QIcon(pixStop),"",_imp->buttonsBar);
-    _imp->stopTrackingButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->stopTrackingButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->stopTrackingButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->stopTrackingButton->setToolTip("<p>" + tr("Stop the ongoing tracking if any")  +
                                          "</p><p><b>" + tr("Keyboard shortcut:") + " Escape</b></p>");
     QObject::connect( _imp->stopTrackingButton,SIGNAL( clicked(bool) ),this,SLOT( onStopButtonClicked() ) );
@@ -158,6 +177,7 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
 
     _imp->trackNextButton = new Button(QIcon(pixNext),"",_imp->buttonsBar);
     _imp->trackNextButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->trackNextButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->trackNextButton->setToolTip("<p>" + tr("Track selected tracks on the next frame.") +
                                       "</p><p><b>" + tr("Keyboard shortcut:") + " C</b></p>");
     QObject::connect( _imp->trackNextButton,SIGNAL( clicked(bool) ),this,SLOT( onTrackNextClicked() ) );
@@ -168,6 +188,7 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     fwIcon.addPixmap(fwDisabled,QIcon::Normal,QIcon::Off);
     _imp->trackFwButton = new Button(fwIcon,"",_imp->buttonsBar);
     _imp->trackFwButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->trackFwButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->trackFwButton->setToolTip("<p>" + tr("Track selected tracks forward until right bound of the timeline.") +
                                     "</p><p><b>" + tr("Keyboard shortcut:") + " V</b></p>");
     _imp->trackFwButton->setCheckable(true);
@@ -178,18 +199,21 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
 
     _imp->clearAllAnimationButton = new Button(QIcon(pixClearAll),"",_imp->buttonsBar);
     _imp->clearAllAnimationButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->clearAllAnimationButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->clearAllAnimationButton->setToolTip(Natron::convertFromPlainText(tr("Clear all animation for selected tracks."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->clearAllAnimationButton,SIGNAL( clicked(bool) ),this,SLOT( onClearAllAnimationClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->clearAllAnimationButton);
 
     _imp->clearBwAnimationButton = new Button(QIcon(pixClearBw),"",_imp->buttonsBar);
     _imp->clearBwAnimationButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->clearBwAnimationButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->clearBwAnimationButton->setToolTip(Natron::convertFromPlainText(tr("Clear animation backward from the current frame."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->clearBwAnimationButton,SIGNAL( clicked(bool) ),this,SLOT( onClearBwAnimationClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->clearBwAnimationButton);
 
     _imp->clearFwAnimationButton = new Button(QIcon(pixClearFw),"",_imp->buttonsBar);
     _imp->clearFwAnimationButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->clearFwAnimationButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->clearFwAnimationButton->setToolTip(Natron::convertFromPlainText(tr("Clear animation forward from the current frame."), Qt::WhiteSpaceNormal));
     QObject::connect( _imp->clearFwAnimationButton,SIGNAL( clicked(bool) ),this,SLOT( onClearFwAnimationClicked() ) );
     _imp->buttonsLayout->addWidget(_imp->clearFwAnimationButton);
@@ -199,6 +223,7 @@ TrackerGui::TrackerGui(const boost::shared_ptr<TrackerPanel> & panel,
     updateViewerIC.addPixmap(pixUpdateViewerDisabled,QIcon::Normal,QIcon::Off);
     _imp->updateViewerButton = new Button(updateViewerIC,"",_imp->buttonsBar);
     _imp->updateViewerButton->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->updateViewerButton->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->updateViewerButton->setCheckable(true);
     _imp->updateViewerButton->setChecked(true);
     _imp->updateViewerButton->setDown(true);
@@ -230,7 +255,8 @@ TrackerGui::onAddTrackClicked(bool clicked)
 }
 
 void
-TrackerGui::drawOverlays(double scaleX,
+TrackerGui::drawOverlays(double time,
+                         double scaleX,
                          double scaleY) const
 {
     double pixelScaleX, pixelScaleY;
@@ -254,7 +280,7 @@ TrackerGui::drawOverlays(double scaleX,
                 Natron::EffectInstance* effect = instance->getLiveInstance();
                 assert(effect);
                 effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-                effect->drawOverlay_public(scaleX,scaleY);
+                effect->drawOverlay_public(time, scaleX,scaleY);
             } else {
                 ///Draw a custom interact, indicating the track isn't selected
                 boost::shared_ptr<KnobI> newInstanceKnob = instance->getKnobByName("center");
@@ -338,7 +364,8 @@ TrackerGui::drawOverlays(double scaleX,
 } // drawOverlays
 
 bool
-TrackerGui::penDown(double scaleX,
+TrackerGui::penDown(double time,
+                    double scaleX,
                     double scaleY,
                     const QPointF & viewportPos,
                     const QPointF & pos,
@@ -357,7 +384,7 @@ TrackerGui::penDown(double scaleX,
             Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-            didSomething = effect->onOverlayPenDown_public(scaleX, scaleY, viewportPos, pos, pressure);
+            didSomething = effect->onOverlayPenDown_public(time, scaleX, scaleY, viewportPos, pos, pressure);
         }
     }
 
@@ -370,8 +397,8 @@ TrackerGui::penDown(double scaleX,
         Double_Knob* dblKnob = dynamic_cast<Double_Knob*>( newInstanceKnob.get() );
         assert(dblKnob);
         double x,y;
-        x = dblKnob->getValue(0);
-        y = dblKnob->getValue(1);
+        x = dblKnob->getValueAtTime(time, 0);
+        y = dblKnob->getValueAtTime(time, 1);
 
         if ( ( pos.x() >= (x - selectionTol) ) && ( pos.x() <= (x + selectionTol) ) &&
              ( pos.y() >= (y - selectionTol) ) && ( pos.y() <= (y + selectionTol) ) ) {
@@ -391,8 +418,8 @@ TrackerGui::penDown(double scaleX,
         assert(dblKnob);
         dblKnob->beginChanges();
         dblKnob->blockValueChanges();
-        dblKnob->setValue(pos.x(), 0);
-        dblKnob->setValue(pos.y(), 1);
+        dblKnob->setValueAtTime(time, pos.x(), 0);
+        dblKnob->setValueAtTime(time, pos.y(), 1);
         dblKnob->unblockValueChanges();
         dblKnob->endChanges();
         didSomething = true;
@@ -408,7 +435,8 @@ TrackerGui::penDown(double scaleX,
 } // penDown
 
 bool
-TrackerGui::penDoubleClicked(double /*scaleX*/,
+TrackerGui::penDoubleClicked(double /*time*/,
+                             double /*scaleX*/,
                              double /*scaleY*/,
                              const QPointF & /*viewportPos*/,
                              const QPointF & /*pos*/,
@@ -420,7 +448,8 @@ TrackerGui::penDoubleClicked(double /*scaleX*/,
 }
 
 bool
-TrackerGui::penMotion(double scaleX,
+TrackerGui::penMotion(double time,
+                      double scaleX,
                       double scaleY,
                       const QPointF & viewportPos,
                       const QPointF & pos,
@@ -437,7 +466,7 @@ TrackerGui::penMotion(double scaleX,
             Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-            if ( effect->onOverlayPenMotion_public(scaleX, scaleY, viewportPos, pos, pressure) ) {
+            if ( effect->onOverlayPenMotion_public(time, scaleX, scaleY, viewportPos, pos, pressure) ) {
                 didSomething = true;
             }
         }
@@ -453,7 +482,8 @@ TrackerGui::penMotion(double scaleX,
 }
 
 bool
-TrackerGui::penUp(double scaleX,
+TrackerGui::penUp(double time,
+                  double scaleX,
                   double scaleY,
                   const QPointF & viewportPos,
                   const QPointF & pos,
@@ -470,7 +500,7 @@ TrackerGui::penUp(double scaleX,
             Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-            didSomething = effect->onOverlayPenUp_public(scaleX, scaleY, viewportPos, pos, pressure);
+            didSomething = effect->onOverlayPenUp_public(time, scaleX, scaleY, viewportPos, pos, pressure);
             if (didSomething) {
                 return true;
             }
@@ -481,7 +511,8 @@ TrackerGui::penUp(double scaleX,
 }
 
 bool
-TrackerGui::keyDown(double scaleX,
+TrackerGui::keyDown(double time,
+                    double scaleX,
                     double scaleY,
                     QKeyEvent* e)
 {
@@ -504,7 +535,7 @@ TrackerGui::keyDown(double scaleX,
             Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-            didSomething = effect->onOverlayKeyDown_public(scaleX, scaleY, natronKey, natronMod);
+            didSomething = effect->onOverlayKeyDown_public(time, scaleX, scaleY, natronKey, natronMod);
             if (didSomething) {
                 return true;
             }
@@ -556,7 +587,8 @@ TrackerGui::keyDown(double scaleX,
 } // keyDown
 
 bool
-TrackerGui::keyUp(double scaleX,
+TrackerGui::keyUp(double time,
+                  double scaleX,
                   double scaleY,
                   QKeyEvent* e)
 {
@@ -578,7 +610,7 @@ TrackerGui::keyUp(double scaleX,
             Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-            didSomething = effect->onOverlayKeyUp_public(scaleX, scaleY, natronKey, natronMod);
+            didSomething = effect->onOverlayKeyUp_public(time, scaleX, scaleY, natronKey, natronMod);
             if (didSomething) {
                 return true;
             }
@@ -596,7 +628,8 @@ TrackerGui::keyUp(double scaleX,
 }
 
 bool
-TrackerGui::loseFocus(double scaleX,
+TrackerGui::loseFocus(double time,
+                      double scaleX,
                       double scaleY)
 {
     bool didSomething = false;
@@ -611,7 +644,7 @@ TrackerGui::loseFocus(double scaleX,
             Natron::EffectInstance* effect = instance->getLiveInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public( _imp->viewer->getViewer() );
-            didSomething |= effect->onOverlayFocusLost_public(scaleX, scaleY);
+            didSomething |= effect->onOverlayFocusLost_public(time, scaleX, scaleY);
         }
     }
 

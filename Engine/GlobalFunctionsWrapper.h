@@ -1,12 +1,21 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
+
 /**
 * @brief Used to wrap all global functions that are in the Natron namespace so shiboken
 * doesn't generate the Natron namespace
@@ -15,9 +24,11 @@
 #ifndef GLOBALFUNCTIONSWRAPPER_H
 #define GLOBALFUNCTIONSWRAPPER_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Engine/AppManager.h"
 #include "Engine/AppInstanceWrapper.h"
@@ -35,7 +46,7 @@ public:
     inline std::list<std::string>
     getPluginIDs() const
     {
-        return Natron::getPluginIDs();
+        return appPTR->getPluginIDs();
     }
     
     inline std::list<std::string>
@@ -47,19 +58,19 @@ public:
     inline int
     getNumInstances() const
     {
-        return Natron::getNumInstances();
+        return appPTR->getNumInstances();
     }
     
     inline std::list<std::string>
     getNatronPath() const
     {
-        return Natron::getNatronPath();
+        return appPTR->getNatronPath();
     }
     
     inline void
     appendToNatronPath(const std::string& path)
     {
-        Natron::appendToNatronPath(path);
+        appPTR->appendToNatronPath(path);
     }
     
     inline bool isLinux() const
@@ -151,7 +162,7 @@ public:
     inline App*
     getInstance(int idx) const
     {
-        AppInstance* app = Natron::getInstance(idx);
+        AppInstance* app = appPTR->getAppInstance(idx);
         if (!app) {
             return 0;
         }
@@ -163,6 +174,18 @@ public:
     {
         return new AppSettings(appPTR->getCurrentSettings());
     }
+    
+    inline void setOnProjectCreatedCallback(const std::string& pythonFunctionName)
+    {
+        appPTR->setOnProjectCreatedCallback(pythonFunctionName);
+    }
+    
+    inline void setOnProjectLoadedCallback(const std::string& pythonFunctionName)
+    {
+        appPTR->setOnProjectLoadedCallback(pythonFunctionName);
+    }
+    
+    
 
 };
 

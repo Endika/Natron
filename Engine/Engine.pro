@@ -1,7 +1,20 @@
-#This Source Code Form is subject to the terms of the Mozilla Public
-#License, v. 2.0. If a copy of the MPL was not distributed with this
-#file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
+# ***** BEGIN LICENSE BLOCK *****
+# This file is part of Natron <http://www.natron.fr/>,
+# Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+#
+# Natron is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# Natron is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+# ***** END LICENSE BLOCK *****
 
 TARGET = Engine
 TEMPLATE = lib
@@ -67,6 +80,7 @@ SOURCES += \
     Curve.cpp \
     CurveSerialization.cpp \
     DiskCacheNode.cpp \
+    Dot.cpp \
     EffectInstance.cpp \
     FileDownloader.cpp \
     FileSystemModel.cpp \
@@ -74,6 +88,8 @@ SOURCES += \
     FrameEntry.cpp \
     FrameKey.cpp \
     FrameParamsSerialization.cpp \
+    GroupInput.cpp \
+    GroupOutput.cpp \
     Hash64.cpp \
     HistogramCPU.cpp \
     Image.cpp \
@@ -101,7 +117,7 @@ SOURCES += \
     NonKeyParamsSerialization.cpp \
     NodeSerialization.cpp \
     NodeGroupSerialization.cpp \
-    NoOp.cpp \
+    NoOpBase.cpp \
     OfxClipInstance.cpp \
     OfxHost.cpp \
     OfxImageEffectInstance.cpp \
@@ -111,6 +127,7 @@ SOURCES += \
     OfxParamInstance.cpp \
     OutputSchedulerThread.cpp \
     ParameterWrapper.cpp \
+    ParallelRenderArgs.cpp \
     Plugin.cpp \
     PluginMemory.cpp \
     ProcessHandler.cpp \
@@ -118,7 +135,9 @@ SOURCES += \
     ProjectPrivate.cpp \
     ProjectSerialization.cpp \
     PySideCompat.cpp \
-    Rect.cpp \
+    RectD.cpp \
+    RectI.cpp \
+    RenderStats.cpp \
     RotoContext.cpp \
     RotoPaint.cpp \
     RotoSerialization.cpp  \
@@ -128,6 +147,7 @@ SOURCES += \
     Settings.cpp \
     StandardPaths.cpp \
     StringAnimationManager.cpp \
+    TextureRect.cpp \
     TimeLine.cpp \
     Timer.cpp \
     Transform.cpp \
@@ -186,18 +206,22 @@ HEADERS += \
     CurveSerialization.h \
     CurvePrivate.h \
     DockablePanelI.h \
+    Dot.h \
     DiskCacheNode.h \
     EffectInstance.h \
     FileDownloader.h \
     FileSystemModel.h \
     FitCurve.h \
     Format.h \
+    FormatSerialization.h \
     FrameEntry.h \
     FrameKey.h \
     FrameEntrySerialization.h \
     FrameParams.h \
     FrameParamsSerialization.h \
     GlobalFunctionsWrapper.h \
+    GroupInput.h \
+    GroupOutput.h \
     Hash64.h \
     HistogramCPU.h \
     ImageInfo.h \
@@ -232,7 +256,7 @@ HEADERS += \
     NonKeyParams.h \
     NonKeyParamsSerialization.h \
     NodeSerialization.h \
-    NoOp.h \
+    NoOpBase.h \
     OfxClipInstance.h \
     OfxHost.h \
     OfxImageEffectInstance.h \
@@ -244,6 +268,7 @@ HEADERS += \
     OutputSchedulerThread.h \
     OverlaySupport.h \
     ParameterWrapper.h \
+    ParallelRenderArgs.h \
     Plugin.h \
     PluginMemory.h \
     ProcessHandler.h \
@@ -251,7 +276,11 @@ HEADERS += \
     ProjectPrivate.h \
     ProjectSerialization.h \
     Pyside_Engine_Python.h \
-    Rect.h \
+    RectD.h \
+    RectDSerialization.h \
+    RectI.h \
+    RectISerialization.h \
+    RenderStats.h \
     RotoContext.h \
     RotoContextPrivate.h \
     RotoPaint.h \
@@ -270,6 +299,7 @@ HEADERS += \
     Timer.h \
     Transform.h \
     Variant.h \
+    VariantSerialization.h \
     ViewerInstance.h \
     ViewerInstancePrivate.h \
     ../Global/Enums.h \
@@ -447,3 +477,8 @@ win32 {
 # SHIBOKEN.clean = dummy # don't remove the %_wrapper.cpp file by "make clean"
 
 # QMAKE_EXTRA_COMPILERS += SHIBOKEN
+
+macx {
+OBJECTIVE_SOURCES += \
+    QUrlFix.mm
+}

@@ -1,19 +1,29 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef NATRON_GLOBAL_APPMANAGER_H_
 #define NATRON_GLOBAL_APPMANAGER_H_
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <list>
 #include <string>
@@ -23,6 +33,8 @@ CLANG_DIAG_OFF(deprecated)
 #include <QtCore/QObject>
 CLANG_DIAG_ON(deprecated)
 #include <QtCore/QStringList>
+#include <QtCore/QString>
+#include <QtCore/QChar>
 
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN) 
 #include <boost/scoped_ptr.hpp>
@@ -37,8 +49,6 @@ CLANG_DIAG_ON(deprecated)
 /*macro to get the unique pointer to the controler*/
 #define appPTR AppManager::instance()
 
-//#define NATRON_USE_BREAKPAD
-
 class QMutex;
 
 class AppInstance;
@@ -47,8 +57,9 @@ class Settings;
 class KnobHolder;
 class NodeSerialization;
 class KnobSerialization;
-
+class RectI;
 namespace Natron {
+class OfxImageEffectInstance;
 class Node;
 class EffectInstance;
 class LibraryBinary;
@@ -76,7 +87,7 @@ struct AppInstanceRef
 
 
 struct CLArgsPrivate;
-class CLArgs : boost::noncopyable
+class CLArgs //: boost::noncopyable // GCC 4.2 requires the copy constructor
 {
 public:
     
@@ -99,7 +110,7 @@ public:
 
     CLArgs(const QStringList& arguments, bool forceBackground);
     
-    CLArgs(const CLArgs& other);
+    CLArgs(const CLArgs& other); // GCC 4.2 requires the copy constructor
     
     ~CLArgs();
 
@@ -125,13 +136,33 @@ public:
     
     const QString& getFilename() const;
     
+    const QString& getDefaultOnProjectLoadedScript() const;
+    
     const QString& getIPCPipeName() const;
     
     bool isPythonScript() const;
     
+    bool areRenderStatsEnabled() const;
+    
 private:
     
     boost::scoped_ptr<CLArgsPrivate> _imp;
+};
+
+class GlobalOFXTLS
+{
+public:
+    Natron::OfxImageEffectInstance* lastEffectCallingMainEntry;
+    
+    ///Stored as int, because we need -1; list because we need it recursive for the multiThread func
+    std::list<int> threadIndexes;
+    
+    GlobalOFXTLS()
+    : lastEffectCallingMainEntry(0)
+    , threadIndexes()
+    {
+        
+    }
 };
 
 struct AppManagerPrivate;
@@ -265,9 +296,9 @@ public:
      * @brief Given the following tree version, removes all images from the node cache with a matching
      * tree version. This is useful to wipe the cache for one particular node.
      **/
-    void  removeAllImagesFromCacheWithMatchingKey(U64 treeVersion);
-    void  removeAllImagesFromDiskCacheWithMatchingKey(U64 treeVersion);
-    void  removeAllTexturesFromCacheWithMatchingKey(U64 treeVersion);
+    void  removeAllImagesFromCacheWithMatchingKey(bool useTreeVersion, U64 treeVersion);
+    void  removeAllImagesFromDiskCacheWithMatchingKey(bool useTreeVersion, U64 treeVersion);
+    void  removeAllTexturesFromCacheWithMatchingKey(bool useTreeVersion, U64 treeVersion);
 
     boost::shared_ptr<Settings> getCurrentSettings() const WARN_UNUSED_RETURN;
     const KnobFactory & getKnobFactory() const WARN_UNUSED_RETURN;
@@ -318,6 +349,7 @@ public:
     virtual void showOfxLog() {}
 
     virtual void debugImage(const Natron::Image* /*image*/,
+                            const RectI& /*roi*/,
                             const QString & /*filename = QString()*/) const
     {
     }
@@ -389,7 +421,7 @@ public:
      **/
     int getNRunningThreads() const;
     
-    void setThreadAsActionCaller(bool actionCaller);
+    void setThreadAsActionCaller(Natron::OfxImageEffectInstance* instance, bool actionCaller);
 
     /**
      * @brief Returns a list of IDs of all the plug-ins currently loaded.
@@ -436,6 +468,10 @@ public:
     
     void releaseNatronGIL();
     
+#ifdef __NATRON_WIN32__
+	void registerUNCPath(const QString& path, const QChar& driveLetter);
+	QString mapUNCPathToPathWithDriveLetter(const QString& uncPath) const;
+#endif
     
 #ifdef Q_OS_UNIX
     static QString qt_tildeExpansion(const QString &path, bool *expanded = 0);
@@ -443,11 +479,9 @@ public:
     
 public Q_SLOTS:
     
-#ifdef NATRON_USE_BREAKPAD
     void onNewCrashReporterConnectionPending();
     
     void onCrashReporterOutputWritten();
-#endif
 
     void toggleAutoHideGraphInputs();
 
@@ -472,14 +506,42 @@ public Q_SLOTS:
 
     void onMaxPanelsOpenedChanged(int maxPanels);
 
+    
+    /**
+     * @brief Return the concatenation of all search paths of Natron, i.e:
+     - The bundled plug-ins path: ../Plugin relative to the binary
+     - The system wide data for Natron (architecture dependent), this is the same location as autosaves
+     - The content of the NATRON_PLUGIN_PATH environment variable
+     - The content of the search paths defined in the Preferences-->Plugins--> Group plugins search path
+     *
+     * This does not apply for OpenFX plug-ins which have their own search path.
+     **/
+    std::list<std::string> getNatronPath();
+    
+    /**
+     * @brief Add a new path to the Natron search path
+     **/
+    void appendToNatronPath(const std::string& path);
 
-
+    virtual void addCommand(const QString& /*grouping*/,const std::string& /*pythonFunction*/, Qt::Key /*key*/,const Qt::KeyboardModifiers& /*modifiers*/) {}
+    
+    void setOnProjectLoadedCallback(const std::string& pythonFunc);
+    void setOnProjectCreatedCallback(const std::string& pythonFunc);
+    
+    GlobalOFXTLS& getCurrentThreadTLS();
+    
+    void requestOFXDIalogOnMainThread(void* user_data);
+    
+public Q_SLOTS:
+    
+    void onOFXDialogOnMainThreadReceived(void* user_data);
     
 Q_SIGNALS:
 
 
     void checkerboardSettingsChanged();
     
+    void s_requestOFXDialogOnMainThread(void* user_data);
     
 protected:
 
@@ -617,44 +679,7 @@ getTextureFromCacheOrCreate(const Natron::FrameKey & key,
     return appPTR->getTextureOrCreate(key,params, returnValue);
 }
     
-/**
-* @brief Returns a list of IDs of all the plug-ins currently loaded.
-* Each ID can be passed to the AppInstance::createNode function to instantiate a node
-* with a plug-in.
-**/
-inline std::list<std::string>
-getPluginIDs()
-{
-    return appPTR->getPluginIDs();
-}
-    
-inline AppInstance*
-getInstance(int idx)
-{
-    return appPTR->getAppInstance(idx);
-}
-    
-inline int
-getNumInstances()
-{
-    return appPTR->getNumInstances();
-}
 
-/**
- * @brief Return the concatenation of all search paths of Natron, i.e:
- - The bundled plug-ins path: ../Plugin relative to the binary
- - The system wide data for Natron (architecture dependent), this is the same location as autosaves
- - The content of the NATRON_PLUGIN_PATH environment variable
- - The content of the search paths defined in the Preferences-->Plugins--> Group plugins search path
- *
- * This does not apply for OpenFX plug-ins which have their own search path.
- **/
-std::list<std::string> getNatronPath();
-
-/**
- * @brief Add a new path to the Natron search path
- **/
-void appendToNatronPath(const std::string& path);
 
 
 /**

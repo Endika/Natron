@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "CurveEditor.h"
 
@@ -25,10 +34,10 @@
 #include <QHeaderView>
 #include <QUndoStack> // in QtGui on Qt4, in QtWidgets on Qt5
 #include <QAction>
-CLANG_DIAG_OFF(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_OFF
 // /opt/local/include/QtGui/qmime.h:119:10: warning: private field 'type' is not used [-Wunused-private-field]
 #include <QMouseEvent>
-CLANG_DIAG_ON(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 
 #include "Engine/Knob.h"
 #include "Engine/Curve.h"
@@ -38,7 +47,7 @@ CLANG_DIAG_ON(unused-private-field)
 #include "Engine/EffectInstance.h"
 #include "Engine/TimeLine.h"
 
-#include "Gui/CurveWidget.h"
+#include "Gui/CurveGui.h"
 #include "Gui/NodeGui.h"
 #include "Gui/KnobGui.h"
 #include "Gui/LineEdit.h"
@@ -49,12 +58,43 @@ CLANG_DIAG_ON(unused-private-field)
 #include "Gui/GuiAppInstance.h"
 #include "Gui/KnobUndoCommand.h"
 #include "Gui/Label.h"
+#include "Gui/NodeSettingsPanel.h"
 
 using std::make_pair;
 using std::cout;
 using std::endl;
 using Natron::Label;
 
+
+class CurveEditorTreeWidget : public QTreeWidget
+{
+    Gui* _gui;
+    bool _canResizeOtherWidget;
+public:
+    
+    CurveEditorTreeWidget(Gui* gui, QWidget* parent)
+    : QTreeWidget(parent)
+    , _gui(gui)
+    , _canResizeOtherWidget(true)
+    {
+        
+    }
+    
+    void setCanResizeOtherWidget(bool canResize) {
+        _canResizeOtherWidget = canResize;
+    }
+    
+    virtual ~CurveEditorTreeWidget() {}
+    
+private:
+    
+    virtual void resizeEvent(QResizeEvent* e) {
+        QTreeWidget::resizeEvent(e);
+        if (_canResizeOtherWidget && _gui->isTripleSyncEnabled()) {
+            _gui->setDopeSheetTreeWidth(e->size().width());
+        }
+    }
+};
 
 struct CurveEditorPrivate
 {
@@ -67,7 +107,7 @@ struct CurveEditorPrivate
     QSplitter* splitter;
     CurveWidget* curveWidget;
     
-    QTreeWidget* tree;
+    CurveEditorTreeWidget* tree;
     QWidget* filterContainer;
     QHBoxLayout* filterLayout;
     Natron::Label* filterLabel;
@@ -157,12 +197,13 @@ CurveEditor::CurveEditor(Gui* gui,
     
     _imp->leftPaneLayout->addWidget(_imp->filterContainer);
     
-    _imp->tree = new QTreeWidget(_imp->leftPaneContainer);
+    _imp->tree = new CurveEditorTreeWidget(gui,_imp->leftPaneContainer);
     _imp->tree->setObjectName("tree");
     _imp->tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     _imp->tree->setColumnCount(1);
     _imp->tree->header()->close();
     _imp->tree->setSizePolicy(QSizePolicy::Minimum,QSizePolicy::Expanding);
+    _imp->tree->setAttribute(Qt::WA_MacShowFocusRect,0);
 
     _imp->leftPaneLayout->addWidget(_imp->tree);
 
@@ -211,6 +252,16 @@ CurveEditor::~CurveEditor()
         delete *it;
     }
     _imp->rotos.clear();
+}
+
+void
+CurveEditor::setTreeWidgetWidth(int width)
+{
+    _imp->tree->setCanResizeOtherWidget(false);
+    QList<int> sizes;
+    sizes << width << _imp->curveWidget->width();
+    _imp->splitter->setSizes(sizes);
+    _imp->tree->setCanResizeOtherWidget(true);
 }
 
 void
@@ -283,7 +334,8 @@ CurveEditor::addNode(boost::shared_ptr<NodeGui> node)
 {
     const std::vector<boost::shared_ptr<KnobI> > & knobs = node->getNode()->getKnobs();
 
-    if ( knobs.empty() || !node->getSettingPanel() ) {
+    //Don't add to the curveeditor nodes that are used by Natron internally (such as rotopaint nodes or file dialog preview nodes)
+    if ( knobs.empty() || !node->getSettingPanel() || !node->getNode()->getGroup() ) {
         return;
     }
     bool hasKnobsAnimating = false;
@@ -1238,8 +1290,8 @@ BezierEditorContext::BezierEditorContext(QTreeWidget* tree,
     
     CurveWidget* cw = widget->getCurveWidget();
     
-    QObject::connect(curve.get(), SIGNAL(keyframeSet(int)), this, SLOT(onKeyframeAdded()));
-    QObject::connect(curve.get(), SIGNAL(keyframeRemoved(int)), this, SLOT(onKeyframeRemoved()));
+    QObject::connect(curve.get(), SIGNAL(keyframeSet(double)), this, SLOT(onKeyframeAdded()));
+    QObject::connect(curve.get(), SIGNAL(keyframeRemoved(double)), this, SLOT(onKeyframeRemoved()));
     
     boost::shared_ptr<RotoContext> roto = context->getNode()->getNode()->getRotoContext();
     _imp->animCurve.reset(new BezierCPCurveGui(cw, curve, roto, getName(), QColor(255,255,255), 1.));
@@ -1481,6 +1533,8 @@ CurveEditor::keyPressEvent(QKeyEvent* e)
 {
     if (e->key() == Qt::Key_F && modCASIsControl(e)) {
         _imp->filterEdit->setFocus();
+    } else {
+        QWidget::keyPressEvent(e);
     }
 }
 
@@ -1564,7 +1618,16 @@ CurveEditor::setSelectedCurveExpression(const QString& expression)
     }
   
     std::string expr = expression.toStdString();
-    boost::shared_ptr<KnobI> knob = curve->getKnobGui()->getKnob();
+    KnobGui* knobgui = curve->getKnobGui();
+    assert(knobgui);
+    if (!knobgui) {
+        throw std::logic_error("CurveEditor::setSelectedCurveExpression: knobgui is NULL");
+    }
+    boost::shared_ptr<KnobI> knob = knobgui->getKnob();
+    assert(knob);
+    if (!knob) {
+        throw std::logic_error("CurveEditor::setSelectedCurveExpression: knob is NULL");
+    }
     int dim = curve->getDimension();
     std::string exprResult;
     if (!expr.empty()) {
@@ -1576,7 +1639,6 @@ CurveEditor::setSelectedCurveExpression(const QString& expression)
         }
     }
     _imp->curveWidget->pushUndoCommand(new SetExpressionCommand(knob,false,dim,expr));
-
 }
 
 void

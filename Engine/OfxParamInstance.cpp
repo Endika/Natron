@@ -1,23 +1,34 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "OfxParamInstance.h"
 
 #include <iostream>
 #include <boost/scoped_array.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
 #include <boost/math/special_functions/fpclassify.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 
 //ofx extension
 #include <nuke/fnPublicOfxExtensions.h>
@@ -68,6 +79,7 @@ getParamLabel(OFX::Host::Param::Instance* param)
 ///anonymous namespace to handle keyframes communication support for Ofx plugins
 /// in a generalized manner
 namespace OfxKeyFrame {
+static
 OfxStatus
 getNumKeys(KnobI* knob,
            unsigned int &nKeys)
@@ -76,11 +88,11 @@ getNumKeys(KnobI* knob,
 
     if (knob->canAnimate()) {
         for (int i = 0; i < knob->getDimension(); ++i) {
-            std::list<KnobI*> dependencies;
+            std::list<std::pair<KnobI*,int> > dependencies;
             if (knob->getExpressionDependencies(i, dependencies)) {
-                for (std::list<KnobI*>::iterator it = dependencies.begin(); it!=dependencies.end(); ++it) {
+                for (std::list<std::pair<KnobI*,int> >::iterator it = dependencies.begin(); it!=dependencies.end(); ++it) {
                     unsigned int tmp;
-                    getNumKeys(*it, tmp);
+                    getNumKeys(it->first, tmp);
                     sum += tmp;
                 }
             } else {
@@ -95,6 +107,7 @@ getNumKeys(KnobI* knob,
     return kOfxStatOK;
 }
 
+static
 OfxStatus
 getKeyTime(boost::shared_ptr<KnobI> knob,
            int nth,
@@ -131,6 +144,7 @@ getKeyTime(boost::shared_ptr<KnobI> knob,
     return kOfxStatErrBadIndex;
 }
 
+static
 OfxStatus
 getKeyIndex(boost::shared_ptr<KnobI> knob,
             OfxTime time,
@@ -177,17 +191,19 @@ getKeyIndex(boost::shared_ptr<KnobI> knob,
     return kOfxStatFailed;
 }
 
+static
 OfxStatus
 deleteKey(boost::shared_ptr<KnobI> knob,
           OfxTime time)
 {
     for (int i = 0; i < knob->getDimension(); ++i) {
-        knob->deleteValueAtTime(time, i);
+        knob->deleteValueAtTime(Natron::eCurveChangeReasonInternal,time, i);
     }
 
     return kOfxStatOK;
 }
 
+static
 OfxStatus
 deleteAllKeys(boost::shared_ptr<KnobI> knob)
 {
@@ -199,6 +215,7 @@ deleteAllKeys(boost::shared_ptr<KnobI> knob)
 }
 
 // copy one parameter to another, with a range (NULL means to copy all animation)
+static
 OfxStatus
 copyFrom(const boost::shared_ptr<KnobI> & from,
          const boost::shared_ptr<KnobI> &to,
@@ -3028,19 +3045,13 @@ OfxParametricInstance::OfxParametricInstance(OfxEffectInstance* node,
     }
 
     QObject::connect( knob.get(),SIGNAL( mustInitializeOverlayInteract(OverlaySupport*) ),this,SLOT( initializeInteract(OverlaySupport*) ) );
-    QObject::connect( knob.get(), SIGNAL( mustResetToDefault(QVector<int>) ), this, SLOT( onResetToDefault(QVector<int>) ) );
     setDisplayRange();
 }
 
 void
-OfxParametricInstance::onResetToDefault(const QVector<int> & dimensions)
+OfxParametricInstance::onCurvesDefaultInitialized()
 {
-    for (int i = 0; i < dimensions.size(); ++i) {
-        Natron::StatusEnum st = _knob.lock()->deleteAllControlPoints( dimensions.at(i) );
-        assert(st == Natron::eStatusOK);
-        (void)st;
-        defaultInitializeFromDescriptor(dimensions.at(i),_descriptor);
-    }
+    _knob.lock()->setDefaultCurvesFromCurves();
 }
 
 void

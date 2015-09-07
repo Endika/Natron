@@ -1,20 +1,29 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef NATRON_ENGINE_KNOBTYPES_H_
 #define NATRON_ENGINE_KNOBTYPES_H_
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <vector>
 #include <string>
@@ -44,7 +53,9 @@ class Node;
 class Int_Knob
     : public QObject, public Knob<int>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -138,7 +149,9 @@ private:
 class Double_Knob
     :  public QObject,public Knob<double>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -291,7 +304,7 @@ public:
     
     bool getHasNativeOverlayHandle() const;
     
-    virtual bool useNativeOverlayHandle() const { return getHasNativeOverlayHandle(); }
+    virtual bool useNativeOverlayHandle() const OVERRIDE { return getHasNativeOverlayHandle(); }
     
 public Q_SLOTS:
 
@@ -389,7 +402,9 @@ private:
 class Choice_Knob
     : public QObject,public Knob<int>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -412,6 +427,7 @@ public:
     void populateChoices( const std::vector<std::string> &entries, const std::vector<std::string> &entriesHelp = std::vector<std::string>() );
     
     std::vector<std::string> getEntries_mt_safe() const;
+    const std::string& getEntry(int v) const;
     std::vector<std::string> getEntriesHelp_mt_safe() const;
     std::string getActiveEntryText_mt_safe() const;
     
@@ -446,7 +462,14 @@ public:
     {
         return _isCascading;
     }
-    
+
+    /// set the Choice_Knob value from the label
+    ValueChangedReturnCodeEnum setValueFromLabel(const std::string & value,
+                                                 int dimension,
+                                                 bool turnOffAutoKeying = false);
+    /// set the Choice_Knob default value from the label
+    void setDefaultValueFromLabel(const std::string & value,int dimension = 0);
+
 Q_SIGNALS:
 
     void populated();
@@ -508,7 +531,9 @@ private:
 class Color_Knob
     :  public QObject, public Knob<double>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -672,7 +697,9 @@ private:
 class Group_Knob
     :  public QObject, public Knob<bool>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
     std::vector< boost::weak_ptr<KnobI> > _children;
     bool _isTab;
@@ -723,7 +750,9 @@ private:
 class Page_Knob
     :  public QObject,public Knob<bool>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -770,10 +799,12 @@ private:
 class Parametric_Knob
     :  public QObject, public Knob<double>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
     mutable QMutex _curvesMutex;
-    std::vector< boost::shared_ptr<Curve> > _curves;
+    std::vector< boost::shared_ptr<Curve> > _curves, _defaultCurves;
     std::vector<RGBAColourF> _curvesColor;
 
 public:
@@ -796,9 +827,12 @@ public:
     void getCurveColor(int dimension,double* r,double* g,double* b);
 
     void setParametricRange(double min,double max);
+    
+    void setDefaultCurvesFromCurves();
 
     std::pair<double,double> getParametricRange() const WARN_UNUSED_RETURN;
     boost::shared_ptr<Curve> getParametricCurve(int dimension) const;
+    boost::shared_ptr<Curve> getDefaultParametricCurve(int dimension) const;
     Natron::StatusEnum addControlPoint(int dimension,double key,double value) WARN_UNUSED_RETURN;
     Natron::StatusEnum addHorizontalControlPoint(int dimension,double key,double value) WARN_UNUSED_RETURN;
     Natron::StatusEnum getValue(int dimension,double parametricPosition,double *returnValue) const WARN_UNUSED_RETURN;
@@ -846,11 +880,7 @@ public Q_SLOTS:
         Q_EMIT mustInitializeOverlayInteract(widget);
     }
 
-    virtual void resetToDefault(const QVector<int> & dimensions)
-    {
-        Q_EMIT mustResetToDefault(dimensions);
-    }
-
+    
 Q_SIGNALS:
 
     //emitted by drawCustomBackground()
@@ -862,13 +892,11 @@ Q_SIGNALS:
     ///emitted when the state of a curve changed at the indicated dimension
     void curveChanged(int);
 
-    void mustResetToDefault(QVector<int>);
-
     void curveColorChanged(int);
 private:
 
     virtual void resetExtraToDefaultValue(int dimension) OVERRIDE FINAL;
-
+    virtual bool hasModificationsVirtual(int dimension) const OVERRIDE FINAL;
     virtual bool canAnimate() const OVERRIDE FINAL;
     virtual const std::string & typeName() const OVERRIDE FINAL;
     virtual void cloneExtraData(KnobI* other,int dimension = -1) OVERRIDE FINAL;

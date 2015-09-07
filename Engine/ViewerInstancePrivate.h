@@ -1,26 +1,39 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-//
-//  Created by Frédéric Devernay on 20/03/2014.
-//
-//
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef Natron_Engine_ViewerInstancePrivate_h
 #define Natron_Engine_ViewerInstancePrivate_h
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "ViewerInstance.h"
 
 #include <map>
+#include <set>
 #include <vector>
 #include <cmath>
 #include <cassert>
+#include <algorithm> // min, max
+
 #include <QtCore/QMutex>
 #include <QtCore/QWaitCondition>
 #include <QtCore/QThread>
@@ -30,6 +43,7 @@
 #include "Engine/ImageComponents.h"
 #include "Engine/FrameEntry.h"
 #include "Engine/Settings.h"
+#include "Engine/Image.h"
 #include "Engine/TextureRect.h"
 
 #define GAMMA_LUT_NB_VALUES 1023
@@ -38,6 +52,16 @@ namespace Natron {
 class FrameEntry;
 class FrameParams;
 }
+
+
+
+struct OnGoingRenderInfo
+{
+    bool aborted;
+};
+
+
+typedef std::map<U64,OnGoingRenderInfo> OnGoingRenders;
 
 //namespace Natron {
 
@@ -106,7 +130,7 @@ public:
     , alphaLayer()
     , alphaChannelName()
     , cachedFrame()
-    , image()
+    , tiles()
     , rod()
     , renderAge(0)
     , isSequential(false)
@@ -146,7 +170,7 @@ public:
     
     // put a shared_ptr here, so that the cache entry is never released before the end of updateViewer()
     boost::shared_ptr<Natron::FrameEntry> cachedFrame;
-    boost::shared_ptr<Natron::Image> image;
+    std::list<boost::shared_ptr<Natron::Image> > tiles;
     RectD rod;
     U64 renderAge;
     bool isSequential;
@@ -157,7 +181,9 @@ public:
 struct ViewerInstance::ViewerInstancePrivate
 : public QObject, public LockManagerI<Natron::FrameEntry>
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
     
@@ -172,7 +198,7 @@ public:
     , viewerParamsGamma(1.)
     , viewerParamsLut(Natron::eViewerColorSpaceSRGB)
     , viewerParamsAutoContrast(false)
-    , viewerParamsChannels(Natron::eDisplayChannelsRGB)
+    , viewerParamsChannels()
     , viewerParamsLayer(Natron::ImageComponents::getRGBAComponents())
     , viewerParamsAlphaLayer(Natron::ImageComponents::getRGBAComponents())
     , viewerParamsAlphaChannelName("a")
@@ -197,6 +223,7 @@ public:
             activeInputs[i] = -1;
             renderAge[i] = 1;
             displayAge[i] = 0;
+            viewerParamsChannels[i] = Natron::eDisplayChannelsRGB;
         }
         
     }
@@ -272,16 +299,20 @@ public:
     }
     
     /**
-     * @brief We keep track of ongoing renders internally. This is used for abortable renders 
-     * (scrubbing the timeline, moving a slider...) to keep always at least 1 thread computing
-     * so that not all threads are always aborted.
+     * @brief We keep track of ongoing renders internally. This function is called only by non 
+     * abortable renders to determine if we should abort anyway because the render is no longer interesting.
      **/
     bool isRenderAbortable(int texIndex,U64 age) const
     {
         QMutexLocker k(&renderAgeMutex);
-        if (!currentRenderAges[texIndex].empty() && currentRenderAges[texIndex].front() == age) {
-            return false;
+      
+        
+        for (OnGoingRenders::const_iterator it = currentRenderAges[texIndex].begin(); it!=currentRenderAges[texIndex].end();++it) {
+            if (it->first == age) {
+                return it->second.aborted;
+            }
         }
+         //hmm something is wrong the render doesn't exist
         return true;
     }
     
@@ -321,25 +352,25 @@ public:
     
     bool addOngoingRender(int texIndex, U64 age) {
         QMutexLocker k(&renderAgeMutex);
-        if (!currentRenderAges[texIndex].empty() && currentRenderAges[texIndex].back() >= age) {
+        if (!currentRenderAges[texIndex].empty() && currentRenderAges[texIndex].rbegin()->first >= age) {
             return false;
         }
-        if (currentRenderAges[texIndex].size() > 1) {
-            currentRenderAges[texIndex].resize(1);
-        }
-        currentRenderAges[texIndex].push_back(age);
+       
+        OnGoingRenderInfo info;
+        info.aborted = false;
+        currentRenderAges[texIndex][age] = info;
         return true;
     }
     
     bool removeOngoingRender(int texIndex, U64 age) {
         QMutexLocker k(&renderAgeMutex);
-        int i = 0;
-        for (std::list<U64>::iterator it = currentRenderAges[texIndex].begin(); it != currentRenderAges[texIndex].end(); ++it, ++i) {
-            if (*it == age) {
+        for (OnGoingRenders::iterator it = currentRenderAges[texIndex].begin(); it!=currentRenderAges[texIndex].end();++it) {
+            if (it->first == age) {
                 currentRenderAges[texIndex].erase(it);
                 return true;
             }
         }
+
         return false;
     }
 
@@ -372,7 +403,10 @@ public:
 
     }
     
-    void reportProgress(const boost::shared_ptr<UpdateViewerParams>& originalParams, const std::list<RectI>& rectangles, const boost::shared_ptr<RequestedFrame>& request);
+    void reportProgress(const boost::shared_ptr<UpdateViewerParams>& originalParams,
+                        const std::list<RectI>& rectangles,
+                        const boost::shared_ptr<RenderStats>& stats,
+                        const boost::shared_ptr<RequestedFrame>& request);
 
 public Q_SLOTS:
 
@@ -407,7 +441,7 @@ public:
     Natron::ViewerColorSpaceEnum viewerParamsLut; /*!< a value coding the current color-space used to render.
                                                  0 = sRGB ,  1 = linear , 2 = Rec 709*/
     bool viewerParamsAutoContrast;
-    Natron::DisplayChannelsEnum viewerParamsChannels;
+    Natron::DisplayChannelsEnum viewerParamsChannels[2];
     Natron::ImageComponents viewerParamsLayer;
     Natron::ImageComponents viewerParamsAlphaLayer;
     std::string viewerParamsAlphaChannelName;
@@ -433,7 +467,6 @@ public:
     
     mutable QMutex currentlyUpdatingOpenGLViewerMutex;
     bool currentlyUpdatingOpenGLViewer;
-private:
     
     mutable QMutex renderAgeMutex; // protects renderAge lastRenderAge currentRenderAges
     U64 renderAge[2];
@@ -441,7 +474,8 @@ private:
     
     //A priority list recording the ongoing renders. This is used for abortable renders (i.e: when moving a slider or scrubbing the timeline)
     //The purpose of this is to always at least keep 1 active render (non abortable) and abort more recent renders that do no longer make sense
-    std::list<U64> currentRenderAges[2];
+    
+    OnGoingRenders currentRenderAges[2];
 };
 
 

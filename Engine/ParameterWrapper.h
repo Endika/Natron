@@ -1,12 +1,20 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 /**
 * @brief Simple wrap for the Knob class that is the API we want to expose to the Python
@@ -16,9 +24,11 @@
 #ifndef PARAMETERWRAPPER_H
 #define PARAMETERWRAPPER_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
@@ -168,7 +178,7 @@ protected:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    void _addAsDependencyOf(int fromExprDimension,Param* param);
+    void _addAsDependencyOf(int fromExprDimension,Param* param, int thisDimension);
 
 };
 
@@ -375,7 +385,7 @@ public:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    int addAsDependencyOf(int fromExprDimension,Param* param);
+    int addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension);
 
 };
 
@@ -520,7 +530,7 @@ public:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    double addAsDependencyOf(int fromExprDimension,Param* param);
+    double addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension);
 
 };
 
@@ -669,7 +679,7 @@ public:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    double addAsDependencyOf(int fromExprDimension,Param* param);
+    double addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension);
     
 };
 
@@ -695,6 +705,12 @@ public:
      **/
     void set(int x);
     void set(int x, int frame);
+    
+    /*
+     * @brief Set the value from label if it exists. 
+     * The label will be compared without case sensitivity to existing entries. If it's not found, nothing is done.
+     */
+    void set(const std::string& label);
     
     /**
      * @brief Returns the value held by the parameter. If it is animated, getValueAtTime
@@ -724,6 +740,11 @@ public:
      * @brief Set the default value for the given dimension
      **/
     void setDefaultValue(int value);
+    
+    /**
+     * @brief Set the default value from an existing entry. If it does not match (without case sensitivity) an existing entry, nothing is done.
+     **/
+    void setDefaultValue(const std::string& value);
     
     /**
      * @brief Return the default value for the given dimension
@@ -765,7 +786,7 @@ public:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    int addAsDependencyOf(int fromExprDimension,Param* param);
+    int addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension);
     
 };
 
@@ -836,7 +857,7 @@ public:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    bool addAsDependencyOf(int fromExprDimension,Param* param);
+    bool addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension);
     
 };
 
@@ -909,7 +930,7 @@ public:
      * when a dependency (through expressions) is destroyed (because the holding node has been removed).
      * You should not call this directly.
      **/
-    std::string addAsDependencyOf(int fromExprDimension,Param* param);
+    std::string addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension);
     
    
     

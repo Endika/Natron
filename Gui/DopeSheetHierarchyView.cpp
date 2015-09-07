@@ -1,8 +1,33 @@
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
+
+// ***** BEGIN PYTHON BLOCK *****
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+// ***** END PYTHON BLOCK *****
+
 #include "DopeSheetHierarchyView.h"
 
 #include <QDebug> //REMOVEME
 #include <QHeaderView>
 #include <QPainter>
+#include <QResizeEvent>
 #include <QStyleOption>
 
 #include "Engine/Node.h"
@@ -15,6 +40,7 @@
 #include "Gui/GuiAppInstance.h"
 #include "Gui/KnobGui.h"
 #include "Gui/NodeGui.h"
+#include "Gui/NodeSettingsPanel.h"
 
 
 typedef std::list<boost::shared_ptr<DSKnob> > DSKnobPtrList;
@@ -22,9 +48,13 @@ typedef std::list<boost::shared_ptr<DSKnob> > DSKnobPtrList;
 
 ////////////////////////// HierarchyViewSelectionModel //////////////////////////
 
-HierarchyViewSelectionModel::HierarchyViewSelectionModel(QAbstractItemModel *model,
-                                                         QObject *parent) :
-    QItemSelectionModel(model, parent)
+HierarchyViewSelectionModel::HierarchyViewSelectionModel(DopeSheet* dopesheetModel,
+                                                         HierarchyView* view,
+                                                         QAbstractItemModel *model,
+                                                         QObject *parent)
+: QItemSelectionModel(model, parent)
+, _dopesheetModel(dopesheetModel)
+, _view(view)
 {
     connect(model, SIGNAL(destroyed()),
             this, SLOT(deleteLater()));
@@ -33,34 +63,61 @@ HierarchyViewSelectionModel::HierarchyViewSelectionModel(QAbstractItemModel *mod
 HierarchyViewSelectionModel::~HierarchyViewSelectionModel()
 {}
 
+void
+HierarchyViewSelectionModel::selectInternal(const QItemSelection &userSelection,
+                                            QItemSelectionModel::SelectionFlags command,
+                                            bool recurse)
+{
+    QItemSelection finalSelection = userSelection;
+    
+    if (recurse) {
+        
+        QModelIndexList userSelectedIndexes = userSelection.indexes();
+        
+        for (QModelIndexList::const_iterator it = userSelectedIndexes.begin();
+             it != userSelectedIndexes.end();
+             ++it) {
+            const QModelIndex& index = (*it);
+            if (!index.isValid()) {
+                continue;
+            }
+            selectChildren(index, &finalSelection);
+            
+            QItemSelection unitedSelection = selection();
+            
+            if (command & QItemSelectionModel::Clear) {
+                unitedSelection.clear();
+            }
+            
+            unitedSelection.merge(finalSelection, command);
+
+            QTreeWidgetItem* treeItem = _view->getTreeItemForModelIndex(index);
+            if (treeItem) {
+                boost::shared_ptr<DSNode> isDsNode = _dopesheetModel->mapNameItemToDSNode(treeItem);
+            
+                if (!isDsNode && index.parent().isValid()) {
+                    checkParentsSelectedStates(index, command, unitedSelection, &finalSelection);
+                }
+            }
+            
+            
+        }
+    }
+    QItemSelectionModel::select(finalSelection, command);
+}
+
+void
+HierarchyViewSelectionModel::selectWithRecursion(const QItemSelection &userSelection,
+            QItemSelectionModel::SelectionFlags command,
+            bool recurse)
+{
+    selectInternal(userSelection, command, recurse);
+}
+
 void HierarchyViewSelectionModel::select(const QItemSelection &userSelection,
                                          QItemSelectionModel::SelectionFlags command)
 {
-    QItemSelection finalSelection = userSelection;
-
-    QModelIndexList userSelectedIndexes = userSelection.indexes();
-
-    for (QModelIndexList::const_iterator it = userSelectedIndexes.begin();
-         it != userSelectedIndexes.end();
-         ++it) {
-        QModelIndex index = (*it);
-
-        selectChildren(index, &finalSelection);
-
-        QItemSelection unitedSelection = selection();
-
-        if (command & QItemSelectionModel::Clear) {
-            unitedSelection.clear();
-        }
-
-        unitedSelection.merge(finalSelection, command);
-
-        if (index.parent().isValid()) {
-            checkParentsSelectedStates(index, command, unitedSelection, &finalSelection);
-        }
-    }
-
-    QItemSelectionModel::select(finalSelection, command);
+    selectInternal(userSelection, command, true);
 }
 
 void HierarchyViewSelectionModel::selectChildren(const QModelIndex &index, QItemSelection *selection) const
@@ -92,10 +149,26 @@ void HierarchyViewSelectionModel::checkParentsSelectedStates(const QModelIndex &
     std::list<QModelIndex> parentIndexes;
     {
         QModelIndex pIndex = index.parent();
-        while (pIndex.isValid()) {
+        QTreeWidgetItem* treeItem = _view->getTreeItemForModelIndex(pIndex);
+        boost::shared_ptr<DSNode> isParentNode;
+        if (treeItem) {
+            isParentNode = _dopesheetModel->mapNameItemToDSNode(treeItem);
+        }
+        int nbLvlOfNodesSelected = 0;
+        while (nbLvlOfNodesSelected < 1 && pIndex.isValid()) {
+            
+            if (isParentNode) {
+                ++nbLvlOfNodesSelected;
+            }
             parentIndexes.push_back(pIndex);
 
             pIndex = pIndex.parent();
+            if (pIndex.isValid()) {
+                treeItem = _view->getTreeItemForModelIndex(pIndex);
+                if (treeItem) {
+                    isParentNode = _dopesheetModel->mapNameItemToDSNode(treeItem);
+                }
+            }
         }
     }
 
@@ -231,17 +304,19 @@ public:
     // keyframe selection
     void selectKeyframes(const QList<QTreeWidgetItem *> &items);
 
+    
     /* attributes */
     HierarchyView *q_ptr;
     DopeSheet *dopeSheetModel;
-
     Gui *gui;
+    bool _canResizeOtherWidget;
 };
 
 HierarchyViewPrivate::HierarchyViewPrivate(HierarchyView *qq) :
     q_ptr(qq),
     dopeSheetModel(0),
-    gui(0)
+    gui(0),
+    _canResizeOtherWidget(true)
 {}
 
 HierarchyViewPrivate::~HierarchyViewPrivate()
@@ -252,7 +327,7 @@ HierarchyViewPrivate::~HierarchyViewPrivate()
  */
 void HierarchyViewPrivate::checkKnobsVisibleState(DSNode *dsNode)
 {
-    DSTreeItemKnobMap knobRows = dsNode->getItemKnobMap();
+    const DSTreeItemKnobMap& knobRows = dsNode->getItemKnobMap();
 
     for (DSTreeItemKnobMap::const_iterator it = knobRows.begin(); it != knobRows.end(); ++it) {
         boost::shared_ptr<DSKnob> knobContext = (*it).second;
@@ -276,16 +351,19 @@ void HierarchyViewPrivate::checkNodeVisibleState(DSNode *dsNode)
 {
     boost::shared_ptr<NodeGui> nodeGui = dsNode->getNodeGui();
 
-    bool showNode = nodeGui->isSettingsPanelVisible();
 
     DopeSheet::ItemType nodeType = dsNode->getItemType();
     QTreeWidgetItem *nodeItem = dsNode->getTreeItem();
 
+    bool showNode;
     if (nodeType == DopeSheet::ItemTypeCommon) {
         showNode = nodeHasAnimation(nodeGui);
-    }
-    else {
+    } else {
         showNode = true;
+    }
+    
+    if (!nodeGui->isSettingsPanelVisible()) {
+        showNode = false;
     }
 
     nodeItem->setData(0, QT_ROLE_CONTEXT_IS_ANIMATED, showNode);
@@ -398,7 +476,7 @@ void HierarchyViewPrivate::drawPluginIconArea(QPainter *p, boost::shared_ptr<DSN
         QPixmap pix;
 
         if (pix.load(iconFilePath.c_str())) {
-            pix = pix.scaled(NATRON_MEDIUM_BUTTON_SIZE - 2, NATRON_MEDIUM_BUTTON_SIZE - 2,
+            pix = pix.scaled(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE,
                              Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
             QRect areaRect = rowRect;
@@ -522,19 +600,23 @@ int HierarchyView::getHeightForItemAndChildren(QTreeWidgetItem *item) const
 void HierarchyViewPrivate::selectKeyframes(const QList<QTreeWidgetItem *> &items)
 {
     std::vector<DopeSheetKey> keys;
-
+    std::vector<boost::shared_ptr<DSNode> > nodes;
     Q_FOREACH (QTreeWidgetItem *item, items) {
         boost::shared_ptr<DSKnob> knobContext = dopeSheetModel->mapNameItemToDSKnob(item);
-
         if (knobContext) {
-            dopeSheetModel->getSelectionModel()->selectKeyframes(knobContext, &keys);
+            dopeSheetModel->getSelectionModel()->makeDopeSheetKeyframesForKnob(knobContext, &keys);
+        } else {
+            boost::shared_ptr<DSNode> nodeContext = dopeSheetModel->mapNameItemToDSNode(item);
+            if (nodeContext) {
+                nodes.push_back(nodeContext);
+            }
         }
     }
 
     DopeSheetSelectionModel::SelectionTypeFlags sFlags = DopeSheetSelectionModel::SelectionTypeAdd
-            | DopeSheetSelectionModel::SelectionTypeClear;
-
-    dopeSheetModel->getSelectionModel()->makeSelection(keys, sFlags);
+    | DopeSheetSelectionModel::SelectionTypeClear | DopeSheetSelectionModel::SelectionTypeRecurse;
+    
+    dopeSheetModel->getSelectionModel()->makeSelection(keys, nodes, sFlags);
 }
 
 HierarchyView::HierarchyView(DopeSheet *dopeSheetModel, Gui *gui, QWidget *parent) :
@@ -546,13 +628,14 @@ HierarchyView::HierarchyView(DopeSheet *dopeSheetModel, Gui *gui, QWidget *paren
 
     header()->close();
 
-    QTreeWidget::setSelectionModel(new HierarchyViewSelectionModel(this->model(), this));
+    QTreeWidget::setSelectionModel(new HierarchyViewSelectionModel(dopeSheetModel, this, this->model(), this));
 
     setSelectionMode(QAbstractItemView::ExtendedSelection);
     setColumnCount(1);
     setExpandsOnDoubleClick(false);
 
     setItemDelegate(new HierarchyViewItemDelegate(this));
+    setAttribute(Qt::WA_MacShowFocusRect,0);
 
     setStyleSheet("HierarchyView { border: 0px; }");
 
@@ -565,6 +648,21 @@ HierarchyView::HierarchyView(DopeSheet *dopeSheetModel, Gui *gui, QWidget *paren
 
 HierarchyView::~HierarchyView()
 {}
+
+void
+HierarchyView::setCanResizeOtherWidget(bool canResize)
+{
+    _imp->_canResizeOtherWidget = canResize;
+}
+
+void
+HierarchyView::resizeEvent(QResizeEvent* e)
+{
+    QTreeWidget::resizeEvent(e);
+    if (_imp->_canResizeOtherWidget && _imp->gui->isTripleSyncEnabled()) {
+        _imp->gui->setCurveEditorTreeWidth(e->size().width());
+    }
+}
 
 boost::shared_ptr<DSKnob> HierarchyView::getDSKnobAt(int y) const
 {
@@ -617,11 +715,18 @@ QTreeWidgetItem *HierarchyView::lastVisibleChild(QTreeWidgetItem *item) const
     return ret;
 }
 
+QTreeWidgetItem*
+HierarchyView::getTreeItemForModelIndex(const QModelIndex& index) const
+{
+    return itemFromIndex(index);
+}
+
 void HierarchyView::drawRow(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     QTreeWidgetItem *item = itemFromIndex(index);
 
     bool drawPluginIconToo = (item->data(0, QT_ROLE_CONTEXT_TYPE).toInt() < DopeSheet::ItemTypeKnobRoot);
+    bool isTreeViewTopItem = !itemAbove(item);
     boost::shared_ptr<DSNode> dsNode = _imp->dopeSheetModel->findParentDSNode(item);
 
     QRect rowRect = option.rect;
@@ -662,7 +767,7 @@ void HierarchyView::drawRow(QPainter *painter, const QStyleOptionViewItem &optio
 
         _imp->drawPluginIconArea(painter, dsNode, rowRect, drawPluginIconToo);
 
-        if (drawPluginIconToo) {
+        if (drawPluginIconToo && !isTreeViewTopItem) {
             _imp->drawNodeTopSeparation(painter, item, rowRect);
         }
 
@@ -828,32 +933,32 @@ void HierarchyView::onKeyframeSetOrRemoved(DSKnob *dsKnob)
     _imp->checkNodeVisibleState(parentNode.get());
 }
 
-void HierarchyView::onKeyframeSelectionChanged()
+void HierarchyView::onKeyframeSelectionChanged(bool recurse)
 {
     HierarchyViewSelectionModel *mySelecModel
             = dynamic_cast<HierarchyViewSelectionModel *>(selectionModel());
     assert(mySelecModel);
-
+    
     // Retrieve the knob contexts with selected keyframes
     DSKnobPtrList toCheck;
-    {
-        DSKeyPtrList selectedKeys = _imp->dopeSheetModel->getSelectionModel()->getSelectedKeyframes();
-
-        for (DSKeyPtrList::const_iterator it = selectedKeys.begin();
-             it != selectedKeys.end();
-             ++it) {
-            DSKeyPtr keyPtr = (*it);
-
-            toCheck.push_back(keyPtr->getContext());
-        }
+    DSKeyPtrList selectedKeys;
+    std::vector<boost::shared_ptr<DSNode> > selectedNodes;
+    
+    _imp->dopeSheetModel->getSelectionModel()->getCurrentSelection(&selectedKeys, &selectedNodes);
+    
+    for (DSKeyPtrList::const_iterator it = selectedKeys.begin();
+         it != selectedKeys.end();
+         ++it) {
+        toCheck.push_back((*it)->getContext());
     }
-
+    
+    
     disconnect(selectionModel(), SIGNAL(selectionChanged(QItemSelection, QItemSelection)),
                this, SLOT(onSelectionChanged()));
 
-    // Compose an tree selection from the selected keyframes
-    if (toCheck.empty()) {
-        mySelecModel->select(QItemSelection(), QItemSelectionModel::Clear);
+    // Compose tree selection from the selected keyframes
+    if (toCheck.empty() && selectedNodes.empty()) {
+        mySelecModel->selectWithRecursion(QItemSelection(), QItemSelectionModel::Clear, recurse);
     }
     else {
         std::set<QModelIndex> toSelect;
@@ -888,6 +993,10 @@ void HierarchyView::onKeyframeSelectionChanged()
                 toSelect.insert(indexFromItem(knobItem));
             }
         }
+        
+        for (std::vector<boost::shared_ptr<DSNode> >::iterator it = selectedNodes.begin(); it!=selectedNodes.end(); ++it) {
+            toSelect.insert(indexFromItem((*it)->getTreeItem()));
+        }
 
         QItemSelection selection;
 
@@ -900,7 +1009,7 @@ void HierarchyView::onKeyframeSelectionChanged()
         }
 
         QItemSelectionModel::SelectionFlags flags = QItemSelectionModel::ClearAndSelect;
-        mySelecModel->select(selection, flags);
+        mySelecModel->selectWithRecursion(selection, flags, recurse);
     }
 
     connect(selectionModel(), SIGNAL(selectionChanged(QItemSelection, QItemSelection)),

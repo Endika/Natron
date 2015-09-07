@@ -1,20 +1,29 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef CACHEENTRY_H
 #define CACHEENTRY_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <iostream>
 #include <cassert>
@@ -22,8 +31,9 @@
 #include <stdexcept>
 #include <vector>
 #include <fstream>
+
 #include <QtCore/QFile>
-#include <QtCore/QReadWriteLock>
+#include <QtCore/QMutex>
 #include <QtCore/QDir>
 #include <QtCore/QDebug>
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
@@ -273,7 +283,7 @@ public:
                 return true;
             } else {
                 int ret_code = std::remove( _path.c_str() );
-                (void)ret_code;
+                Q_UNUSED(ret_code);
                 return false;
             }
         }
@@ -313,7 +323,7 @@ public:
     const DataType* readable() const
     {
         if (_storageMode == eStorageModeDisk) {
-            return (const DataType*)_backingFile->data();
+            return _backingFile ? (const DataType*)_backingFile->data() : 0;
         } else {
             return _buffer.getData();
         }
@@ -457,8 +467,9 @@ public:
     virtual const KeyType & getKey() const = 0;
     virtual hash_type getHashKey() const = 0;
     virtual size_t size() const = 0;
-    virtual SequenceTime getTime() const = 0;
+    virtual double getTime() const = 0;
 };
+    
 
 /** @brief Implements AbstractCacheEntry. This class represents a combinaison of
  * a set of metadatas called 'Key' and a buffer.
@@ -469,6 +480,7 @@ template <typename DataType, typename KeyType, typename ParamsType>
 class CacheEntryHelper
     : public AbstractCacheEntry<KeyType>
 {
+    
 public:
     
     typedef DataType data_t;
@@ -486,7 +498,7 @@ public:
     , _cache()
     , _removeBackingFileBeforeDestruction(false)
     , _requestedStorage(eStorageModeNone)
-    , _entryLock(QReadWriteLock::Recursive)
+    , _entryLock(QMutex::Recursive)
     {
     }
 
@@ -508,7 +520,7 @@ public:
     , _removeBackingFileBeforeDestruction(false)
     , _requestedPath(path)
     , _requestedStorage(storage)
-    , _entryLock(QReadWriteLock::Recursive)
+    , _entryLock(QMutex::Recursive)
     {
     }
 
@@ -548,12 +560,12 @@ public:
         
         {
             {
-                QReadLocker k(&_entryLock);
+                QMutexLocker k(&_entryLock);
                 if (_data.isAllocated()) {
                     return;
                 }
             }
-            QWriteLocker k(&_entryLock);
+            QMutexLocker k(&_entryLock);
             allocate(_params->getElementsCount(),_requestedStorage,_requestedPath);
             onMemoryAllocated(false);
         }
@@ -576,7 +588,7 @@ public:
         assert(!_requestedPath.empty());
         
         {
-            QWriteLocker k(&_entryLock);
+            QMutexLocker k(&_entryLock);
             
             restoreBufferFromFile(_requestedPath);
             
@@ -651,7 +663,7 @@ public:
     void reOpenFileMapping() const
     {
         {
-            QWriteLocker k(&_entryLock);
+            QMutexLocker k(&_entryLock);
             _data.reOpenFileMapping();
         }
         if (_cache) {
@@ -668,7 +680,7 @@ public:
         bool dataAllocated = _data.isAllocated();
         int time = getTime();
         {
-            QWriteLocker k(&_entryLock);
+            QMutexLocker k(&_entryLock);
             
             _data.deallocate();
         }
@@ -702,7 +714,7 @@ public:
      **/
     size_t dataSize() const
     {
-        bool got = _entryLock.tryLockForRead();
+        bool got = _entryLock.tryLock();
         std::size_t r = _data.size();
         if (got) {
             _entryLock.unlock();
@@ -717,7 +729,7 @@ public:
     
     bool isAllocated() const
     {
-        QReadLocker k(&_entryLock);
+        QMutexLocker k(&_entryLock);
         return _data.isAllocated();
     }
 
@@ -733,7 +745,7 @@ public:
         bool isAlloc = _data.isAllocated();
         bool hasRemovedFile;
         {
-            QWriteLocker k(&_entryLock);
+            QMutexLocker k(&_entryLock);
             hasRemovedFile = _data.removeAnyBackingFile();
         }
         
@@ -752,11 +764,11 @@ public:
      * @brief To be called when an entry is going to be removed from the cache entirely.
      **/
     void scheduleForDestruction() {
-        QWriteLocker k(&_entryLock);
+        QMutexLocker k(&_entryLock);
         _removeBackingFileBeforeDestruction = true;
     }
 
-    virtual SequenceTime getTime() const OVERRIDE FINAL
+    virtual double getTime() const OVERRIDE FINAL
     {
         return _key.getTime();
     }
@@ -865,7 +877,7 @@ protected:
     bool _removeBackingFileBeforeDestruction;
     std::string _requestedPath;
     Natron::StorageModeEnum _requestedStorage;
-    mutable QReadWriteLock _entryLock;
+    mutable QMutex _entryLock;
 };
 }
 

@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 
 #include "BaseTest.h"
@@ -27,6 +36,7 @@
 #include "Engine/Curve.h"
 using namespace Natron;
 
+static AppManager* g_manager = 0;
 
 BaseTest::BaseTest()
     : testing::Test()
@@ -72,23 +82,23 @@ BaseTest::registerTestPlugins()
 void
 BaseTest::SetUp()
 {
-    AppManager* manager = new AppManager;
-    int argc = 0;
-    CLArgs cl;
-    manager->load(argc, 0, cl);
+    if (!g_manager) {
+        g_manager = new AppManager;
+        int argc = 0;
+        CLArgs cl;
+        g_manager->load(argc, 0, cl);
+    }
 
-    _app = manager->getTopLevelInstance();
-
+    _app = g_manager->getTopLevelInstance();
     registerTestPlugins();
+
 }
 
 void
 BaseTest::TearDown()
 {
-    _app->quit();
-    _app = 0;
     appPTR->setNumberOfThreads(0);
-    delete appPTR;
+ 
 }
 
 boost::shared_ptr<Natron::Node> BaseTest::createNode(const QString & pluginID,
@@ -144,7 +154,7 @@ BaseTest::disconnectNodes(boost::shared_ptr<Natron::Node> input,
 
         ///the input must have in its output the node 'output'
         EXPECT_TRUE( input->hasOutputConnected() );
-        const std::list<Natron::Node*> & outputs = input->getOutputs();
+        const std::list<Natron::Node*> & outputs = input->getGuiOutputs();
         bool foundOutput = false;
         for (std::list<Natron::Node* >::const_iterator it = outputs.begin(); it != outputs.end(); ++it) {
             if ( *it == output.get() ) {
@@ -154,7 +164,7 @@ BaseTest::disconnectNodes(boost::shared_ptr<Natron::Node> input,
         }
 
         ///the output must have in its inputs the node 'input'
-        const std::vector<boost::shared_ptr<Natron::Node> > & inputs = output->getInputs_mt_safe();
+        const std::vector<boost::shared_ptr<Natron::Node> > & inputs = output->getGuiInputs();
         int inputIndex = 0;
         bool foundInput = false;
         for (U32 i = 0; i < inputs.size(); ++i) {
@@ -178,7 +188,7 @@ BaseTest::disconnectNodes(boost::shared_ptr<Natron::Node> input,
     if (expectedReturnvalue) {
         ///check that the disconnection went OK
 
-        const std::list<Natron::Node*> & outputs = input->getOutputs();
+        const std::list<Natron::Node*> & outputs = input->getGuiOutputs();
         bool foundOutput = false;
         for (std::list<Natron::Node* >::const_iterator it = outputs.begin(); it != outputs.end(); ++it) {
             if ( (*it) == output.get() ) {
@@ -188,7 +198,7 @@ BaseTest::disconnectNodes(boost::shared_ptr<Natron::Node> input,
         }
 
         ///the output must have in its inputs the node 'input'
-        const std::vector<boost::shared_ptr<Natron::Node> > & inputs = output->getInputs_mt_safe();
+        const std::vector<boost::shared_ptr<Natron::Node> > & inputs = output->getGuiInputs();
         int inputIndex = 0;
         bool foundInput = false;
         for (U32 i = 0; i < inputs.size(); ++i) {
@@ -230,7 +240,7 @@ TEST_F(BaseTest,GenerateDot)
     w.firstFrame = INT_MIN;
     w.lastFrame = INT_MAX;
     works.push_back(w);
-    _app->startWritersRendering(works);
+    _app->startWritersRendering(false,works);
     
     EXPECT_TRUE(QFile::exists(filePath));
     QFile::remove(filePath);
@@ -248,7 +258,7 @@ TEST_F(BaseTest,SetValues)
     
     //Check that linear interpolation is working as intended
     KeyFrame kf;
-    radius->setInterpolationAtTime(0, 0, Natron::eKeyframeTypeLinear, &kf);
+    radius->setInterpolationAtTime(Natron::eCurveChangeReasonInternal,0, 0, Natron::eKeyframeTypeLinear, &kf);
     radius->setValueAtTime(0, 0, 0);
     radius->setValueAtTime(100, 100, 0);
     for (int i = 0; i <= 100; ++i) {

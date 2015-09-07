@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Settings.h"
 
@@ -36,6 +45,8 @@
 
 #define NATRON_CUSTOM_OCIO_CONFIG_NAME "Custom config"
 
+#define NATRON_DEFAULT_APPEARANCE_VERSION 1
+
 using namespace Natron;
 
 
@@ -44,6 +55,7 @@ Settings::Settings(AppInstance* appInstance)
     , _restoringSettings(false)
     , _ocioRestored(false)
     , _settingsExisted(false)
+    , _defaultAppearanceOutdated(false)
 {
 }
 
@@ -120,6 +132,15 @@ Settings::initializeKnobs()
                                    "before being fetched. Otherwise they are in the same colorspace "
                                    "as the viewer they were picked from.");
     _generalTab->addKnob(_linearPickers);
+    
+    _convertNaNValues = Natron::createKnob<Bool_Knob>(this, "Convert NaN values");
+    _convertNaNValues->setName("convertNaNs");
+    _convertNaNValues->setAnimationEnabled(false);
+    _convertNaNValues->setHintToolTip("When activated, any pixel that is a Not-a-Number will be converted to 1 to avoid potential crashes from "
+                                      "downstream nodes. These values can be produced by faulty plug-ins when they use wrong arithmetic such as "
+                                      "division by zero. Disabling this option will keep the NaN(s) in the buffers: this may lead to an "
+                                      "undefined behavior.");
+    _generalTab->addKnob(_convertNaNValues);
 
     _numberOfThreads = Natron::createKnob<Int_Knob>(this, "Number of render threads (0=\"guess\")");
     _numberOfThreads->setName("noRenderThreads");
@@ -291,6 +312,12 @@ Settings::initializeKnobs()
     
     //////////////APPEARANCE TAB/////////////////
     _appearanceTab = Natron::createKnob<Page_Knob>(this, "Appearance");
+    
+    _defaultAppearanceVersion = Natron::createKnob<Int_Knob>(this, "Appearance version");
+    _defaultAppearanceVersion->setName("appearanceVersion");
+    _defaultAppearanceVersion->setAnimationEnabled(false);
+    _defaultAppearanceVersion->setSecret(true);
+    _appearanceTab->addKnob(_defaultAppearanceVersion);
     
     _systemFontChoice = Natron::createKnob<Choice_Knob>(this, "Font");
     _systemFontChoice->setHintToolTip("List of all fonts available on your system");
@@ -604,6 +631,17 @@ Settings::initializeKnobs()
     _viewersTab->addKnob(_autoProxyLevel);
     
     
+    _enableProgressReport = Natron::createKnob<Bool_Knob>(this, "Enable progress-report (experimental, slower)");
+    _enableProgressReport->setName("inViewerProgress");
+    _enableProgressReport->setAnimationEnabled(false);
+    _enableProgressReport->setHintToolTip("When enabled, the viewer will decompose the portion to render in small tiles and will "
+                                          "display them whenever they are ready to be displayed. This should provide faster results "
+                                          "on partial images. Note that this option does not support well all effects that have "
+                                          "a larger region to compute that what the real render window is (e.g: Blur). As a result of this, "
+                                          "any graph containing such effect(s) will be slower to render on the viewer than when this option "
+                                          "is unchecked.");
+    _viewersTab->addKnob(_enableProgressReport);
+    
     /////////// Nodegraph tab
     _nodegraphTab = Natron::createKnob<Page_Knob>(this, "Nodegraph");
     
@@ -677,7 +715,8 @@ Settings::initializeKnobs()
                                                "Changing this option will not affect already existing nodes, unless a restart of Natron is made.");
     _usePluginIconsInNodeGraph->setAnimationEnabled(false);
     _nodegraphTab->addKnob(_usePluginIconsInNodeGraph);
-
+    
+   
     _defaultNodeColor = Natron::createKnob<Color_Knob>(this, "Default node color",3);
     _defaultNodeColor->setName("defaultNodeColor");
     _defaultNodeColor->setAnimationEnabled(false);
@@ -947,9 +986,9 @@ Settings::initializeKnobs()
     _extraPluginPaths->setMultiPath(true);
     _pluginsTab->addKnob(_extraPluginPaths);
     
-    _templatesPluginPaths = Natron::createKnob<Path_Knob>(this, "Group plugins search path");
+    _templatesPluginPaths = Natron::createKnob<Path_Knob>(this, "PyPlugs search path");
     _templatesPluginPaths->setName("groupPluginsSearchPath");
-    _templatesPluginPaths->setHintToolTip("Search path where " NATRON_APPLICATION_NAME " should scan for Python group scripts. "
+    _templatesPluginPaths->setHintToolTip("Search path where " NATRON_APPLICATION_NAME " should scan for Python group scripts (PyPlugs). "
                                                                                        "The search paths for groups can also be specified using the "
                                                                                        "NATRON_PLUGIN_PATH environment variable.");
     _templatesPluginPaths->setMultiPath(true);
@@ -1066,6 +1105,7 @@ Settings::setDefaultValues()
     _autoSaveDelay->setDefaultValue(5, 0);
     _maxUndoRedoNodeGraph->setDefaultValue(20, 0);
     _linearPickers->setDefaultValue(true,0);
+    _convertNaNValues->setDefaultValue(true);
     _snapNodesToConnections->setDefaultValue(true);
     _useBWIcons->setDefaultValue(false);
     _useNodeGraphHints->setDefaultValue(true);
@@ -1099,6 +1139,7 @@ Settings::setDefaultValues()
     _autoWipe->setDefaultValue(false);
     _autoProxyWhenScrubbingTimeline->setDefaultValue(true);
     _autoProxyLevel->setDefaultValue(1);
+    _enableProgressReport->setDefaultValue(false);
     
     _warnOcioConfigKnobChanged->setDefaultValue(true);
     _ocioStartupCheck->setDefaultValue(true);
@@ -1177,9 +1218,9 @@ Settings::setDefaultValues()
     _echoVariableDeclarationToPython->setDefaultValue(true);
 
     
-    _sunkenColor->setDefaultValue(0.15,0);
-    _sunkenColor->setDefaultValue(0.15,1);
-    _sunkenColor->setDefaultValue(0.15,2);
+    _sunkenColor->setDefaultValue(0.12,0);
+    _sunkenColor->setDefaultValue(0.12,1);
+    _sunkenColor->setDefaultValue(0.12,2);
     
     _baseColor->setDefaultValue(0.19,0);
     _baseColor->setDefaultValue(0.19,1);
@@ -1531,6 +1572,13 @@ Settings::restoreSettings()
             _natronSettingsExist->setValue(true, 0);
             saveSetting(_natronSettingsExist.get());
         }
+        
+        int appearanceVersion = _defaultAppearanceVersion->getValue();
+        if (_settingsExisted && appearanceVersion < NATRON_DEFAULT_APPEARANCE_VERSION) {
+            _defaultAppearanceOutdated = true;
+            _defaultAppearanceVersion->setValue(NATRON_DEFAULT_APPEARANCE_VERSION, 0);
+            saveSetting(_defaultAppearanceVersion.get());
+        }
 
         appPTR->setNThreadsPerEffect(getNumberOfThreadsPerEffect());
         appPTR->setNThreadsToRender(getNumberOfThreads());
@@ -1575,7 +1623,8 @@ Settings::tryLoadOpenColorIOConfig()
             for (int i = 0; i < defaultConfigsPaths.size(); ++i) {
                 QDir defaultConfigsDir(defaultConfigsPaths[i]);
                 if ( !defaultConfigsDir.exists() ) {
-                    qDebug() << "Attempt to read an OpenColorIO configuration but the configuration directory does not exist.";
+                    qDebug() << "Attempt to read an OpenColorIO configuration but the configuration directory"
+                    << defaultConfigsPaths[i] << "does not exist.";
                     continue;
                 }
                 ///try to open the .ocio config file first in the defaultConfigsDir
@@ -1605,7 +1654,9 @@ Settings::tryLoadOpenColorIOConfig()
         }
     }
     _ocioRestored = true;
+#ifdef DEBUG
     qDebug() << "setting OCIO=" << configFile;
+#endif
     qputenv( NATRON_OCIO_ENV_VAR_NAME, configFile.toUtf8() );
 
     std::string stdConfigFile = configFile.toStdString();
@@ -2044,6 +2095,11 @@ Settings::populatePluginsTab(std::vector<Natron::Plugin*>& pluginsToIgnore)
         assert(it->second.size() > 0);
         
         Natron::Plugin* plugin  = *it->second.rbegin();
+        assert(plugin);
+        
+        if (plugin->getIsForInternalUseOnly()) {
+            continue;
+        }
         
         boost::shared_ptr<Group_Knob> group;
         const QStringList& grouping = plugin->getGrouping();
@@ -2061,7 +2117,7 @@ Settings::populatePluginsTab(std::vector<Natron::Plugin*>& pluginsToIgnore)
         }
         
         ///Create checkbox to activate/deactivate the plug-in
-        std::string pluginName = plugin->generateUserFriendlyPluginID().toStdString();
+        std::string pluginName = plugin->getPluginID().toStdString();
         
         boost::shared_ptr<String_Knob> pluginLabel = Natron::createKnob<String_Knob>(this, pluginName);
         pluginLabel->setAsLabel();
@@ -2077,7 +2133,7 @@ Settings::populatePluginsTab(std::vector<Natron::Plugin*>& pluginsToIgnore)
         
         
         boost::shared_ptr<Bool_Knob> pluginActivation = Natron::createKnob<Bool_Knob>(this, "Enabled");
-        pluginActivation->setDefaultValue(filterDefaultActivatedPlugin(plugin->getPluginID()));
+        pluginActivation->setDefaultValue(filterDefaultActivatedPlugin(plugin->getPluginID()) && plugin->getIsUserCreatable());
         pluginActivation->setName(it->first + ".enabled");
         pluginActivation->setAnimationEnabled(false);
         pluginActivation->setAddNewLine(false);
@@ -2803,8 +2859,6 @@ Settings::getAltTextColor(double* r,double* g,double* b) const
     *b = _altTextColor->getValue(2);
 }
 
-
-
 void
 Settings::getTimelinePlayheadColor(double* r,double* g,double* b) const
 {
@@ -2933,4 +2987,53 @@ unsigned int
 Settings::getAutoProxyMipMapLevel() const
 {
     return (unsigned int)_autoProxyLevel->getValue() + 1;
+}
+
+bool
+Settings::isNaNHandlingEnabled() const
+{
+    return _convertNaNValues->getValue();
+}
+
+
+void
+Settings::setOnProjectCreatedCB(const std::string& func)
+{
+    _onProjectCreated->setValue(func, 0);
+}
+
+void
+Settings::setOnProjectLoadedCB(const std::string& func)
+{
+    _defaultOnProjectLoaded->setValue(func, 0);
+}
+
+bool
+Settings::isInViewerProgressReportEnabled() const
+{
+    return _enableProgressReport->getValue();
+}
+
+bool
+Settings::isDefaultAppearanceOutdated() const
+{
+    return _defaultAppearanceOutdated;
+}
+
+void
+Settings::restoreDefaultAppearance()
+{
+    std::vector< boost::shared_ptr<KnobI> > children = _appearanceTab->getChildren();
+    for (std::size_t i = 0; i < children.size(); ++i) {
+        Color_Knob* isColorKnob = dynamic_cast<Color_Knob*>(children[i].get());
+        if (isColorKnob && isColorKnob->isSimplified()) {
+            isColorKnob->blockValueChanges();
+            for (int j = 0; j < isColorKnob->getDimension(); ++j) {
+                isColorKnob->resetToDefaultValue(j);
+            }
+            isColorKnob->unblockValueChanges();
+        }
+    }
+    _defaultAppearanceOutdated = false;
+    appPTR->reloadStylesheets();
 }

@@ -1,9 +1,29 @@
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
+
 #ifndef DOPESHEET_H
 #define DOPESHEET_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
@@ -22,7 +42,18 @@ CLANG_DIAG_ON(uninitialized)
 #include "Global/GlobalDefines.h"
 #include "Global/Macros.h"
 
+#define kReaderParamNameFirstFrame "firstFrame"
+#define kReaderParamNameLastFrame "lastFrame"
+#define kReaderParamNameOriginalFrameRange "originalFrameRange"
+#define kReaderParamNameStartingTime "startingTime"
+#define kReaderParamNameTimeOffset "timeOffset"
+
+#define kRetimeParamNameSpeed "speed"
+#define kFrameRangeParamNameFrameRange "frameRange"
+#define kTimeOffsetParamNameTimeOffset "timeOffset"
+
 class DopeSheetPrivate;
+class DopeSheetEditor;
 class DopeSheetSelectionModel;
 class DopeSheetSelectionModelPrivate;
 class DSKnobPrivate;
@@ -35,7 +66,9 @@ class NodeGroup;
 class NodeGui;
 class QUndoCommand;
 class TimeLine;
-
+namespace Transform {
+    struct Matrix3x3;
+}
 namespace Natron {
 class Node;
 }
@@ -101,7 +134,7 @@ public:
         ItemTypeKnobDim
     };
 
-    DopeSheet(Gui *gui, const boost::shared_ptr<TimeLine> &timeline);
+    DopeSheet(Gui *gui, DopeSheetEditor* editor, const boost::shared_ptr<TimeLine> &timeline);
     ~DopeSheet();
 
     // Model specific
@@ -128,19 +161,23 @@ public:
     Natron::Node *getNearestReader(DSNode *timeNode) const;
 
     DopeSheetSelectionModel *getSelectionModel() const;
+    
 
     // User interaction
     void deleteSelectedKeyframes();
 
-    void moveSelectedKeys(double dt);
+    void moveSelectedKeysAndNodes(double dt);
     void trimReaderLeft(const boost::shared_ptr<DSNode> &reader, double newFirstFrame);
     void trimReaderRight(const boost::shared_ptr<DSNode> &reader, double newLastFrame);
+    
+    bool canSlipReader(const boost::shared_ptr<DSNode> &reader) const;
+    
     void slipReader(const boost::shared_ptr<DSNode> &reader, double dt);
-    void moveReader(const boost::shared_ptr<DSNode> &reader, double dt);
-    void moveGroup(const boost::shared_ptr<DSNode> &group, double dt);
     void copySelectedKeys();
     void pasteKeys();
     void setSelectedKeysInterpolation(Natron::KeyframeTypeEnum keyType);
+    
+    void transformSelectedKeys(const Transform::Matrix3x3& transform);
 
     // Undo/redo
     void setUndoStackActive();
@@ -231,7 +268,7 @@ public:
     boost::shared_ptr<NodeGui> getNodeGui() const;
     boost::shared_ptr<Natron::Node> getInternalNode() const;
 
-    DSTreeItemKnobMap getItemKnobMap() const;
+    const DSTreeItemKnobMap& getItemKnobMap() const;
 
     DopeSheet::ItemType getItemType() const;
 
@@ -333,7 +370,7 @@ private:
  */
 struct DopeSheetKey
 {
-    DopeSheetKey(const boost::shared_ptr<DSKnob> &knob, KeyFrame kf) :
+    DopeSheetKey(const boost::shared_ptr<DSKnob> &knob, const KeyFrame& kf) :
         context(knob),
         key(kf)
     {
@@ -405,7 +442,8 @@ public:
         SelectionTypeNoSelection = 0x0,
         SelectionTypeClear = 0x1,
         SelectionTypeAdd = 0x2,
-        SelectionTypeToggle = 0x4
+        SelectionTypeToggle = 0x4,
+        SelectionTypeRecurse = 0x8
     };
 
     Q_DECLARE_FLAGS(SelectionTypeFlags, SelectionType)
@@ -413,30 +451,42 @@ public:
     DopeSheetSelectionModel(DopeSheet *dopeSheet);
     ~DopeSheetSelectionModel();
 
-    void selectAllKeyframes();
-    void selectKeyframes(const boost::shared_ptr<DSKnob> &dsKnob, std::vector<DopeSheetKey> *result);
+    void selectAll();
+    void makeDopeSheetKeyframesForKnob(const boost::shared_ptr<DSKnob> &dsKnob, std::vector<DopeSheetKey> *result);
 
     void clearKeyframeSelection();
-    void makeSelection(const std::vector<DopeSheetKey> &keys, DopeSheetSelectionModel::SelectionTypeFlags selectionFlags);
+    void makeSelection(const std::vector<DopeSheetKey> &keys,
+                       const std::vector<boost::shared_ptr<DSNode> >& rangeNodes,
+                       DopeSheetSelectionModel::SelectionTypeFlags selectionFlags);
 
     bool isEmpty() const;
 
-    DSKeyPtrList getSelectedKeyframes() const;
-    std::vector<DopeSheetKey> getSelectionCopy() const;
+    void getCurrentSelection(DSKeyPtrList* keys, std::vector<boost::shared_ptr<DSNode> >* nodes) const;
+    
+    std::vector<DopeSheetKey> getKeyframesSelectionCopy() const;
 
+    bool hasSingleKeyFrameTimeSelected(int* time) const;
+    
     int getSelectedKeyframesCount() const;
-
+    
     bool keyframeIsSelected(const boost::shared_ptr<DSKnob> &dsKnob, const KeyFrame &keyframe) const;
+    
     DSKeyPtrList::iterator keyframeIsSelected(const DopeSheetKey &key) const;
 
-    void emit_keyframeSelectionChanged();
+    bool rangeIsSelected(const boost::shared_ptr<DSNode>& node) const;
+    
+    void emit_keyframeSelectionChanged(bool recurse);
 
     void onNodeAboutToBeRemoved(const boost::shared_ptr<DSNode> &removed);
-
+    
 Q_SIGNALS:
-    void keyframeSelectionChangedFromModel();
+    void keyframeSelectionChangedFromModel(bool recurse);
 
 private:
+    
+    std::list<boost::weak_ptr<DSNode> >::iterator isRangeNodeSelected(const boost::shared_ptr<DSNode>& node) ;
+
+    
     boost::scoped_ptr<DopeSheetSelectionModelPrivate> _imp;
 };
 

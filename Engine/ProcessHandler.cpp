@@ -1,18 +1,30 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "ProcessHandler.h"
+
+#include <stdexcept>
 
 #include <QProcess>
 #include <QLocalServer>
@@ -55,8 +67,9 @@ ProcessHandler::ProcessHandler(AppInstance* app,
     _ipcServer->listen(serverName);
 
 
-    _processArgs << projectPath << "-b" << "-w" << writer->getScriptName_mt_safe().c_str();
-    _processArgs << "--IPCpipe" << ( _ipcServer->fullServerName() );
+    _processArgs << "-b" << "-w" << writer->getScriptName_mt_safe().c_str();
+    _processArgs << "--IPCpipe" << QString("\"") + _ipcServer->fullServerName() + QString("\"");
+    _processArgs << QString("\"") + projectPath + QString("\"");
 
     ///connect the useful slots of the process
     QObject::connect( _process,SIGNAL( readyReadStandardOutput() ),this,SLOT( onStandardOutputBytesWritten() ) );
@@ -78,12 +91,18 @@ ProcessHandler::~ProcessHandler()
 {
     Q_EMIT deleted();
 
-    _ipcServer->close();
-    _bgProcessInputSocket->close();
-    _process->close();
-    delete _process;
-    delete _ipcServer;
-    delete _bgProcessInputSocket;
+    if (_ipcServer) {
+        _ipcServer->close();
+        delete _ipcServer;
+    }
+    if (_bgProcessInputSocket) {
+        _bgProcessInputSocket->close();
+        delete _bgProcessInputSocket;
+    }
+    if (_process) {
+        _process->close();
+        delete _process;
+    }
 }
 
 void
@@ -124,7 +143,23 @@ ProcessHandler::onDataWrittenToSocket()
     _processLog.append("Message received: " + str + '\n');
     if ( str.startsWith(kFrameRenderedStringShort) ) {
         str = str.remove(kFrameRenderedStringShort);
-        Q_EMIT frameRendered( str.toInt() );
+        
+        if (!str.isEmpty()) {
+            if (!str.contains(';')) {
+                //The report does not have extended timer infos
+                Q_EMIT frameRendered( str.toInt() );
+            } else {
+                QStringList splits = str.split(';');
+                if (splits.size() == 3) {
+                    Q_EMIT frameRenderedWithTimer(splits[0].toInt(), splits[1].toDouble(), splits[2].toDouble());
+                } else {
+                    if (!splits.isEmpty()) {
+                        Q_EMIT frameRendered(splits[0].toInt());
+                    }
+                }
+            }
+        }
+        
     } else if ( str.startsWith(kRenderingFinishedStringShort) ) {
         ///don't do anything
     } else if ( str.startsWith(kProgressChangedStringShort) ) {
@@ -165,7 +200,9 @@ void
 ProcessHandler::onStandardOutputBytesWritten()
 {
     QString str( _process->readAllStandardOutput().data() );
-
+#ifdef DEBUG
+    qDebug() << "Message(stdout):" << str;
+#endif
     _processLog.append("Message(stdout): " + str) + '\n';
 }
 
@@ -173,7 +210,9 @@ void
 ProcessHandler::onStandardErrorBytesWritten()
 {
     QString str( _process->readAllStandardError().data() );
-
+#ifdef DEBUG
+    qDebug() << "Message(stderr):" << str;
+#endif
     _processLog.append("Error(stderr): " + str) + '\n';
 }
 
@@ -316,6 +355,7 @@ ProcessInputChannel::initialize()
     _backgroundOutputPipe = new QLocalSocket();
     QObject::connect( _backgroundOutputPipe, SIGNAL( connected() ), this, SLOT( onOutputPipeConnectionMade() ) );
     _backgroundOutputPipe->connectToServer(_mainProcessServerName,QLocalSocket::ReadWrite);
+    std::cout << "Attempting connection to " << _mainProcessServerName.toStdString() << std::endl;
 
     _backgroundIPCServer = new QLocalServer();
     QObject::connect( _backgroundIPCServer,SIGNAL( newConnection() ),this,SLOT( onNewConnectionPending() ) );

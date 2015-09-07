@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "NodeGroup.h"
 
@@ -21,21 +30,25 @@
 #include <QThreadPool>
 #include <QCoreApplication>
 #include <QTextStream>
+#include <algorithm> // min, max
 
 #include "Engine/AppInstance.h"
-#include "Engine/Node.h"
-#include "Engine/OutputSchedulerThread.h"
-#include "Engine/Project.h"
-#include "Engine/KnobTypes.h"
-#include "Engine/KnobFile.h"
-#include "Engine/TimeLine.h"
-#include "Engine/NoOp.h"
-#include "Engine/ViewerInstance.h"
-#include "Engine/Plugin.h"
-#include "Engine/NodeGuiI.h"
 #include "Engine/Curve.h"
+#include "Engine/GroupInput.h"
+#include "Engine/GroupOutput.h"
+#include "Engine/Image.h"
+#include "Engine/KnobFile.h"
+#include "Engine/KnobTypes.h"
+#include "Engine/Node.h"
 #include "Engine/NodeGraphI.h"
+#include "Engine/NodeGuiI.h"
+#include "Engine/OutputSchedulerThread.h"
+#include "Engine/Plugin.h"
+#include "Engine/Project.h"
 #include "Engine/RotoContext.h"
+#include "Engine/Settings.h"
+#include "Engine/TimeLine.h"
+#include "Engine/ViewerInstance.h"
 
 #define NATRON_PYPLUG_EXPORTER_VERSION 1
 
@@ -256,6 +269,20 @@ NodeCollection::quitAnyProcessingForAllNodes()
     setMustQuitProcessingRecursive(false, this);
 }
 
+void
+NodeCollection::resetTotalTimeSpentRenderingForAllNodes()
+{
+    QMutexLocker k(&_imp->nodesMutex);
+    for (NodeList::iterator it = _imp->nodes.begin(); it != _imp->nodes.end(); ++it) {
+        Natron::EffectInstance* effect = (*it)->getLiveInstance();
+        effect->resetTotalTimeSpentRendering();
+        NodeGroup* isGroup = dynamic_cast<NodeGroup*>(effect);
+        if (isGroup) {
+            isGroup->resetTotalTimeSpentRenderingForAllNodes();
+        }
+    }
+}
+
 bool
 NodeCollection::hasNodeRendering() const
 {
@@ -298,7 +325,7 @@ NodeCollection::refreshViewersAndPreviews()
             } else {
                 ViewerInstance* n = dynamic_cast<ViewerInstance*>((*it)->getLiveInstance());
                 if (n) {
-                    n->getRenderEngine()->renderCurrentFrame(true);
+                    n->renderCurrentFrame(true);
                 }
             }
         }
@@ -588,7 +615,7 @@ NodeCollection::autoConnectNodes(const NodePtr& selected,const NodePtr& created)
         if (selectedInput != -1) {
             bool ok = connectNodes(selectedInput, created, selected.get(),true);
             assert(ok);
-            (void)ok;
+            Q_UNUSED(ok);
             ret = true;
         } else {
             ret = false;
@@ -605,8 +632,8 @@ NodeCollection::autoConnectNodes(const NodePtr& selected,const NodePtr& created)
                 if (it->first->getParentMultiInstanceName().empty()) {
                     bool ok = disconnectNodes(selected.get(), it->first);
                     assert(ok);
-                    (void)ok;
-                    (void)connectNodes(it->second, created, it->first);
+                    ok = connectNodes(it->second, created, it->first);
+                    Q_UNUSED(ok);
                     //assert(ok); Might not be ok if the disconnectNodes() action above was queued
                 }
             }
@@ -616,7 +643,7 @@ NodeCollection::autoConnectNodes(const NodePtr& selected,const NodePtr& created)
         if (createdInput != -1) {
             bool ok = connectNodes(createdInput, selected, created.get());
             assert(ok);
-            (void)ok;
+            Q_UNUSED(ok);
             ret = true;
         } else {
             ret = false;
@@ -821,30 +848,35 @@ NodeCollection::checkIfNodeNameExists(const std::string & n,const Natron::Node* 
     return false;
 }
 
-void
-NodeCollection::recomputeFrameRangeForAllReaders(int* firstFrame,int* lastFrame)
+static void recomputeFrameRangeForAllReadersInternal(NodeCollection* group, int* firstFrame,int* lastFrame, bool setFrameRange)
 {
-    NodeList nodes = getNodes();
+    NodeList nodes = group->getNodes();
     for (NodeList::iterator it = nodes.begin(); it != nodes.end(); ++it) {
         if ((*it)->isActivated()) {
             
             if ((*it)->getLiveInstance()->isReader()) {
-                int thisFirst,thislast;
+                double thisFirst,thislast;
                 (*it)->getLiveInstance()->getFrameRange_public((*it)->getHashValue(), &thisFirst, &thislast);
                 if (thisFirst != INT_MIN) {
-                    *firstFrame = std::min(*firstFrame, thisFirst);
+                    *firstFrame = setFrameRange ? thisFirst : std::min(*firstFrame, (int)thisFirst);
                 }
                 if (thislast != INT_MAX) {
-                    *lastFrame = std::max(*lastFrame, thislast);
+                    *lastFrame = setFrameRange ? thislast : std::max(*lastFrame, (int)thislast);
                 }
             } else {
                 NodeGroup* isGrp = dynamic_cast<NodeGroup*>((*it)->getLiveInstance());
                 if (isGrp) {
-                    recomputeFrameRangeForAllReaders(firstFrame, lastFrame);
+                    recomputeFrameRangeForAllReadersInternal(isGrp, firstFrame, lastFrame, false);
                 }
             }
         }
     }
+}
+
+void
+NodeCollection::recomputeFrameRangeForAllReaders(int* firstFrame,int* lastFrame)
+{
+    recomputeFrameRangeForAllReadersInternal(this,firstFrame,lastFrame,true);
 }
 
 void
@@ -862,6 +894,9 @@ NodeCollection::forceGetClipPreferencesOnAllTrees()
 }
 
 
+
+
+
 void
 NodeCollection::setParallelRenderArgs(int time,
                                       int view,
@@ -869,12 +904,19 @@ NodeCollection::setParallelRenderArgs(int time,
                                       bool isSequential,
                                       bool canAbort,
                                       U64 renderAge,
-                                      Natron::OutputEffectInstance* renderRequester,
+                                      const boost::shared_ptr<Natron::Node>& treeRoot,
+                                      const FrameRequestMap* request,
                                       int textureIndex,
                                       const TimeLine* timeline,
                                       const boost::shared_ptr<Natron::Node>& activeRotoPaintNode,
-                                      bool isAnalysis)
+                                      bool isAnalysis,
+                                      bool draftMode,
+                                      bool viewerProgressReportEnabled,
+                                      const boost::shared_ptr<RenderStats>& stats)
 {
+    
+    bool doNanHandling = appPTR->getCurrentSettings()->isNaNHandlingEnabled();
+    
     NodeList nodes = getNodes();
     for (NodeList::iterator it = nodes.begin(); it != nodes.end(); ++it) {
         assert(*it);
@@ -891,11 +933,43 @@ NodeCollection::setParallelRenderArgs(int time,
             roto->getRotoPaintTreeNodes(&rotoPaintNodes);
         }
         
-        liveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, canAbort, (*it)->getHashValue(),
-                                               rotoAge,renderAge,renderRequester,textureIndex, timeline, isAnalysis,duringPaintStrokeCreation, rotoPaintNodes, safety);
-        
+        {
+            U64 nodeHash = 0;
+            bool hashSet = false;
+            boost::shared_ptr<NodeFrameRequest> nodeRequest;
+            if (request) {
+                FrameRequestMap::const_iterator foundRequest = request->find(*it);
+                if (foundRequest != request->end()) {
+                    nodeRequest = foundRequest->second;
+                    nodeHash = nodeRequest->nodeHash;
+                    hashSet = true;
+                }
+            }
+            if (!hashSet) {
+                nodeHash = (*it)->getHashValue();
+            }
+            
+            liveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, canAbort, nodeHash,
+                                                   rotoAge,renderAge,treeRoot, nodeRequest,textureIndex, timeline, isAnalysis,duringPaintStrokeCreation, rotoPaintNodes, safety, doNanHandling, draftMode, viewerProgressReportEnabled, stats);
+        }
         for (NodeList::iterator it2 = rotoPaintNodes.begin(); it2 != rotoPaintNodes.end(); ++it2) {
-            (*it2)->getLiveInstance()->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, canAbort, (*it2)->getHashValue(), (*it2)->getRotoAge(), renderAge, renderRequester, textureIndex, timeline, isAnalysis, activeRotoPaintNode && (*it2)->isDuringPaintStrokeCreation(), NodeList(), (*it2)->getCurrentRenderThreadSafety());
+            
+            boost::shared_ptr<NodeFrameRequest> childRequest;
+            U64 nodeHash = 0;
+            bool hashSet = false;
+            if (request) {
+                FrameRequestMap::const_iterator foundRequest = request->find(*it2);
+                if (foundRequest != request->end()) {
+                    childRequest = foundRequest->second;
+                    nodeHash = childRequest->nodeHash;
+                    hashSet = true;
+                }
+            }
+            if (!hashSet) {
+                nodeHash = (*it2)->getHashValue();
+            }
+            
+            (*it2)->getLiveInstance()->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, canAbort, nodeHash, (*it2)->getRotoAge(), renderAge, treeRoot, childRequest, textureIndex, timeline, isAnalysis, activeRotoPaintNode && (*it2)->isDuringPaintStrokeCreation(), NodeList(), (*it2)->getCurrentRenderThreadSafety(), doNanHandling, draftMode, viewerProgressReportEnabled,stats);
         }
         
         if ((*it)->isMultiInstance()) {
@@ -905,11 +979,27 @@ NodeCollection::setParallelRenderArgs(int time,
             NodeList children;
             (*it)->getChildrenMultiInstance(&children);
             for (NodeList::iterator it2 = children.begin(); it2!=children.end(); ++it2) {
+                
+                boost::shared_ptr<NodeFrameRequest> childRequest;
+                U64 nodeHash = 0;
+                bool hashSet = false;
+                if (request) {
+                    FrameRequestMap::const_iterator foundRequest = request->find(*it2);
+                    if (foundRequest != request->end()) {
+                        childRequest = foundRequest->second;
+                        nodeHash = childRequest->nodeHash;
+                        hashSet = true;
+                    }
+                }
+                if (!hashSet) {
+                    nodeHash = (*it2)->getHashValue();
+                }
+                
                 assert(*it2);
                 Natron::EffectInstance* childLiveInstance = (*it2)->getLiveInstance();
                 assert(childLiveInstance);
                 Natron::RenderSafetyEnum childSafety = (*it2)->getCurrentRenderThreadSafety();
-                childLiveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, canAbort, (*it2)->getHashValue(),0, renderAge,renderRequester, textureIndex, timeline, isAnalysis, false, std::list<boost::shared_ptr<Natron::Node> >(), childSafety);
+                childLiveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, canAbort, nodeHash,0, renderAge,treeRoot, childRequest, textureIndex, timeline, isAnalysis, false, std::list<boost::shared_ptr<Natron::Node> >(), childSafety, doNanHandling, draftMode, viewerProgressReportEnabled,stats);
                 
             }
         }
@@ -917,7 +1007,7 @@ NodeCollection::setParallelRenderArgs(int time,
         
         NodeGroup* isGrp = dynamic_cast<NodeGroup*>((*it)->getLiveInstance());
         if (isGrp) {
-            isGrp->setParallelRenderArgs(time, view, isRenderUserInteraction, isSequential, canAbort,  renderAge, renderRequester, textureIndex, timeline, activeRotoPaintNode, isAnalysis);
+            isGrp->setParallelRenderArgs(time, view, isRenderUserInteraction, isSequential, canAbort,  renderAge, treeRoot, request, textureIndex, timeline, activeRotoPaintNode, isAnalysis, draftMode, viewerProgressReportEnabled,stats);
         }
 
     }
@@ -944,6 +1034,14 @@ NodeCollection::invalidateParallelRenderArgs()
             }
         }
         
+        NodeList rotoPaintNodes;
+        boost::shared_ptr<RotoContext> roto = (*it)->getRotoContext();
+        if (roto) {
+            roto->getRotoPaintTreeNodes(&rotoPaintNodes);
+        }
+        for (NodeList::iterator it2 = rotoPaintNodes.begin(); it2 != rotoPaintNodes.end(); ++it2) {
+            (*it2)->getLiveInstance()->invalidateParallelRenderArgsTLS();
+        }
         
         NodeGroup* isGrp = dynamic_cast<NodeGroup*>((*it)->getLiveInstance());
         if (isGrp) {
@@ -963,9 +1061,9 @@ NodeCollection::getParallelRenderArgs(std::map<boost::shared_ptr<Natron::Node>,P
         if (!(*it)->isActivated()) {
             continue;
         }
-        ParallelRenderArgs args = (*it)->getLiveInstance()->getParallelRenderArgsTLS();
-        if (args.validArgs) {
-            argsMap.insert(std::make_pair(*it, args));
+        const ParallelRenderArgs* args = (*it)->getLiveInstance()->getParallelRenderArgsTLS();
+        if (args && args->validArgs) {
+            argsMap.insert(std::make_pair(*it, *args));
         }
         
         if ((*it)->isMultiInstance()) {
@@ -975,9 +1073,9 @@ NodeCollection::getParallelRenderArgs(std::map<boost::shared_ptr<Natron::Node>,P
             NodeList children;
             (*it)->getChildrenMultiInstance(&children);
             for (NodeList::iterator it2 = children.begin(); it2!=children.end(); ++it2) {
-                ParallelRenderArgs childArgs = (*it2)->getLiveInstance()->getParallelRenderArgsTLS();
-                if (childArgs.validArgs) {
-                    argsMap.insert(std::make_pair(*it2, childArgs));
+                const ParallelRenderArgs* childArgs = (*it2)->getLiveInstance()->getParallelRenderArgsTLS();
+                if (childArgs && childArgs->validArgs) {
+                    argsMap.insert(std::make_pair(*it2, *childArgs));
                 }
             }
         }
@@ -985,10 +1083,10 @@ NodeCollection::getParallelRenderArgs(std::map<boost::shared_ptr<Natron::Node>,P
         //If the node has an attached stroke, that means it belongs to the roto paint tree, hence it is not in the project.
         boost::shared_ptr<RotoContext> rotoContext = (*it)->getRotoContext();
         if (rotoContext) {
-            for (NodeList::iterator it2 = args.rotoPaintNodes.begin(); it2 != args.rotoPaintNodes.end(); ++it2) {
-                ParallelRenderArgs args = (*it2)->getLiveInstance()->getParallelRenderArgsTLS();
-                if (args.validArgs) {
-                    argsMap.insert(std::make_pair(*it2, args));
+            for (NodeList::const_iterator it2 = args->rotoPaintNodes.begin(); it2 != args->rotoPaintNodes.end(); ++it2) {
+                const ParallelRenderArgs* args = (*it2)->getLiveInstance()->getParallelRenderArgsTLS();
+                if (args && args->validArgs) {
+                    argsMap.insert(std::make_pair(*it2, *args));
                 }
             }
         }
@@ -1002,6 +1100,7 @@ NodeCollection::getParallelRenderArgs(std::map<boost::shared_ptr<Natron::Node>,P
     }
 }
 
+
 ParallelRenderArgsSetter::ParallelRenderArgsSetter(NodeCollection* n,
                                                    int time,
                                                    int view,
@@ -1009,15 +1108,19 @@ ParallelRenderArgsSetter::ParallelRenderArgsSetter(NodeCollection* n,
                                                    bool isSequential,
                                                    bool canAbort,
                                                    U64 renderAge,
-                                                   Natron::OutputEffectInstance* renderRequester,
+                                                   const boost::shared_ptr<Natron::Node>& treeRoot,
+                                                   const FrameRequestMap* request,
                                                    int textureIndex,
                                                    const TimeLine* timeline,
                                                    const boost::shared_ptr<Natron::Node>& activeRotoPaintNode,
-                                                   bool isAnalysis)
+                                                   bool isAnalysis,
+                                                   bool draftMode,
+                                                   bool viewerProgressReportEnabled,
+                                                   const boost::shared_ptr<RenderStats>& stats)
 : collection(n)
 , argsMap()
 {
-    collection->setParallelRenderArgs(time,view,isRenderUserInteraction,isSequential,canAbort,renderAge, renderRequester,textureIndex,timeline, activeRotoPaintNode, isAnalysis);
+    collection->setParallelRenderArgs(time,view,isRenderUserInteraction,isSequential,canAbort,renderAge, treeRoot, request ,textureIndex,timeline, activeRotoPaintNode, isAnalysis, draftMode, viewerProgressReportEnabled,stats);
 }
 
 ParallelRenderArgsSetter::ParallelRenderArgsSetter(const std::map<boost::shared_ptr<Natron::Node>,ParallelRenderArgs >& args)
@@ -1046,19 +1149,23 @@ ParallelRenderArgsSetter::~ParallelRenderArgsSetter()
 struct NodeGroupPrivate
 {
     mutable QMutex nodesLock; // protects inputs & outputs
-    std::vector<boost::weak_ptr<Node> > inputs;
-    std::list<boost::weak_ptr<Node> > outputs;
+    std::vector<boost::weak_ptr<Node> > inputs,guiInputs;
+    std::list<boost::weak_ptr<Node> > outputs,guiOutputs;
     bool isDeactivatingGroup;
     bool isActivatingGroup;
+    bool isEditable;
     
     boost::shared_ptr<Button_Knob> exportAsTemplate;
     
     NodeGroupPrivate()
     : nodesLock(QMutex::Recursive)
     , inputs()
+    , guiInputs()
     , outputs()
+    , guiOutputs()
     , isDeactivatingGroup(false)
     , isActivatingGroup(false)
+    , isEditable(true)
     , exportAsTemplate()
     {
         
@@ -1157,10 +1264,10 @@ NodeGroup::getInputLabel(int inputNb) const
     return inputName.toStdString();
 }
 
-SequenceTime
+double
 NodeGroup::getCurrentTime() const
 {
-    NodePtr node = getOutputNodeInput();
+    NodePtr node = getOutputNodeInput(false);
     if (node) {
         return node->getLiveInstance()->getCurrentTime();
     }
@@ -1170,7 +1277,7 @@ NodeGroup::getCurrentTime() const
 int
 NodeGroup::getCurrentView() const
 {
-    NodePtr node = getOutputNodeInput();
+    NodePtr node = getOutputNodeInput(false);
     if (node) {
         return node->getLiveInstance()->getCurrentView();
     }
@@ -1226,9 +1333,9 @@ NodeGroup::initializeKnobs()
     assert(nodePage);
     Page_Knob* isPage = dynamic_cast<Page_Knob*>(nodePage.get());
     assert(isPage);
-    _imp->exportAsTemplate = Natron::createKnob<Button_Knob>(this, "Export as Python plug-in");
-    _imp->exportAsTemplate->setName("exportAsGroup");
-    _imp->exportAsTemplate->setHintToolTip("Export this group as a Python group script that can be shared and/or later "
+    _imp->exportAsTemplate = Natron::createKnob<Button_Knob>(this, "Export as PyPlug");
+    _imp->exportAsTemplate->setName("exportAsPyPlug");
+    _imp->exportAsTemplate->setHintToolTip("Export this group as a Python group script (PyPlug) that can be shared and/or later "
                                            "on re-used as a plug-in.");
     isPage->addKnob(_imp->exportAsTemplate);
 }
@@ -1337,50 +1444,45 @@ NodeGroup::notifyNodeNameChanged(const boost::shared_ptr<Natron::Node>& node)
 }
 
 boost::shared_ptr<Natron::Node>
-NodeGroup::getOutputNode() const
+NodeGroup::getOutputNode(bool useGuiConnexions) const
 {
     QMutexLocker k(&_imp->nodesLock);
     ///A group can only have a single output.
-    if (_imp->outputs.empty()) {
+    if ((!useGuiConnexions && _imp->outputs.empty()) || (useGuiConnexions && _imp->guiOutputs.empty())) {
         return NodePtr();
     }
-    return _imp->outputs.front().lock();
-}
-
-NodeList
-NodeGroup::getAllOutputNodes() const
-{
-    NodeList ret;
-    QMutexLocker k(&_imp->nodesLock);
-    for (std::list<boost::weak_ptr<Natron::Node> >::const_iterator it = _imp->outputs.begin(); it != _imp->outputs.end(); ++it) {
-        NodePtr node = it->lock();
-        if (node) {
-            ret.push_back(node);
-        }
-    }
-    return ret;
+    return useGuiConnexions ? _imp->guiOutputs.front().lock() : _imp->outputs.front().lock();
 }
 
 boost::shared_ptr<Natron::Node>
-NodeGroup::getOutputNodeInput() const
+NodeGroup::getOutputNodeInput(bool useGuiConnexions) const
 {
-    NodePtr output = getOutputNode();
+    NodePtr output = getOutputNode(useGuiConnexions);
     if (output) {
-        return output->getInput(0);
+        return useGuiConnexions ? output->getGuiInput(0) : output->getInput(0);
     }
     return NodePtr();
 }
 
 boost::shared_ptr<Natron::Node>
-NodeGroup::getRealInputForInput(const boost::shared_ptr<Natron::Node>& input) const
+NodeGroup::getRealInputForInput(bool useGuiConnexions,const boost::shared_ptr<Natron::Node>& input) const
 {
     
     {
         QMutexLocker k(&_imp->nodesLock);
-        for (U32 i = 0; i < _imp->inputs.size(); ++i) {
-            if (_imp->inputs[i].lock() == input) {
-                return getNode()->getInput(i);
+        if (!useGuiConnexions) {
+            for (U32 i = 0; i < _imp->inputs.size(); ++i) {
+                if (_imp->inputs[i].lock() == input) {
+                    return getNode()->getInput(i);
+                }
             }
+        } else {
+            for (U32 i = 0; i < _imp->guiInputs.size(); ++i) {
+                if (_imp->guiInputs[i].lock() == input) {
+                    return getNode()->getGuiInput(i);
+                }
+            }
+
         }
     }
     return boost::shared_ptr<Natron::Node>();
@@ -1418,6 +1520,21 @@ NodeGroup::knobChanged(KnobI* k,Natron::ValueChangedReasonEnum /*reason*/,
             gui_i->exportGroupAsPythonScript();
         }
     }
+}
+
+void
+NodeGroup::setSubGraphEditable(bool editable)
+{
+    assert(QThread::currentThread() == qApp->thread());
+    _imp->isEditable = editable;
+    Q_EMIT graphEditableChanged(editable);
+}
+
+bool
+NodeGroup::isSubGraphEditable() const
+{
+    assert(QThread::currentThread() == qApp->thread());
+    return _imp->isEditable;
 }
 
 
@@ -1985,9 +2102,9 @@ static void exportBezierPointAtTime(const boost::shared_ptr<BezierCP>& point,
     
     QString token = isFeather ? "bezier.setFeatherPointAtIndex(" : "bezier.setPointAtIndex(";
     double x,y,lx,ly,rx,ry;
-    point->getPositionAtTime(time, &x, &y);
-    point->getLeftBezierPointAtTime(time, &lx, &ly);
-    point->getRightBezierPointAtTime(time, &rx, &ry);
+    point->getPositionAtTime(false ,time, &x, &y);
+    point->getLeftBezierPointAtTime(false ,time, &lx, &ly);
+    point->getRightBezierPointAtTime(false ,time, &rx, &ry);
     
     WRITE_INDENT(1); WRITE_STATIC_LINE(token + NUM(idx) + ", " +
                                        NUM(time) + ", " + NUM(x) + ", " +
@@ -2017,7 +2134,7 @@ static void exportRotoLayer(const std::list<boost::shared_ptr<RotoItem> >& items
                 continue;
             }
             
-            time = cps.front()->getKeyframeTime(0);
+            time = cps.front()->getKeyframeTime(false ,0);
             
             WRITE_INDENT(1); WRITE_STATIC_LINE("bezier = roto.createBezier(0,0, " + NUM(time) + ")");
             WRITE_INDENT(1); WRITE_STATIC_LINE("bezier.setScriptName(" + ESC(isBezier->getScriptName()) + ")");

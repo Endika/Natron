@@ -1,20 +1,31 @@
 
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "KnobSerialization.h"
+
+#include <algorithm> // min, max
 
 #include <QDebug>
 
@@ -26,21 +37,24 @@
 #include "Engine/KnobTypes.h"
 
 
-ValueSerialization::ValueSerialization(const boost::shared_ptr<KnobI> & knob,
+ValueSerialization::ValueSerialization(KnobSerializationBase* serialization,
+                                       const boost::shared_ptr<KnobI> & knob,
                                        int dimension)
-    : _knob(knob)
-    , _dimension(dimension)
-    , _master()
-    , _expression()
-    , _exprHasRetVar(false)
+: _serialization(serialization)
+, _knob(knob)
+, _dimension(dimension)
+, _master()
+, _expression()
+, _exprHasRetVar(false)
 {
 }
 
 ValueSerialization::ValueSerialization(const boost::shared_ptr<KnobI> & knob,
-                   int dimension,
-                   bool exprHasRetVar,
-                   const std::string& expr)
-: _knob(knob)
+                                       int dimension,
+                                       bool exprHasRetVar,
+                                       const std::string& expr)
+: _serialization(0)
+, _knob(knob)
 , _dimension(dimension)
 , _master()
 , _expression(expr)
@@ -58,6 +72,13 @@ ValueSerialization::ValueSerialization(const boost::shared_ptr<KnobI> & knob,
     } else {
         _master.masterDimension = -1;
     }
+}
+
+void
+ValueSerialization::setChoiceExtraLabel(const std::string& label)
+{
+    assert(_serialization);
+    _serialization->setChoiceExtraString(label);
 }
 
 boost::shared_ptr<KnobI> KnobSerialization::createKnob(const std::string & typeName,
@@ -152,11 +173,20 @@ KnobSerialization::restoreExpressions(const boost::shared_ptr<KnobI> & knob)
     int dims = std::min(knob->getDimension(), _knob->getDimension());
     try {
         for (int i = 0; i < dims; ++i) {
-            (void)knob->restoreExpression(i, _expressions[i].first, _expressions[i].second);
+            knob->restoreExpression(i, _expressions[i].first, _expressions[i].second);
         }
     } catch (const std::exception& e) {
         QString err = QString("Failed to restore expression on %1: %2").arg(knob->getName().c_str()).arg(e.what());
         appPTR->writeToOfxLog_mt_safe(err);
     }
     
+}
+
+void
+KnobSerialization::setChoiceExtraString(const std::string& label)
+{
+    assert(_extraData);
+    ChoiceExtraData* cData = dynamic_cast<ChoiceExtraData*>(_extraData);
+    assert(cData);
+    cData->_choiceString = label;
 }

@@ -1,16 +1,26 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "AppInstance.h"
 
@@ -27,23 +37,26 @@
 #include <QSettings>
 
 #if !defined(SBK_RUN) && !defined(Q_MOC_RUN)
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
+// /usr/local/include/boost/bind/arg.hpp:37:9: warning: unused typedef 'boost_static_assert_typedef_37' [-Wunused-local-typedef]
 #include <boost/bind.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 #endif
 
-#include "Global/QtCompat.h"
+#include "Global/QtCompat.h" // removeFileExtension
 
-#include "Engine/Project.h"
-#include "Engine/Plugin.h"
 #include "Engine/AppManager.h"
-#include "Engine/Node.h"
-#include "Engine/ViewerInstance.h"
 #include "Engine/BlockingBackgroundRender.h"
-#include "Engine/NodeSerialization.h"
 #include "Engine/FileDownloader.h"
-#include "Engine/Settings.h"
+#include "Engine/GroupOutput.h"
 #include "Engine/KnobTypes.h"
-#include "Engine/NoOp.h"
+#include "Engine/Node.h"
+#include "Engine/NodeSerialization.h"
 #include "Engine/OfxHost.h"
+#include "Engine/Plugin.h"
+#include "Engine/Project.h"
+#include "Engine/Settings.h"
+#include "Engine/ViewerInstance.h"
 
 using namespace Natron;
 
@@ -154,6 +167,7 @@ AppInstance::checkForNewVersion() const
 
 //return -1 if a < b, 0 if a == b and 1 if a > b
 //Returns -2 if not understood
+static
 int compareDevStatus(const QString& a,const QString& b)
 {
     if (a == NATRON_DEVELOPMENT_ALPHA) {
@@ -406,6 +420,8 @@ AppInstance::load(const CLArgs& cl)
     
     declareCurrentAppVariable_Python();
 
+    const QString& extraOnProjectCreatedScript = cl.getDefaultOnProjectLoadedScript();
+    
     ///if the app is a background project autorun and the project name is empty just throw an exception.
     if ( (appPTR->getAppType() == AppManager::eAppTypeBackgroundAutoRun ||
           appPTR->getAppType() == AppManager::eAppTypeBackgroundAutoRunLaunchedFromGui)) {
@@ -418,7 +434,7 @@ AppInstance::load(const CLArgs& cl)
 
         QFileInfo info(cl.getFilename());
         if (!info.exists()) {
-            throw std::invalid_argument(tr("Specified file does not exist").toStdString());
+            throw std::invalid_argument(tr("Specified project file does not exist").toStdString());
         }
         
         std::list<AppInstance::RenderRequest> writersWork;
@@ -440,7 +456,21 @@ AppInstance::load(const CLArgs& cl)
             throw std::invalid_argument(tr(NATRON_APPLICATION_NAME " only accepts python scripts or .ntp project files").toStdString());
         }
         
-        startWritersRendering(writersWork);
+        if (!extraOnProjectCreatedScript.isEmpty()) {
+            QFileInfo cbInfo(extraOnProjectCreatedScript);
+            if (cbInfo.exists()) {
+                loadPythonScript(cbInfo);
+            }
+        }
+        
+        try {
+            startWritersRendering(cl.areRenderStatsEnabled(),writersWork);
+        } catch (const std::exception& e) {
+            getProject()->removeLockFile();
+            throw e;
+        }
+        
+        
         
     } else if (appPTR->getAppType() == AppManager::eAppTypeInterpreter) {
         QFileInfo info(cl.getFilename());
@@ -448,10 +478,25 @@ AppInstance::load(const CLArgs& cl)
             loadPythonScript(info);
         }
         
+        if (!extraOnProjectCreatedScript.isEmpty()) {
+            QFileInfo cbInfo(extraOnProjectCreatedScript);
+            if (cbInfo.exists()) {
+                loadPythonScript(cbInfo);
+            }
+        }
+
         
         appPTR->launchPythonInterpreter();
     } else {
         execOnProjectCreatedCallback();
+        
+        if (!extraOnProjectCreatedScript.isEmpty()) {
+            QFileInfo cbInfo(extraOnProjectCreatedScript);
+            if (cbInfo.exists()) {
+                loadPythonScript(cbInfo);
+            }
+        }
+
     }
 }
 
@@ -470,41 +515,48 @@ AppInstance::loadPythonScript(const QFileInfo& file)
     ok = Natron::interpretPythonScript("app = app1\n", &err, 0);
     assert(ok);
     
-    QString filename = file.fileName();
-    int lastDotPos = filename.lastIndexOf(QChar('.'));
-    if (lastDotPos != -1) {
-        filename = filename.left(lastDotPos);
-    }
-    
-    QString hasCreateInstanceScript = QString("import sys\n"
-                                              "import %1\n"
-                                              "ret = True\n"
-                                              "if not hasattr(%1,\"createInstance\") or not hasattr(%1.createInstance,\"__call__\"):\n"
-                                              "    ret = False\n").arg(filename);
-    
-    
-    ok = Natron::interpretPythonScript(hasCreateInstanceScript.toStdString(), &err, 0);
-    
-    if (!ok) {
-        Natron::errorDialog(tr("Python").toStdString(), err);
+    QFile f(file.absoluteFilePath());
+    if (!f.open(QIODevice::ReadOnly)) {
         return false;
     }
-    
-    
-    PyObject* mainModule = getMainModule();
-    PyObject* retObj = PyObject_GetAttrString(mainModule,"ret"); //new ref
-    assert(retObj);
-    bool hasCreateInstance = PyObject_IsTrue(retObj) == 1;
-    Py_XDECREF(retObj);
-    
-    ok = interpretPythonScript("del ret\n", &err, 0);
-    assert(ok);
-    
+    QTextStream ts(&f);
+    QString content = ts.readAll();
+    bool hasCreateInstance = content.contains("def createInstance");
+    /*
+     The old way of doing it was
+     
+        QString hasCreateInstanceScript = QString("import sys\n"
+        "import %1\n"
+        "ret = True\n"
+        "if not hasattr(%1,\"createInstance\") or not hasattr(%1.createInstance,\"__call__\"):\n"
+        "    ret = False\n").arg(filename);
+     
+     
+        ok = Natron::interpretPythonScript(hasCreateInstanceScript.toStdString(), &err, 0);
+
+     
+     which is wrong because it will try to import the script first.
+     But we in the case of regular scripts, we allow the user to access externally declared variables such as "app", "app1" etc...
+     and this would not be possible if the script was imported. Importing the module would then fail because it could not
+     find the variables and the script could not be executed.
+     */
+   
     if (hasCreateInstance) {
+        
+        
+        QString moduleName = file.fileName();
+        int lastDotPos = moduleName.lastIndexOf(QChar('.'));
+        if (lastDotPos != -1) {
+            moduleName = moduleName.left(lastDotPos);
+        }
+    
+        
         std::string output;
         FlagSetter flag(true, &_imp->_creatingGroup, &_imp->creatingGroupMutex);
-        if (!Natron::interpretPythonScript(filename.toStdString() + ".createInstance(app,app)", &err, &output)) {
-            Natron::errorDialog(tr("Python").toStdString(), err);
+        if (!Natron::interpretPythonScript(moduleName.toStdString() + ".createInstance(app,app)", &err, &output)) {
+            if (!err.empty()) {
+                Natron::errorDialog(tr("Python").toStdString(), err);
+            }
             return false;
         } else {
             if (!output.empty()) {
@@ -515,6 +567,40 @@ AppInstance::loadPythonScript(const QFileInfo& file)
                 }
             }
         }
+    } else {
+        QFile f(file.absoluteFilePath());
+        PyRun_SimpleString(content.toStdString().c_str());
+        
+        PyObject* mainModule = getMainModule();
+        std::string error;
+        ///Gui session, do stdout, stderr redirection
+        PyObject *errCatcher = 0;
+        
+        if (PyObject_HasAttrString(mainModule, "catchErr")) {
+            errCatcher = PyObject_GetAttrString(mainModule,"catchErr"); //get our catchOutErr created above, new ref
+        }
+        
+        PyErr_Print(); //make python print any errors
+        
+        PyObject *errorObj = 0;
+        if (errCatcher) {
+            errorObj = PyObject_GetAttrString(errCatcher,"value"); //get the  stderr from our catchErr object, new ref
+            assert(errorObj);
+            error = PY3String_asString(errorObj);
+            PyObject* unicode = PyUnicode_FromString("");
+            PyObject_SetAttrString(errCatcher, "value", unicode);
+            Py_DECREF(errorObj);
+            Py_DECREF(errCatcher);
+        }
+        
+        if (!error.empty()) {
+            QString message("Failed to load ");
+            message.append(file.absoluteFilePath());
+            message.append(": ");
+            message.append(error.c_str());
+            appendToScriptEditor(message.toStdString());
+        }
+        
     }
     
     return true;
@@ -999,8 +1085,9 @@ AppInstance::triggerAutoSave()
 
 
 void
-AppInstance::startWritersRendering(const std::list<RenderRequest>& writers)
+AppInstance::startWritersRendering(bool enableRenderStats,const std::list<RenderRequest>& writers)
 {
+    
     std::list<RenderWork> renderers;
 
     if ( !writers.empty() ) {
@@ -1043,27 +1130,34 @@ AppInstance::startWritersRendering(const std::list<RenderRequest>& writers)
             w.writer = *it2;
             assert(w.writer);
             if (w.writer) {
-                w.writer->getFrameRange_public(w.writer->getHash(), &w.firstFrame, &w.lastFrame);
+                double f,l;
+                w.writer->getFrameRange_public(w.writer->getHash(), &f, &l);
+                w.firstFrame = std::floor(f);
+                w.lastFrame = std::ceil(l);
             }
             renderers.push_back(w);
         }
     }
     
-    startWritersRendering(renderers);
+    startWritersRendering(enableRenderStats, renderers);
 }
 
 void
-AppInstance::startWritersRendering(const std::list<RenderWork>& writers)
+AppInstance::startWritersRendering(bool enableRenderStats,const std::list<RenderWork>& writers)
 {
+    
     
     if (writers.empty()) {
         return;
     }
     
+    getProject()->resetTotalTimeSpentRenderingForAllNodes();
+
+    
     if ( appPTR->isBackground() ) {
         
         //blocking call, we don't want this function to return pre-maturely, in which case it would kill the app
-        QtConcurrent::blockingMap( writers,boost::bind(&AppInstance::startRenderingFullSequence,this,_1,false,QString()) );
+        QtConcurrent::blockingMap( writers,boost::bind(&AppInstance::startRenderingFullSequence,this,enableRenderStats, _1,false,QString()) );
     } else {
         
         //Take a snapshot of the graph at this time, this will be the version loaded by the process
@@ -1072,16 +1166,16 @@ AppInstance::startWritersRendering(const std::list<RenderWork>& writers)
 
         for (std::list<RenderWork>::const_iterator it = writers.begin(); it != writers.end(); ++it) {
             ///Use the frame range defined by the writer GUI because we're in an interactive session
-            startRenderingFullSequence(*it,renderInSeparateProcess,savePath);
+            startRenderingFullSequence(enableRenderStats,*it,renderInSeparateProcess,savePath);
         }
     }
 }
 
 void
-AppInstance::startRenderingFullSequence(const RenderWork& writerWork,bool /*renderInSeparateProcess*/,const QString& /*savePath*/)
+AppInstance::startRenderingFullSequence(bool enableRenderStats,const RenderWork& writerWork,bool /*renderInSeparateProcess*/,const QString& /*savePath*/)
 {
     BlockingBackgroundRender backgroundRender(writerWork.writer);
-    int first,last;
+    double first,last;
     if (writerWork.firstFrame == INT_MIN || writerWork.lastFrame == INT_MAX) {
         writerWork.writer->getFrameRange_public(writerWork.writer->getHash(), &first, &last);
         if (first == INT_MIN || last == INT_MAX) {
@@ -1092,11 +1186,11 @@ AppInstance::startRenderingFullSequence(const RenderWork& writerWork,bool /*rend
         last = writerWork.lastFrame;
     }
     
-    backgroundRender.blockingRender(first,last); //< doesn't return before rendering is finished
+    backgroundRender.blockingRender(enableRenderStats,first,last); //< doesn't return before rendering is finished
 }
 
 void
-AppInstance::getFrameRange(int* first,int* last) const
+AppInstance::getFrameRange(double* first,double* last) const
 {
     return _imp->_currentProject->getFrameRange(first, last);
 }
@@ -1154,7 +1248,7 @@ AppInstance::declareCurrentAppVariable_Python()
 {
     /// define the app variable
     std::stringstream ss;
-    ss << "app" << _imp->_appID + 1 << " = natron.getInstance(" << _imp->_appID << ") \n";
+    ss << "app" << _imp->_appID + 1 << " = " << NATRON_ENGINE_PYTHON_MODULE_NAME << ".natron.getInstance(" << _imp->_appID << ") \n";
     const std::vector<boost::shared_ptr<KnobI> >& knobs = _imp->_currentProject->getKnobs();
     for (std::vector<boost::shared_ptr<KnobI> >::const_iterator it = knobs.begin(); it != knobs.end(); ++it) {
         ss << "app" << _imp->_appID + 1 << "." << (*it)->getName() << " = app" << _imp->_appID + 1 << ".getProjectParam('" <<
@@ -1165,7 +1259,7 @@ AppInstance::declareCurrentAppVariable_Python()
     
     bool ok = Natron::interpretPythonScript(script, &err, 0);
     assert(ok);
-    (void)ok;
+    Q_UNUSED(ok);
 
     if (appPTR->isBackground()) {
         std::string err;
@@ -1241,7 +1335,11 @@ AppInstance::execOnProjectCreatedCallback()
         return;
     }
     std::string appID = getAppIDString();
-    std::string script = "app = " + appID + "\n" + cb + "(" + appID + ")\n";
+    std::string script;
+    if (appID != "app") {
+        script = script + "app = " + appID;
+    }
+    script = script + "\n" + cb + "(" + appID + ")\n";
     std::string err;
     std::string output;
     if (!Natron::interpretPythonScript(script, &err, &output)) {

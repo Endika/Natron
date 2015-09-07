@@ -1,24 +1,38 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "KnobTypes.h"
 
 #include <cfloat>
 #include <locale>
 #include <sstream>
+#include <algorithm> // min, max
+#include <stdexcept>
+
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
 #include <boost/math/special_functions/fpclassify.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 
 #include <QDebug>
 #include <QThread>
@@ -77,7 +91,7 @@ Int_Knob::setIncrement(int incr,
     }
     
     if ( index >= (int)_increments.size() ) {
-        throw "Int_Knob::setIncrement , dimension out of range";
+        throw std::runtime_error("Int_Knob::setIncrement , dimension out of range");
     }
     _increments[index] = incr;
     Q_EMIT incrementChanged(_increments[index], index);
@@ -261,7 +275,7 @@ Double_Knob::setIncrement(double incr,
         return;
     }
     if ( index >= (int)_increments.size() ) {
-        throw "Double_Knob::setIncrement , dimension out of range";
+        throw std::runtime_error("Double_Knob::setIncrement , dimension out of range");
     }
     
     _increments[index] = incr;
@@ -273,7 +287,7 @@ Double_Knob::setDecimals(int decis,
                          int index)
 {
     if ( index >= (int)_decimals.size() ) {
-        throw "Double_Knob::setDecimals , dimension out of range";
+        throw std::runtime_error("Double_Knob::setDecimals , dimension out of range");
     }
     
     _decimals[index] = decis;
@@ -639,6 +653,15 @@ Choice_Knob::getEntries_mt_safe() const
     return _entries;
 }
 
+const std::string&
+Choice_Knob::getEntry(int v) const
+{
+    if (v < 0 || (int)_entries.size() <= v) {
+        throw std::runtime_error(std::string("Choice_Knob::getEntry: index out of range"));
+    }
+    return _entries[v];
+}
+
 int
 Choice_Knob::getNumEntries() const
 {
@@ -741,6 +764,32 @@ static bool caseInsensitiveCompare(const std::string& a,const std::string& b)
     return true;
 }
 
+KnobHelper::ValueChangedReturnCodeEnum
+Choice_Knob::setValueFromLabel(const std::string & value,
+                               int dimension,
+                               bool turnOffAutoKeying)
+{
+    for (std::size_t i = 0; i < _entries.size(); ++i) {
+        if (caseInsensitiveCompare(_entries[i], value)) {
+            return setValue(i, dimension, turnOffAutoKeying);
+        }
+    }
+    return KnobHelper::eValueChangedReturnCodeNothingChanged;
+    //throw std::runtime_error(std::string("Choice_Knob::setValueFromLabel: unknown label ") + value);
+}
+
+void
+Choice_Knob::setDefaultValueFromLabel(const std::string & value,
+                                      int dimension)
+{
+    for (std::size_t i = 0; i < _entries.size(); ++i) {
+        if (caseInsensitiveCompare(_entries[i], value)) {
+            return setDefaultValue(i, dimension);
+        }
+    }
+    //throw std::runtime_error(std::string("Choice_Knob::setDefaultValueFromLabel: unknown label ") + value);
+}
+
 void
 Choice_Knob::choiceRestoration(Choice_Knob* knob,const ChoiceExtraData* data)
 {
@@ -757,7 +806,6 @@ Choice_Knob::choiceRestoration(Choice_Knob* knob,const ChoiceExtraData* data)
     }
     
     int serializedIndex = knob->getValue();
-    
     if ( ( serializedIndex < (int)_entries.size() ) && (_entries[serializedIndex] == data->_choiceString) ) {
         // we're lucky, entry hasn't changed
         setValue(serializedIndex, 0);
@@ -1251,6 +1299,7 @@ Parametric_Knob::Parametric_Knob(KnobHolder* holder,
 : Knob<double>(holder,description,dimension,declaredByPlugin)
 , _curvesMutex()
 , _curves(dimension)
+, _defaultCurves(dimension)
 , _curvesColor(dimension)
 {
     for (int i = 0; i < dimension; ++i) {
@@ -1258,6 +1307,7 @@ Parametric_Knob::Parametric_Knob(KnobHolder* holder,
         color.r = color.g = color.b = color.a = 1.;
         _curvesColor[i] = color;
         _curves[i] = boost::shared_ptr<Curve>( new Curve(this,i) );
+        _defaultCurves[i] = boost::shared_ptr<Curve>( new Curve(this,i) );
     }
 }
 
@@ -1334,6 +1384,20 @@ std::pair<double,double> Parametric_Knob::getParametricRange() const
     return _curves.front()->getXRange();
 }
 
+boost::shared_ptr<Curve>
+Parametric_Knob::getDefaultParametricCurve(int dimension) const
+{
+    assert(dimension >= 0 && dimension < (int)_curves.size());
+    std::pair<int,boost::shared_ptr<KnobI> >  master = getMaster(dimension);
+    if (master.second) {
+        Parametric_Knob* m = dynamic_cast<Parametric_Knob*>(master.second.get());
+        assert(m);
+        return m->getDefaultParametricCurve(dimension);
+    } else {
+        return _defaultCurves[dimension];
+    }
+
+}
 
 boost::shared_ptr<Curve> Parametric_Knob::getParametricCurve(int dimension) const
 {
@@ -1616,8 +1680,36 @@ Parametric_Knob::loadParametricCurves(const std::list< Curve > & curves)
 void
 Parametric_Knob::resetExtraToDefaultValue(int dimension)
 {
-    QVector<int> dimensions(1);
-    dimensions[0] = dimension;
-    Q_EMIT mustResetToDefault(dimensions);
+    Natron::StatusEnum s = deleteAllControlPoints(dimension);
+    Q_UNUSED(s);
+    _curves[dimension]->clone(*_defaultCurves[dimension]);
+    Q_EMIT curveChanged(dimension);
+
 }
 
+void
+Parametric_Knob::setDefaultCurvesFromCurves()
+{
+    assert(_curves.size() == _defaultCurves.size());
+    for (std::size_t i = 0; i < _curves.size(); ++i) {
+        _defaultCurves[i]->clone(*_curves[i]);
+    }
+}
+
+bool
+Parametric_Knob::hasModificationsVirtual(int dimension) const
+{
+    assert(dimension >= 0 && dimension < (int)_curves.size());
+    KeyFrameSet defKeys = _defaultCurves[dimension]->getKeyFrames_mt_safe();
+    KeyFrameSet keys = _curves[dimension]->getKeyFrames_mt_safe();
+    if (defKeys.size() != keys.size()) {
+        return true;
+    }
+    KeyFrameSet::iterator itO = defKeys.begin();
+    for (KeyFrameSet::iterator it = keys.begin(); it!=keys.end(); ++it,++itO) {
+        if (*it != *itO) {
+            return true;
+        }
+    }
+    return false;
+}

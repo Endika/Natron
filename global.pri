@@ -1,9 +1,23 @@
-#This Source Code Form is subject to the terms of the Mozilla Public
-#License, v. 2.0. If a copy of the MPL was not distributed with this
-#file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# ***** BEGIN LICENSE BLOCK *****
+# This file is part of Natron <http://www.natron.fr/>,
+# Copyright (C) 2015 INRIA and Alexandre Gauthier
+#
+# Natron is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# Natron is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+# ***** END LICENSE BLOCK *****
 
 CONFIG += warn_on no_keywords
-DEFINES += OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_VEGAS OFX_SUPPORTS_PARAMETRIC OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NATRON
+DEFINES += OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_VEGAS OFX_SUPPORTS_PARAMETRIC OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NATRON OFX_SUPPORTS_OPENGLRENDER OFX_SUPPORTS_DIALOG
 DEFINES += OFX_SUPPORTS_MULTITHREAD
 
 trace_ofx_actions{
@@ -33,12 +47,17 @@ CONFIG(noassertions) {
    DEFINES *= NDEBUG QT_NO_DEBUG
 }
 
+CONFIG(snapshot) {
+   #message("Compiling an official snapshot (should only be done on the Natron build farm)")
+   DEFINES += NATRON_SNAPSHOT
+}
+
 # https://qt.gitorious.org/qt-creator/qt-creator/commit/b48ba2c25da4d785160df4fd0d69420b99b85152
 unix:LIBS += $$QMAKE_LIBS_DYNLOAD
 
 *g++* {
   QMAKE_CXXFLAGS += -ftemplate-depth-1024
-  QMAKE_CXXFLAGS_WARN_ON += -Wextra
+  QMAKE_CFLAGS_WARN_ON += -Wextra -Wmissing-prototypes -Wmissing-declarations -Wno-multichar
   GCCVer = $$system($$QMAKE_CXX --version)
   contains(GCCVer,[0-3]\\.[0-9]+.*) {
   } else {
@@ -109,7 +128,6 @@ win32 {
   #microsoft compiler needs _MBCS to compile with the multi-byte character set.
   DEFINES += WINDOWS _MBCS COMPILED_FROM_DSP XML_STATIC  NOMINMAX
   DEFINES -= _UNICODE UNICODE
-  RC_FILE += ../Natron.rc
 }
 
 win32-msvc* {
@@ -142,6 +160,26 @@ win32-msvc* {
     }
 }
 
+
+win32-g++ {
+	# On MingW everything is defined with pkgconfig except boost
+	QT_CONFIG -= no-pkg-config
+    CONFIG += link_pkgconfig
+	glew:      PKGCONFIG += glew
+    expat:     PKGCONFIG += expat
+	cairo:     PKGCONFIG += cairo
+	shiboken:  PKGCONFIG += shiboken-py2
+    pyside:    PKGCONFIG += pyside-py2
+	INCLUDEPATH += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --variable=includedir pyside-py2)/QtCore
+	INCLUDEPATH += $$system(env PKG_CONFIG_PATH=$$PYSIDE_PKG_CONFIG_PATH pkg-config --variable=includedir pyside-py2)/QtGui
+	python:    PKGCONFIG += python-2.7
+	boost:     LIBS += -lboost_serialization-mt
+	boost:     LIBS += -lboost_serialization-mt
+	
+	#See http://stackoverflow.com/questions/16596876/object-file-has-too-many-sections
+	Debug:	QMAKE_CXXFLAGS += -Wa,-mbig-obj 
+}
+
 unix {
      #  on Unix systems, only the "boost" option needs to be defined in config.pri
      QT_CONFIG -= no-pkg-config
@@ -159,19 +197,22 @@ unix {
          cairo:     PKGCONFIG += cairo
      }
 
-     # User may specify an alternate python3-config from the command-line,
-     # as in "qmake PYTHON_CONFIG=python3.4-config" (MacPorts doesn't have a python3-config)
+     # User may specify an alternate python2-config from the command-line,
+     # as in "qmake PYTHON_CONFIG=python2.7-config"
      isEmpty(PYTHON_CONFIG) {
-         PYTHON_CONFIG = python3-config
+         PYTHON_CONFIG = python2-config
      }
-     #message(PYTHON_CONFIG = $$PYTHON_CONFIG)
      python {
-         LIBS += $$system($$PYTHON_CONFIG --ldflags)
-         QMAKE_CXXFLAGS += $$system($$PYTHON_CONFIG --includes)
+          #PKGCONFIG += python
+          LIBS += $$system($$PYTHON_CONFIG --ldflags)
+          PYTHON_CFLAGS = $$system($$PYTHON_CONFIG --includes)
+          PYTHON_INCLUDEPATH = $$find(PYTHON_CFLAGS, ^-I.*)
+          PYTHON_INCLUDEPATH ~= s/^-I(.*)/\\1/g
+          INCLUDEPATH *= $$PYTHON_INCLUDEPATH
      }
 
      # There may be different pyside.pc/shiboken.pc for different versions of python.
-     # pkg-config will probably give a bad answer, unless python3 is the system default.
+     # pkg-config will probably give a bad answer, unless python2 is the system default.
      # See for example tools/travis/install_dependencies.sh for a solution that works on Linux,
      # using a custom config.pri
      shiboken: PKGCONFIG += shiboken
@@ -208,7 +249,7 @@ unix {
 
 *clang* {
   QMAKE_CXXFLAGS += -ftemplate-depth-1024 -Wno-c++11-extensions
-  QMAKE_CXXFLAGS_WARN_ON += -Wextra
+  QMAKE_CFLAGS_WARN_ON += -Wextra
   c++11 {
     QMAKE_CXXFLAGS += -std=c++11
   }
@@ -225,12 +266,12 @@ addresssanitizer {
   message("  qmake -spec unsupported/macx-clang CONFIG+=addresssanitizer ...")
   message("see http://clang.llvm.org/docs/AddressSanitizer.html")
   CONFIG += debug
-  QMAKE_CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls -O1
+  QMAKE_CFLAGS += -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls -O1
   QMAKE_CFLAGS += -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls -O1
   QMAKE_LFLAGS += -fsanitize=address -g
 
 #  QMAKE_LFLAGS += -fsanitize-blacklist=../asan_blacklist.ignore
-#  QMAKE_CXXFLAGS += -fsanitize-blacklist=../asan_blacklist.ignore
+#  QMAKE_CLAGS += -fsanitize-blacklist=../asan_blacklist.ignore
 #  QMAKE_CFLAGS += -fsanitize-blacklist=../asan_blacklist.ignore
 }
 
@@ -239,13 +280,13 @@ threadsanitizer {
   message("Compiling with ThreadSanitizer (for clang).")
   message("see http://clang.llvm.org/docs/ThreadSanitizer.html")
   CONFIG += debug
-  QMAKE_CXXFLAGS += -fsanitize=thread -O1
+  QMAKE_CFLAGS += -fsanitize=thread -O1
   QMAKE_CFLAGS += -fsanitize=thread -O1
   QMAKE_LFLAGS += -fsanitize=thread -g
 }
 
 coverage {
-  QMAKE_CXXFLAGS += -fprofile-arcs -ftest-coverage -O0
+  QMAKE_CFLAGS += -fprofile-arcs -ftest-coverage -O0
   QMAKE_LFLAGS += -fprofile-arcs -ftest-coverage
   QMAKE_CLEAN += $(OBJECTS_DIR)/*.gcda $(OBJECTS_DIR)/*.gcno
 }

@@ -1,3 +1,21 @@
+# ***** BEGIN LICENSE BLOCK *****
+# This file is part of Natron <http://www.natron.fr/>,
+# Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+#
+# Natron is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# Natron is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+# ***** END LICENSE BLOCK *****
+
 TARGET = NatronCrashReporter
 QT       += core network gui
 
@@ -49,6 +67,8 @@ unix:!mac {
     DEFINES += N_UNDF=0
 }
 
+win32:Debug: DEFINES *= _DEBUG 
+
 SOURCES += \
     CrashDialog.cpp \
     main.cpp
@@ -60,7 +80,6 @@ BREAKPAD_PATH = ../google-breakpad/src
 INCLUDEPATH += $$BREAKPAD_PATH
 
 SOURCES += \
-        $$BREAKPAD_PATH/client/minidump_file_writer.cc \
         $$BREAKPAD_PATH/common/md5.cc \
         $$BREAKPAD_PATH/common/string_conversion.cc \
         $$BREAKPAD_PATH/common/convert_UTF.c \
@@ -72,6 +91,7 @@ mac {
         # DEFINES += __DARWIN_UNIX03=0 -- looks like we doesn't need it anymore
 
         SOURCES += \
+				$$BREAKPAD_PATH/client/minidump_file_writer.cc \
                 $$BREAKPAD_PATH/client/mac/handler/breakpad_nlist_64.cc \
                 $$BREAKPAD_PATH/client/mac/handler/minidump_generator.cc \
                 $$BREAKPAD_PATH/client/mac/handler/dynamic_images.cc \
@@ -90,6 +110,7 @@ mac {
 # other *nix
 unix:!mac {
         SOURCES += \
+				$$BREAKPAD_PATH/client/minidump_file_writer.cc \
                 $$BREAKPAD_PATH/client/linux/handler/minidump_descriptor.cc \
                 $$BREAKPAD_PATH/client/linux/crash_generation/crash_generation_server.cc \
                 $$BREAKPAD_PATH/client/linux/minidump_writer/minidump_writer.cc \

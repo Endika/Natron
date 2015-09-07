@@ -22,15 +22,41 @@ compiler:
   - clang
 
 python:
-  - "3.4"
+  - "2.7"
+
+addons:
+  apt:
+    sources:
+    # Natron requires boost >= 1.49 to compile in C++11 mode
+    # see http://stackoverflow.com/questions/11302758/error-while-copy-constructing-boostshared-ptr-using-c11
+    # we use the irie/boost ppa for that purpose
+    - irie-boost
+    # the PPA xorg-edgers contains cairo 1.12 (required for rotoscoping)
+    - xorg-edgers-ppa
+    # ubuntu-toolchain-r/test contains recent versions of gcc
+    - ubuntu-toolchain-r-test
+    packages:
+    - gcc-4.8
+    - g++-4.8
+    - libqt4-dev
+    - libglew-dev
+    - libboost-serialization-dev
+    - libexpat1-dev
+    - gdb
+    - libcairo2-dev
+    - python-dev
+    - python-pyside
+    - libpyside-dev
+    - libshiboken-dev
 
 matrix:
   exclude:
     - os: osx
       compiler: gcc
-  allow_failures:
-    - os: osx # we exceed the time limit
-  fast_finish: true
+# Uncomment the following if OSX build times out (happens when building with python3)
+#  allow_failures:
+#    - os: osx # we exceed the time limit
+#  fast_finish: true
 
 cache:
   apt: true
@@ -41,7 +67,7 @@ cache:
 before_install:
    - date -u
    - uname -a
-   - export J='-j3'
+   - export J='-j2'
 
 install:
   - . tools/travis/coverity_env.sh
@@ -57,7 +83,7 @@ install:
 script:
   - if [[ ${COVERITY_SCAN_BRANCH} == 1 ]];
     then
-      echo "Don't build on coverty_scan branch.";
+      echo "Don't build on coverity_scan branch.";
       exit 0;
     fi
   - tools/travis/build.sh

@@ -16,7 +16,7 @@ signature otherwise the function call will not work.
 	Note that callbacks will be called in background and GUI modes, hence you should 
 	wrap all GUI code by the following condition::
 	
-		if not natron.isBackground():
+		if not NatronEngine.natron.isBackground():
 			#...do gui stuff
 	
 Callback persistence
@@ -388,6 +388,8 @@ You can set the callback from the project settings:
 
 	You can set a default After node created callback for all new projects in the *Preferences-->Python* tab.
 	
+This callback can also be set in the *Node* tab of any **Group** node (or *PyPlug*). 
+If set on the Group, the callback will be invoked for the *Group* node and all its direct children (not recursively).
 	
 The Before node removal callback:
 ---------------------------------
@@ -423,6 +425,8 @@ You can set the callback from the project settings:
 
 	You can set a default Before node removal callback for all new projects in the *Preferences-->Python* tab.
 	
+This callback can also be set in the *Node* tab of any **Group** node (or *PyPlug*). 
+If set on the Group, the callback will be invoked for the *Group* node and all its direct children (not recursively).
 	
 The Before frame render callback:
 ---------------------------------

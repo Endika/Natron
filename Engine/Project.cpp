@@ -1,24 +1,35 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Project.h"
 
 #include <fstream>
-#include <algorithm>
+#include <algorithm> // min, max
 #include <ios>
 #include <cstdlib> // strtoul
 #include <cerrno> // errno
+#include <stdexcept>
 
 #ifdef __NATRON_WIN32__
 #include <stdio.h> //for _snprintf
@@ -51,6 +62,9 @@
 #include "Engine/KnobFile.h"
 #include "Engine/StandardPaths.h"
 #include "Engine/OutputSchedulerThread.h"
+#include "Engine/FormatSerialization.h"
+#include "Engine/RectISerialization.h"
+#include "Engine/RectDSerialization.h"
 
 using std::cout; using std::endl;
 using std::make_pair;
@@ -81,12 +95,8 @@ static std::string generateUserFriendlyNatronVersionName()
     ret.append(" v");
     ret.append(NATRON_VERSION_STRING);
     const std::string status(NATRON_DEVELOPMENT_STATUS);
-    if (status == NATRON_DEVELOPMENT_ALPHA) {
-        ret.append(" " NATRON_DEVELOPMENT_ALPHA);
-    } else if (status == NATRON_DEVELOPMENT_BETA) {
-        ret.append(" " NATRON_DEVELOPMENT_BETA);
-    } else if (status == NATRON_DEVELOPMENT_RELEASE_CANDIDATE) {
-        ret.append(" " NATRON_DEVELOPMENT_RELEASE_CANDIDATE);
+    ret.append(" " NATRON_DEVELOPMENT_STATUS);
+    if (status == NATRON_DEVELOPMENT_RELEASE_CANDIDATE) {
         ret.append(QString::number(NATRON_BUILD_NUMBER).toStdString());
     }
     return ret;
@@ -286,14 +296,14 @@ Project::loadProjectInternal(const QString & path,
         throw std::runtime_error( e.what() );
     } catch (const std::ios_base::failure& e) {
         ifile.close();
-        getApp()->endProgress(this);
+        getApp()->progressEnd(this);
         throw std::runtime_error( std::string("Failed to read the project file: I/O failure (") + e.what() + ")");
     } catch (const std::exception & e) {
         ifile.close();
         throw std::runtime_error( std::string("Failed to read the project file: ") + e.what() );
     } catch (...) {
         ifile.close();
-        getApp()->endProgress(this);
+        getApp()->progressEnd(this);
         throw std::runtime_error("Failed to read the project file");
     }
 
@@ -337,18 +347,8 @@ Project::loadProjectInternal(const QString & path,
         }
     }
     
-    std::string onProjectLoad = getOnProjectLoadCB();
-    if (!onProjectLoad.empty()) {
-        std::string err,output;
-        std::string appID = getApp()->getAppIDString();
-        onProjectLoad.insert(0, "app = " + appID + "\n");
-        if (!Natron::interpretPythonScript(onProjectLoad + "()\n", &err, &output)) {
-            getApp()->appendToScriptEditor("Failed to run onProjectLoad callback: " + err);
-        } else {
-            getApp()->appendToScriptEditor(output);
-        }
-    }
-    
+    _imp->runOnProjectLoadCallback();
+
     ///Process all events before flagging that we're no longer loading the project
     ///to avoid multiple renders being called because of reshape events of viewers
     QCoreApplication::processEvents();
@@ -457,7 +457,9 @@ Project::saveProjectInternal(const QString & path,
         }
         filePath.append("/");
         filePath.append(name);
-        filePath.append(".autosave");
+        if (!isRenderSave) {
+            filePath.append(".autosave");
+        }
         if (!isRenderSave) {
             if (appendTimeHash) {
                 Hash64 timeHash;
@@ -588,7 +590,7 @@ Project::triggerAutoSave()
     ///Should only be called in the main-thread, that is upon user interaction.
     assert( QThread::currentThread() == qApp->thread() );
 
-    if ( appPTR->isBackground() || !appPTR->isLoaded() ) {
+    if ( appPTR->isBackground() || !appPTR->isLoaded() || _imp->projectClosing ) {
         return;
     }
     {
@@ -597,7 +599,7 @@ Project::triggerAutoSave()
             return;
         }
     }
-
+    
     _imp->autoSaveTimer->start( appPTR->getCurrentSettings()->getAutoSaveDelayMS() );
 }
 
@@ -1415,7 +1417,8 @@ Project::reset(bool aboutToQuit)
             }
         }
     }
-    
+    clearNodes(true);
+
     {
         QMutexLocker l(&_imp->projectLock);
         _imp->autoSetProjectFormat = appPTR->getCurrentSettings()->isAutoProjectFormatEnabled();
@@ -1429,7 +1432,6 @@ Project::reset(bool aboutToQuit)
     _imp->timeline->removeAllKeyframesIndicators();
     
     Q_EMIT projectNameChanged(NATRON_PROJECT_UNTITLED);
-    clearNodes(true);
     
     if (!aboutToQuit) {
         const std::vector<boost::shared_ptr<KnobI> > & knobs = getKnobs();
@@ -1526,6 +1528,7 @@ Project::getDefaultColorSpaceForBitDepth(Natron::ImageBitDepthEnum bitdepth) con
     case Natron::eImageBitDepthShort:
 
         return (Natron::ViewerColorSpaceEnum)_imp->colorSpace16u->getValue();
+    case Natron::eImageBitDepthHalf: // same colorspace as float
     case Natron::eImageBitDepthFloat:
 
         return (Natron::ViewerColorSpaceEnum)_imp->colorSpace32f->getValue();
@@ -1569,22 +1572,27 @@ Project::escapeXML(const std::string &istr)
                 str.replace(i, 1, "&apos;");
                 i += 5;
                 break;
-
-                // control chars we allow:
-            case '\n':
-            case '\r':
-            case '\t':
-                break;
-
             default: {
+                // Escape even the whitespace characters '\n' '\r' '\t', although they are valid
+                // XML, because they would be converted to space when re-read.
+                // See http://www.w3.org/TR/xml/#AVNormalize
                 unsigned char c = (unsigned char)(str[i]);
+                // Escape even the whitespace characters '\n' '\r' '\t', although they are valid
+                // XML, because they would be converted to space when re-read.
+                // See http://www.w3.org/TR/xml/#AVNormalize
                 if ((0x01 <= c && c <= 0x1f) || (0x7F <= c && c <= 0x9F)) {
-                    char escaped[7];
                     // these characters must be escaped in XML 1.1
-                    snprintf(escaped, sizeof(escaped), "&#x%02X;", (unsigned int)c);
-                    str.replace(i, 1, escaped);
-                    i += 5;
-
+                    // http://www.w3.org/TR/xml/#sec-references
+                    std::string ns = "&#x";
+                    if (c > 0xf) {
+                        int d = c / 0x10;
+                        ns += ('0' + d); // d cannot be more than 9 (because c <= 0x9F)
+                    }
+                    int d = c & 0xf;
+                    ns += d < 10 ? ('0' + d) : ('A' + d - 10);
+                    ns += ';';
+                    str.replace(i, 1, ns);
+                    i += ns.size() + 1;
                 }
             }   break;
         }
@@ -1599,39 +1607,38 @@ Project::unescapeXML(const std::string &istr)
     std::string str = istr;
     i = str.find_first_of("&");
     while (i != std::string::npos) {
-        if (str[i] == '&') {
-            if (!str.compare(i + 1, 3, "lt;")) {
-                str.replace(i, 4, 1, '<');
-            } else if (!str.compare(i + 1, 3, "gt;")) {
-                str.replace(i, 4, 1, '>');
-            } else if (!str.compare(i + 1, 4, "amp;")) {
-                str.replace(i, 5, 1, '&');
-            } else if (!str.compare(i + 1, 5, "apos;")) {
-                str.replace(i, 6, 1, '\'');
-            } else if (!str.compare(i + 1, 5, "quot;")) {
-                str.replace(i, 6, 1, '"');
-            } else if (!str.compare(i + 1, 1, "#")) {
-                size_t end = str.find_first_of(";", i + 2);
-                if (end == std::string::npos) {
-                    // malformed XML
-                    return str;
-                }
-                char *tail = NULL;
-                int errno_save = errno;
-                bool hex = str[i+2] == 'x' || str[i+2] == 'X';
-                char *head = &str[i+ (hex ? 3 : 2)];
-
-                errno = 0;
-                unsigned long cp = std::strtoul(head, &tail, hex ? 16 : 10);
-
-                bool fail = errno || (tail - &str[0])!= (long)end || cp > 0xff; // only handle 0x01-0xff
-                errno = errno_save;
-                if (fail) {
-                    return str;
-                }
-                // replace from '&' to ';' (thus the +1)
-                str.replace(i, tail - head + 1, 1, (char)cp);
+        assert(str[i] == '&');
+        if (!str.compare(i + 1, 3, "lt;")) {
+            str.replace(i, 4, 1, '<');
+        } else if (!str.compare(i + 1, 3, "gt;")) {
+            str.replace(i, 4, 1, '>');
+        } else if (!str.compare(i + 1, 4, "amp;")) {
+            str.replace(i, 5, 1, '&');
+        } else if (!str.compare(i + 1, 5, "apos;")) {
+            str.replace(i, 6, 1, '\'');
+        } else if (!str.compare(i + 1, 5, "quot;")) {
+            str.replace(i, 6, 1, '"');
+        } else if (!str.compare(i + 1, 1, "#")) {
+            size_t end = str.find_first_of(";", i + 2);
+            if (end == std::string::npos) {
+                // malformed XML
+                return str;
             }
+            char *tail = NULL;
+            int errno_save = errno;
+            bool hex = str[i+2] == 'x' || str[i+2] == 'X';
+            char *head = &str[i+ (hex ? 3 : 2)];
+
+            errno = 0;
+            unsigned long cp = std::strtoul(head, &tail, hex ? 16 : 10);
+
+            bool fail = errno || (tail - &str[0])!= (long)end || cp > 0xff; // only handle 0x01-0xff
+            errno = errno_save;
+            if (fail) {
+                return str;
+            }
+            // replace from '&' to ';' (thus the +1)
+            str.replace(i, tail - head + 1, 1, (char)cp);
         }
         i = str.find_first_of("&", i + 1);
     }
@@ -1973,7 +1980,7 @@ Project::isFrameRangeLocked() const
 }
     
 void
-Project::getFrameRange(int* first,int* last) const
+Project::getFrameRange(double* first,double* last) const
 {
     *first = _imp->frameRange->getValue(0);
     *last = _imp->frameRange->getValue(1);
@@ -1984,10 +1991,11 @@ Project::unionFrameRangeWith(int first,int last)
 {
     
     int curFirst,curLast;
+    bool mustSet = !_imp->frameRange->hasModifications();
     curFirst = _imp->frameRange->getValue(0);
     curLast = _imp->frameRange->getValue(1);
-    curFirst = std::min(first, curFirst);
-    curLast = std::max(last, curLast);
+    curFirst = !mustSet ? std::min(first, curFirst) : first;
+    curLast = !mustSet ? std::max(last, curLast) : last;
     beginChanges();
     _imp->frameRange->setValue(curFirst, 0);
     _imp->frameRange->setValue(curLast, 1);
@@ -2018,7 +2026,7 @@ Project::createViewer()
                                          -1,-1,
                                          true,
                                          INT_MIN,INT_MIN,
-                                         true,
+                                         false,
                                          true,
                                          false,
                                          QString(),
@@ -2028,7 +2036,7 @@ Project::createViewer()
     
 static bool hasNodeOutputsInList(const std::list<boost::shared_ptr<Natron::Node> >& nodes,const boost::shared_ptr<Natron::Node>& node)
 {
-    const std::list<Natron::Node*>& outputs = node->getOutputs();
+    const std::list<Natron::Node*>& outputs = node->getGuiOutputs();
     
     bool foundOutput = false;
     for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
@@ -2045,7 +2053,7 @@ static bool hasNodeOutputsInList(const std::list<boost::shared_ptr<Natron::Node>
     
 static bool hasNodeInputsInList(const std::list<boost::shared_ptr<Natron::Node> >& nodes,const boost::shared_ptr<Natron::Node>& node)
 {
-    const std::vector<boost::shared_ptr<Natron::Node> >& inputs = node->getInputs_mt_safe();
+    const std::vector<boost::shared_ptr<Natron::Node> >& inputs = node->getGuiInputs();
     
     bool foundInput = false;
     for (std::list<boost::shared_ptr<Natron::Node> >::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
@@ -2075,13 +2083,13 @@ static void addTreeInputs(const std::list<boost::shared_ptr<Natron::Node> >& nod
     if (!hasNodeInputsInList(nodes,node)) {
         Project::TreeInput input;
         input.node = node;
-        input.inputs = node->getInputs_mt_safe();
+        input.inputs = node->getGuiInputs();
         tree.inputs.push_back(input);
         markedNodes.push_back(node);
     } else {
         tree.inbetweenNodes.push_back(node);
         markedNodes.push_back(node);
-        const std::vector<boost::shared_ptr<Natron::Node> >& inputs = node->getInputs_mt_safe();
+        const std::vector<boost::shared_ptr<Natron::Node> >& inputs = node->getGuiInputs();
         for (std::vector<boost::shared_ptr<Natron::Node> >::const_iterator it2 = inputs.begin() ; it2!=inputs.end(); ++it2) {
             if (*it2) {
                 addTreeInputs(nodes, *it2, tree, markedNodes);
@@ -2100,13 +2108,13 @@ void Project::extractTreesFromNodes(const std::list<boost::shared_ptr<Natron::No
             NodesTree tree;
             tree.output.node = *it;
 
-            const std::list<Natron::Node* >& outputs = (*it)->getOutputs();
+            const std::list<Natron::Node* >& outputs = (*it)->getGuiOutputs();
             for (std::list<Natron::Node*>::const_iterator it2 = outputs.begin(); it2!=outputs.end(); ++it2) {
                 int idx = (*it2)->inputIndex(it->get());
                 tree.output.outputs.push_back(std::make_pair(idx,*it2));
             }
             
-            const std::vector<boost::shared_ptr<Natron::Node> >& inputs = (*it)->getInputs_mt_safe();
+            const std::vector<boost::shared_ptr<Natron::Node> >& inputs = (*it)->getGuiInputs();
             for (U32 i = 0; i < inputs.size(); ++i) {
                 if (inputs[i]) {
                     addTreeInputs(nodes, inputs[i], tree, markedNodes);
@@ -2116,7 +2124,7 @@ void Project::extractTreesFromNodes(const std::list<boost::shared_ptr<Natron::No
             if (tree.inputs.empty()) {
                 TreeInput input;
                 input.node = *it;
-                input.inputs = (*it)->getInputs_mt_safe();
+                input.inputs = (*it)->getGuiInputs();
                 tree.inputs.push_back(input);
             }
             
@@ -2126,7 +2134,17 @@ void Project::extractTreesFromNodes(const std::list<boost::shared_ptr<Natron::No
     
 }
   
-
+bool Project::addFormat(const std::string& formatSpec)
+{
+    Format f;
+    if (generateFormatFromString(formatSpec.c_str(), &f)) {
+        QMutexLocker k(&_imp->formatMutex);
+        tryAddProjectFormat(f);
+        return true;
+    } else {
+        return false;
+    }
+}
     
 } //namespace Natron
 

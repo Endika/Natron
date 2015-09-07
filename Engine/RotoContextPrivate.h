@@ -1,19 +1,29 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef ROTOCONTEXTPRIVATE_H
 #define ROTOCONTEXTPRIVATE_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <list>
 #include <map>
@@ -31,6 +41,7 @@
 #include <QCoreApplication>
 #include <QThread>
 #include <QReadWriteLock>
+#include <QWaitCondition>
 
 #include <cairo/cairo.h>
 
@@ -41,7 +52,7 @@
 #include "Engine/Image.h"
 #include "Engine/EffectInstance.h"
 #include "Engine/AppManager.h"
-#include "Engine/Rect.h"
+//#include "Engine/Rect.h"
 #include "Engine/RotoContext.h"
 #include "Global/GlobalDefines.h"
 #include "Engine/Transform.h"
@@ -289,13 +300,18 @@ struct BezierCPPrivate
 
     ///the animation curves for the position in the 2D plane
     boost::shared_ptr<Curve> curveX,curveY;
+    boost::shared_ptr<Curve> guiCurveX,guiCurveY;
     double x,y; //< used when there is no keyframe
-
+    double guiX,guiY;
+    
     ///the animation curves for the derivatives
     ///They do not need to be protected as Curve is a thread-safe class.
     boost::shared_ptr<Curve> curveLeftBezierX,curveRightBezierX,curveLeftBezierY,curveRightBezierY;
+    boost::shared_ptr<Curve> guiCurveLeftBezierX,guiCurveRightBezierX,guiCurveLeftBezierY,guiCurveRightBezierY;
+    
     mutable QMutex staticPositionMutex; //< protects the  leftX,rightX,leftY,rightY
     double leftX,rightX,leftY,rightY; //< used when there is no keyframe
+    double guiLeftX,guiRightX,guiLeftY,guiRightY; //< used when there is no keyframe
     mutable QReadWriteLock masterMutex; //< protects masterTrack & relativePoint
     boost::shared_ptr<Double_Knob> masterTrack; //< is this point linked to a track ?
     SequenceTime offsetTime; //< the time at which the offset must be computed
@@ -304,17 +320,29 @@ struct BezierCPPrivate
     : holder(curve)
     , curveX(new Curve)
     , curveY(new Curve)
+    , guiCurveX(new Curve)
+    , guiCurveY(new Curve)
     , x(0)
     , y(0)
+    , guiX(0)
+    , guiY(0)
     , curveLeftBezierX(new Curve)
     , curveRightBezierX(new Curve)
     , curveLeftBezierY(new Curve)
     , curveRightBezierY(new Curve)
+    , guiCurveLeftBezierX(new Curve)
+    , guiCurveRightBezierX(new Curve)
+    , guiCurveLeftBezierY(new Curve)
+    , guiCurveRightBezierY(new Curve)
     , staticPositionMutex()
     , leftX(0)
     , rightX(0)
     , leftY(0)
     , rightY(0)
+    , guiLeftX(0)
+    , guiRightX(0)
+    , guiLeftY(0)
+    , guiRightY(0)
     , masterMutex()
     , masterTrack()
     , offsetTime(0)
@@ -336,24 +364,40 @@ struct BezierPrivate
     mutable std::map<int,bool> isClockwiseOriented;
     mutable bool isClockwiseOrientedStatic; //< used when the bezier has no keyframes
     
+    mutable std::map<int,bool> guiIsClockwiseOriented;
+    mutable bool guiIsClockwiseOrientedStatic; //< used when the bezier has no keyframes
+    
     bool autoRecomputeOrientation; // when true, orientation will be computed automatically on editing
     
     bool finished; //< when finished is true, the last point of the list is connected to the first point of the list.
 
     bool isOpenBezier;
     
+    mutable QMutex guiCopyMutex;
+    bool mustCopyGui;
+    
     BezierPrivate(bool isOpenBezier)
     : points()
     , featherPoints()
     , isClockwiseOriented()
     , isClockwiseOrientedStatic(false)
+    , guiIsClockwiseOriented()
+    , guiIsClockwiseOrientedStatic(false)
     , autoRecomputeOrientation(true)
     , finished(false)
     , isOpenBezier(isOpenBezier)
+    , guiCopyMutex()
+    , mustCopyGui(false)
     {
     }
+    
+    void setMustCopyGuiBezier(bool copy)
+    {
+        QMutexLocker k(&guiCopyMutex);
+        mustCopyGui = copy;
+    }
 
-    bool hasKeyframeAtTime(int time) const
+    bool hasKeyframeAtTime(bool useGuiCurves, double time) const
     {
         // PRIVATE - should not lock
 
@@ -362,18 +406,18 @@ struct BezierPrivate
         } else {
             KeyFrame k;
 
-            return points.front()->hasKeyFrameAtTime(time);
+            return points.front()->hasKeyFrameAtTime(useGuiCurves, time);
         }
     }
 
-    void getKeyframeTimes(std::set<int>* times) const
+    void getKeyframeTimes(bool useGuiCurves, std::set<int>* times) const
     {
         // PRIVATE - should not lock
 
         if ( points.empty() ) {
             return;
         }
-        points.front()->getKeyframeTimes(times);
+        points.front()->getKeyframeTimes(useGuiCurves, times);
     }
 
     BezierCPs::const_iterator atIndex(int index) const
@@ -407,16 +451,19 @@ struct BezierPrivate
     BezierCPs::const_iterator findControlPointNearby(double x,
                                                      double y,
                                                      double acceptance,
-                                                     int time,
+                                                     double time,
+                                                     const Transform::Matrix3x3& transform,
                                                      int* index) const
     {
         // PRIVATE - should not lock
         int i = 0;
 
         for (BezierCPs::const_iterator it = points.begin(); it != points.end(); ++it, ++i) {
-            double pX,pY;
-            (*it)->getPositionAtTime(time, &pX, &pY);
-            if ( ( pX >= (x - acceptance) ) && ( pX <= (x + acceptance) ) && ( pY >= (y - acceptance) ) && ( pY <= (y + acceptance) ) ) {
+            Transform::Point3D p;
+            p.z = 1;
+            (*it)->getPositionAtTime(true, time, &p.x, &p.y);
+            p = Transform::matApply(transform, p);
+            if ( ( p.x >= (x - acceptance) ) && ( p.x <= (x + acceptance) ) && ( p.y >= (y - acceptance) ) && ( p.y <= (y + acceptance) ) ) {
                 *index = i;
 
                 return it;
@@ -429,16 +476,19 @@ struct BezierPrivate
     BezierCPs::const_iterator findFeatherPointNearby(double x,
                                                      double y,
                                                      double acceptance,
-                                                     int time,
+                                                     double time,
+                                                     const Transform::Matrix3x3& transform,
                                                      int* index) const
     {
         // PRIVATE - should not lock
         int i = 0;
-
+        
         for (BezierCPs::const_iterator it = featherPoints.begin(); it != featherPoints.end(); ++it, ++i) {
-            double pX,pY;
-            (*it)->getPositionAtTime(time, &pX, &pY);
-            if ( ( pX >= (x - acceptance) ) && ( pX <= (x + acceptance) ) && ( pY >= (y - acceptance) ) && ( pY <= (y + acceptance) ) ) {
+            Transform::Point3D p;
+            p.z = 1;
+            (*it)->getPositionAtTime(true, time, &p.x, &p.y);
+            p = Transform::matApply(transform, p);
+            if ( ( p.x >= (x - acceptance) ) && ( p.x <= (x + acceptance) ) && ( p.y >= (y - acceptance) ) && ( p.y <= (y + acceptance) ) ) {
                 *index = i;
 
                 return it;
@@ -540,6 +590,12 @@ getNatronOperationString(Natron::MergingFunctionEnum operation)
         case Natron::eMergeGeometric:
             
             return "geometric";
+        case Natron::eMergeGrainExtract:
+            
+            return "grain-extract";
+        case Natron::eMergeGrainMerge:
+            
+            return "grain-merge";
         case Natron::eMergeHardLight:
             
             return "hard-light";
@@ -660,6 +716,12 @@ getNatronOperationHelpString(Natron::MergingFunctionEnum operation)
         case Natron::eMergeGeometric:
             
             return "2AB/(A+B)";
+        case Natron::eMergeGrainMerge:
+            
+            return "B + A - 0.5";
+        case Natron::eMergeGrainExtract:
+            
+            return "B - A + 0.5";
         case Natron::eMergeHardLight:
             
             return "multiply if A < 0.5, screen if A > 0.5";
@@ -1336,11 +1398,20 @@ struct RotoStrokeItemPrivate
     Natron::RotoStrokeType type;
     bool finished;
     
-    Curve xCurve,yCurve,pressureCurve;
+    struct StrokeCurves
+    {
+        boost::shared_ptr<Curve> xCurve,yCurve,pressureCurve;
+    };
+    
+    /**
+     * @brief A list of all storkes contained in this item. Basically each time penUp() is called it makes a new stroke
+     **/
+    std::list<StrokeCurves> strokes;
     double curveT0; // timestamp of the first point in curve
     double lastTimestamp;
     RectD bbox;
     
+    RectD wholeStrokeBboxWhilePainting;
     
     
     mutable QMutex strokeDotPatternsMutex;
@@ -1349,12 +1420,11 @@ struct RotoStrokeItemPrivate
     RotoStrokeItemPrivate(Natron::RotoStrokeType type)
     : type(type)
     , finished(false)
-    , xCurve()
-    , yCurve()
-    , pressureCurve()
+    , strokes()
     , curveT0(0)
     , lastTimestamp(0)
     , bbox()
+    , wholeStrokeBboxWhilePainting()
     , strokeDotPatternsMutex()
     , strokeDotPatterns()
     {
@@ -1445,6 +1515,14 @@ struct RotoContextPrivate
     boost::shared_ptr<RotoItem> lastInsertedItem;
     boost::shared_ptr<RotoItem> lastLockedItem;
     boost::shared_ptr<RotoStrokeItem> strokeBeingPainted;
+    
+    //Used to prevent 2 threads from writing the same image in the rotocontext
+    mutable QMutex cacheAccessMutex;
+    
+    mutable QMutex doingNeatRenderMutex;
+    QWaitCondition doingNeatRenderCond;
+    bool doingNeatRender;
+    bool mustDoNeatRender;
 
     RotoContextPrivate(const boost::shared_ptr<Natron::Node>& n )
     : rotoContextMutex()
@@ -1456,6 +1534,8 @@ struct RotoContextPrivate
     , isCurrentlyLoading(false)
     , node(n)
     , age(0)
+    , doingNeatRender(false)
+    , mustDoNeatRender(false)
     {
         assert( n && n->getLiveInstance() );
         Natron::EffectInstance* effect = n->getLiveInstance();
@@ -2056,21 +2136,21 @@ struct RotoContextPrivate
     
     double renderStroke(cairo_t* cr,
                         std::vector<cairo_pattern_t*>& dotPatterns,
-                        const std::list<std::pair<Natron::Point,double> >& points,
+                        const std::list<std::list<std::pair<Natron::Point,double> > >& strokes,
                         double distToNext,
                         const boost::shared_ptr<RotoDrawableItem>& stroke,
                         bool doBuildup,
                         double opacity, 
-                        int time,
+                        double time,
                         unsigned int mipmapLevel);
     
-    void renderBezier(cairo_t* cr,const Bezier* bezier, double opacity, int time, unsigned int mipmapLevel);
+    void renderBezier(cairo_t* cr,const Bezier* bezier, double opacity, double time, unsigned int mipmapLevel);
     
-    void renderFeather(const Bezier* bezier,int time, unsigned int mipmapLevel, bool inverted, double shapeColor[3], double opacity, double featherDist, double fallOff, cairo_pattern_t* mesh);
+    void renderFeather(const Bezier* bezier,double time, unsigned int mipmapLevel, bool inverted, double shapeColor[3], double opacity, double featherDist, double fallOff, cairo_pattern_t* mesh);
 
-    void renderInternalShape(int time,unsigned int mipmapLevel,double shapeColor[3], double opacity,const Transform::Matrix3x3& transform, cairo_t* cr, cairo_pattern_t* mesh, const BezierCPs & cps);
+    void renderInternalShape(double time,unsigned int mipmapLevel,double shapeColor[3], double opacity,const Transform::Matrix3x3& transform, cairo_t* cr, cairo_pattern_t* mesh, const BezierCPs & cps);
     
-    static void bezulate(int time,const BezierCPs& cps,std::list<BezierCPs>* patches);
+    static void bezulate(double time,const BezierCPs& cps,std::list<BezierCPs>* patches);
 
     void applyAndDestroyMask(cairo_t* cr,cairo_pattern_t* mesh);
 };

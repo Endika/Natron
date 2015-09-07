@@ -1,16 +1,26 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "ParameterWrapper.h"
 #include "Engine/EffectInstance.h"
@@ -285,7 +295,7 @@ AnimatedParam::getKeyTime(int index,int dimension,double* time) const
 void
 AnimatedParam::deleteValueAtTime(int time,int dimension)
 {
-    getInternalKnob()->deleteValueAtTime(time, dimension);
+    getInternalKnob()->deleteValueAtTime(Natron::eCurveChangeReasonInternal,time, dimension);
 }
 
 void
@@ -313,21 +323,21 @@ AnimatedParam::getCurrentTime() const
 }
 
 void
-Param::_addAsDependencyOf(int fromExprDimension,Param* param)
+Param::_addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension)
 {
     boost::shared_ptr<KnobI> otherKnob = param->_knob.lock();
     boost::shared_ptr<KnobI> thisKnob = _knob.lock();
     if (otherKnob == thisKnob) {
         return;
     }
-    thisKnob->addListener(true,fromExprDimension, otherKnob);
+    thisKnob->addListener(true,fromExprDimension, thisDimension, otherKnob);
 }
 
 bool
 AnimatedParam::setExpression(const std::string& expr,bool hasRetVariable,int dimension)
 {
     try {
-        (void)_knob.lock()->setExpression(dimension,expr,hasRetVariable);
+        _knob.lock()->setExpression(dimension,expr,hasRetVariable);
     } catch (...) {
         return false;
     }
@@ -565,9 +575,9 @@ IntParam::getDisplayMaximum(int dimension) const
 }
 
 int
-IntParam::addAsDependencyOf(int fromExprDimension,Param* param)
+IntParam::addAsDependencyOf(int fromExprDimension,Param* param, int thisDimension)
 {
-    _addAsDependencyOf(fromExprDimension, param);
+    _addAsDependencyOf(fromExprDimension, param, thisDimension);
     return _intKnob.lock()->getValue();
 }
 
@@ -802,9 +812,9 @@ DoubleParam::getDisplayMaximum(int dimension) const
 }
 
 double
-DoubleParam::addAsDependencyOf(int fromExprDimension,Param* param)
+DoubleParam::addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension)
 {
-    _addAsDependencyOf(fromExprDimension, param);
+    _addAsDependencyOf(fromExprDimension, param, thisDimension);
     return _doubleKnob.lock()->getValue();
 }
 
@@ -989,9 +999,9 @@ ColorParam::getDisplayMaximum(int dimension) const
 }
 
 double
-ColorParam::addAsDependencyOf(int fromExprDimension,Param* param)
+ColorParam::addAsDependencyOf(int fromExprDimension,Param* param, int thisDimension)
 {
-    _addAsDependencyOf(fromExprDimension, param);
+    _addAsDependencyOf(fromExprDimension, param, thisDimension);
     return _colorKnob.lock()->getValue();
 }
 
@@ -1033,6 +1043,13 @@ ChoiceParam::set(int x, int frame)
     _choiceKnob.lock()->setValueAtTime(frame, x, 0);
 }
 
+void
+ChoiceParam::set(const std::string& label)
+{
+    KnobHelper::ValueChangedReturnCodeEnum s = _choiceKnob.lock()->setValueFromLabel(label, 0);
+    Q_UNUSED(s);
+}
+
 int
 ChoiceParam::getValue() const
 {
@@ -1061,6 +1078,12 @@ void
 ChoiceParam::setDefaultValue(int value)
 {
     _choiceKnob.lock()->setDefaultValue(value,0);
+}
+
+void
+ChoiceParam::setDefaultValue(const std::string& value)
+{
+    _choiceKnob.lock()->setDefaultValueFromLabel(value);
 }
 
 int
@@ -1132,9 +1155,9 @@ ChoiceParam::getOptions() const
 }
 
 int
-ChoiceParam::addAsDependencyOf(int fromExprDimension,Param* param)
+ChoiceParam::addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension)
 {
-    _addAsDependencyOf(fromExprDimension, param);
+    _addAsDependencyOf(fromExprDimension, param,thisDimension);
     return _choiceKnob.lock()->getValue();
 }
 
@@ -1222,9 +1245,9 @@ BooleanParam::restoreDefaultValue()
 
 
 bool
-BooleanParam::addAsDependencyOf(int fromExprDimension,Param* param)
+BooleanParam::addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension)
 {
-    _addAsDependencyOf(fromExprDimension, param);
+    _addAsDependencyOf(fromExprDimension, param,thisDimension);
     return _boolKnob.lock()->getValue();
 }
 
@@ -1313,9 +1336,9 @@ StringParamBase::restoreDefaultValue()
 
 
 std::string
-StringParamBase::addAsDependencyOf(int fromExprDimension,Param* param)
+StringParamBase::addAsDependencyOf(int fromExprDimension,Param* param,int thisDimension)
 {
-    _addAsDependencyOf(fromExprDimension, param);
+    _addAsDependencyOf(fromExprDimension, param,thisDimension);
     return _stringKnob.lock()->getValue();
 }
 

@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "MultiInstancePanel.h"
 
@@ -32,32 +41,36 @@ CLANG_DIAG_OFF(uninitialized)
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
+// /usr/local/include/boost/bind/arg.hpp:37:9: warning: unused typedef 'boost_static_assert_typedef_37' [-Wunused-local-typedef]
 #include <boost/bind.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 #include <boost/weak_ptr.hpp>
-
-#include "Engine/Node.h"
-#include "Engine/KnobTypes.h"
-#include "Engine/KnobFile.h"
-#include "Engine/EffectInstance.h"
-#include "Engine/Curve.h"
-#include "Engine/Settings.h"
-#include "Engine/TimeLine.h"
 
 #include <ofxNatron.h>
 
+#include "Engine/Curve.h"
+#include "Engine/EffectInstance.h"
+#include "Engine/KnobFile.h"
+#include "Engine/KnobTypes.h"
+#include "Engine/Node.h"
+#include "Engine/Settings.h"
+#include "Engine/TimeLine.h"
+
+#include "Gui/AnimatedCheckBox.h"
 #include "Gui/Button.h"
 #include "Gui/ComboBox.h"
-#include "Gui/GuiApplicationManager.h"
-#include "Gui/GuiAppInstance.h"
-#include "Gui/AnimatedCheckBox.h"
-#include "Gui/SpinBox.h"
-#include "Gui/TableModelView.h"
-#include "Gui/NodeGui.h"
 #include "Gui/DockablePanel.h"
-#include "Gui/NodeGraph.h"
 #include "Gui/Gui.h"
+#include "Gui/GuiAppInstance.h"
+#include "Gui/GuiApplicationManager.h"
 #include "Gui/Label.h"
 #include "Gui/Menu.h"
+#include "Gui/NodeGraph.h"
+#include "Gui/NodeGui.h"
+#include "Gui/NodeSettingsPanel.h"
+#include "Gui/SpinBox.h"
+#include "Gui/TableModelView.h"
 #include "Gui/Utils.h"
 
 #define kTrackCenterName "center"
@@ -502,6 +515,7 @@ MultiInstancePanel::createMultiInstanceGui(QVBoxLayout* layout)
     _imp->view->setHorizontalHeaderLabels(dimensionNames);
 
     _imp->view->setAttribute(Qt::WA_MacShowFocusRect,0);
+    _imp->view->setUniformRowHeights(true);
 
 #if QT_VERSION < 0x050000
     _imp->view->header()->setResizeMode(QHeaderView::ResizeToContents);
@@ -517,21 +531,24 @@ MultiInstancePanel::createMultiInstanceGui(QVBoxLayout* layout)
     _imp->buttonsLayout = new QHBoxLayout(_imp->buttonsContainer);
     _imp->buttonsLayout->setContentsMargins(0, 0, 0, 0);
     _imp->addButton = new Button(QIcon(),"+",_imp->buttonsContainer);
-    _imp->addButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->addButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE, NATRON_SMALL_BUTTON_SIZE);
+    _imp->addButton->setIconSize(QSize(NATRON_SMALL_BUTTON_ICON_SIZE, NATRON_SMALL_BUTTON_ICON_SIZE));
     _imp->addButton->setToolTip(Natron::convertFromPlainText(tr("Add new."), Qt::WhiteSpaceNormal));
     _imp->buttonsLayout->addWidget(_imp->addButton);
     QObject::connect( _imp->addButton, SIGNAL( clicked(bool) ), this, SLOT( onAddButtonClicked() ) );
 
     _imp->removeButton = new Button(QIcon(),"-",_imp->buttonsContainer);
     _imp->removeButton->setToolTip(Natron::convertFromPlainText(tr("Remove selection."), Qt::WhiteSpaceNormal));
-    _imp->removeButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->removeButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE, NATRON_SMALL_BUTTON_SIZE);
+    _imp->removeButton->setIconSize(QSize(NATRON_SMALL_BUTTON_ICON_SIZE, NATRON_SMALL_BUTTON_ICON_SIZE));
     _imp->buttonsLayout->addWidget(_imp->removeButton);
     QObject::connect( _imp->removeButton, SIGNAL( clicked(bool) ), this, SLOT( onRemoveButtonClicked() ) );
-    QPixmap selectAll;
-    appPTR->getIcon(NATRON_PIXMAP_SELECT_ALL, &selectAll);
 
+    QPixmap selectAll;
+    appPTR->getIcon(NATRON_PIXMAP_SELECT_ALL, NATRON_SMALL_BUTTON_ICON_SIZE, &selectAll);
     _imp->selectAll = new Button(QIcon(selectAll),"",_imp->buttonsContainer);
-    _imp->selectAll->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->selectAll->setFixedSize(NATRON_SMALL_BUTTON_SIZE, NATRON_SMALL_BUTTON_SIZE);
+    _imp->selectAll->setIconSize(QSize(NATRON_SMALL_BUTTON_ICON_SIZE, NATRON_SMALL_BUTTON_ICON_SIZE));
     _imp->selectAll->setToolTip(Natron::convertFromPlainText(tr("Select all."), Qt::WhiteSpaceNormal));
     _imp->buttonsLayout->addWidget(_imp->selectAll);
     QObject::connect( _imp->selectAll, SIGNAL( clicked(bool) ), this, SLOT( onSelectAllButtonClicked() ) );
@@ -1969,7 +1986,7 @@ TrackerPanel::onTrackingStarted()
     ///freeze the tracker node
     setKnobsFrozen(true);
     if (getGui()) {
-        getGui()->startProgress(getMainInstance()->getLiveInstance(), tr("Tracking...").toStdString());
+        getGui()->progressStart(getMainInstance()->getLiveInstance(), tr("Tracking...").toStdString(), "");
     }
 
 }
@@ -1980,7 +1997,7 @@ TrackerPanel::onTrackingFinished()
     setKnobsFrozen(false);
     Q_EMIT trackingEnded();
     if (getGui()) {
-        getGui()->endProgress(getMainInstance()->getLiveInstance());
+        getGui()->progressEnd(getMainInstance()->getLiveInstance());
     }
 }
 
@@ -2034,7 +2051,7 @@ TrackerPanel::trackBackward()
         return false;
     }
     
-    int leftBound,rightBound;
+    double leftBound,rightBound;
     getApp()->getFrameRange(&leftBound, &rightBound);
     int end = leftBound - 1;
     int start = getApp()->getTimeLine()->currentFrame();
@@ -2055,7 +2072,7 @@ TrackerPanel::trackForward()
         return false;
     }
    
-    int leftBound,rightBound;
+    double leftBound,rightBound;
     getApp()->getFrameRange(&leftBound, &rightBound);
     boost::shared_ptr<TimeLine> timeline = getApp()->getTimeLine();
     int end = rightBound + 1;

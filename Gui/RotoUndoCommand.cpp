@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "RotoUndoCommand.h"
 
@@ -46,7 +55,7 @@ MoveControlPointsUndoCommand::MoveControlPointsUndoCommand(RotoGui* roto,
                                                            ,
                                                            double dx,
                                                            double dy,
-                                                           int time)
+                                                           double time)
     : QUndoCommand()
       , _firstRedoCalled(false)
       , _roto(roto)
@@ -207,7 +216,7 @@ TransformUndoCommand::TransformUndoCommand(RotoGui* roto,
                                            double ty,
                                            double sx,
                                            double sy,
-                                           int time)
+                                           double time)
     : QUndoCommand()
       , _firstRedoCalled(false)
       , _roto(roto)
@@ -517,7 +526,7 @@ RemovePointUndoCommand::redo()
             }
         }
         isBezier->setAutoOrientationComputation(true);
-        isBezier->refreshPolygonOrientation();
+        isBezier->refreshPolygonOrientation(true);
     }
 
     for (std::list<boost::shared_ptr<Bezier> >::iterator it = toRemove.begin(); it != toRemove.end(); ++it) {
@@ -602,6 +611,7 @@ AddStrokeUndoCommand::AddStrokeUndoCommand(RotoGui* roto,const boost::shared_ptr
 , _indexInLayer(_layer ? _layer->getChildIndex(_item) : -1)
 {
     assert(_indexInLayer != -1);
+    setText(QObject::tr("Paint Stroke"));
 }
 
 AddStrokeUndoCommand::~AddStrokeUndoCommand()
@@ -618,7 +628,6 @@ AddStrokeUndoCommand::undo()
 {
     _roto->removeCurve(_item);
     _roto->evaluate(true);
-    setText(QObject::tr("Paint Stroke"));
 }
 
 void
@@ -631,13 +640,63 @@ AddStrokeUndoCommand::redo()
         _roto->evaluate(true);
     }
     _firstRedoCalled = true;
+}
+
+
+
+AddMultiStrokeUndoCommand::AddMultiStrokeUndoCommand(RotoGui* roto,const boost::shared_ptr<RotoStrokeItem>& item)
+: QUndoCommand()
+, _roto(roto)
+, _firstRedoCalled(false)
+, _item(item)
+, _layer(item->getParentLayer())
+, _indexInLayer(_layer ? _layer->getChildIndex(_item) : -1)
+, isRemoved(false)
+{
+    assert(_indexInLayer != -1);
     setText(QObject::tr("Paint Stroke"));
+}
+
+AddMultiStrokeUndoCommand::~AddMultiStrokeUndoCommand()
+{
+    /*
+     * At this point, the stroke might get deleted, deleting the attached nodes in the meantime, hence we must ensure that all threads
+     * are deleted so that the ThreadLocalStorage used is correctly cleared.
+     */
+    _item->getContext()->getNode()->getApp()->getProject()->ensureAllProcessingThreadsFinished();
+}
+
+void
+AddMultiStrokeUndoCommand::undo()
+{
+    if (_item->removeLastStroke(&_xCurve, &_yCurve, &_pCurve)) {
+        _roto->removeCurve(_item);
+        isRemoved = true;
+    }
+    
+    _roto->evaluate(true);
+}
+
+void
+AddMultiStrokeUndoCommand::redo()
+{
+    if (_firstRedoCalled) {
+        if (_xCurve) {
+            _item->addStroke(_xCurve, _yCurve, _pCurve);
+        }
+        if (isRemoved) {
+            _roto->getContext()->addItem(_layer, _indexInLayer, _item, RotoItem::eSelectionReasonOverlayInteract);
+        }
+        _roto->evaluate(true);
+    }
+    
+    _firstRedoCalled = true;
 }
 
 MoveTangentUndoCommand::MoveTangentUndoCommand(RotoGui* roto,
                                                double dx,
                                                double dy,
-                                               int time,
+                                               double time,
                                                const boost::shared_ptr<BezierCP> & cp,
                                                bool left,
                                                bool breakTangents)
@@ -676,41 +735,47 @@ MoveTangentUndoCommand::~MoveTangentUndoCommand()
 
 namespace {
 static void
-dragTangent(int time,
+dragTangent(double time,
             BezierCP & p,
+            const Transform::Matrix3x3& transform,
             double dx,
             double dy,
             bool left,
             bool autoKeying,
             bool breakTangents)
 {
-    double leftX,leftY,rightX,rightY,x,y;
-    bool isOnKeyframe = p.getLeftBezierPointAtTime(time, &leftX, &leftY,true);
-
-    p.getRightBezierPointAtTime(time, &rightX, &rightY,true);
-    p.getPositionAtTime(time, &x, &y,true);
-    double dist = left ?  sqrt( (rightX - x) * (rightX - x) + (rightY - y) * (rightY - y) )
-                  : sqrt( (leftX - x) * (leftX - x) + (leftY - y) * (leftY - y) );
+    Transform::Point3D ltan,rtan,pos;
+    ltan.z = rtan.z = pos.z = 1;
+    bool isOnKeyframe = p.getLeftBezierPointAtTime(true,time, &ltan.x, &ltan.y,true);
+    p.getRightBezierPointAtTime(true,time, &rtan.x, &rtan.y,true);
+    p.getPositionAtTime(true,time, &pos.x, &pos.y,true);
+    
+    pos = Transform::matApply(transform, pos);
+    ltan = Transform::matApply(transform, ltan);
+    rtan = Transform::matApply(transform, rtan);
+    
+    double dist = left ?  sqrt( (rtan.x - pos.x) * (rtan.x - pos.x) + (rtan.y - pos.y) * (rtan.y - pos.y) )
+                  : sqrt( (ltan.x - pos.x) * (ltan.x - pos.x) + (ltan.y - pos.y) * (ltan.y - pos.y) );
     if (left) {
-        leftX += dx;
-        leftY += dy;
+        ltan.x += dx;
+        ltan.y += dy;
     } else {
-        rightX += dx;
-        rightY += dy;
+        rtan.x += dx;
+        rtan.y += dy;
     }
-    double alpha = left ? std::atan2(y - leftY,x - leftX) : std::atan2(y - rightY,x - rightX);
+    double alpha = left ? std::atan2(pos.y - ltan.y,pos.x - ltan.x) : std::atan2(pos.y - rtan.y,pos.x - rtan.x);
     std::set<int> times;
-    p.getKeyframeTimes(&times);
+    p.getKeyframeTimes(true,&times);
 
     if (left) {
-        double rightDiffX = breakTangents ? 0 : x + std::cos(alpha) * dist - rightX;
-        double rightDiffY = breakTangents ? 0 : y + std::sin(alpha) * dist - rightY;
+        double rightDiffX = breakTangents ? 0 : pos.x + std::cos(alpha) * dist - rtan.x;
+        double rightDiffY = breakTangents ? 0 : pos.y + std::sin(alpha) * dist - rtan.y;
         if (autoKeying || isOnKeyframe) {
             p.getBezier()->movePointLeftAndRightIndex(p, time, dx, dy, rightDiffX, rightDiffY);
         }
     } else {
-        double leftDiffX = breakTangents ? 0 : x + std::cos(alpha) * dist - leftX;
-        double leftDiffY = breakTangents ? 0 : y + std::sin(alpha) * dist - leftY;
+        double leftDiffX = breakTangents ? 0 : pos.x + std::cos(alpha) * dist - ltan.x;
+        double leftDiffY = breakTangents ? 0 : pos.y + std::sin(alpha) * dist - ltan.y;
         if (autoKeying || isOnKeyframe) {
             p.getBezier()->movePointLeftAndRightIndex(p, time, leftDiffX, leftDiffY, dx, dy);
         }
@@ -763,10 +828,13 @@ MoveTangentUndoCommand::redo()
     
     _tangentBeingDragged->getBezier()->incrementNodesAge();
 
+    Transform::Matrix3x3 transform;
+    _tangentBeingDragged->getBezier()->getTransformAtTime(_time, &transform);
+    
     bool autoKeying = _roto->getContext()->isAutoKeyingEnabled();
-    dragTangent(_time, *_tangentBeingDragged, _dx, _dy, _left,autoKeying,_breakTangents);
+    dragTangent(_time, *_tangentBeingDragged, transform, _dx, _dy, _left,autoKeying,_breakTangents);
     if (_featherLinkEnabled && counterPart) {
-        dragTangent(_time, *counterPart, _dx, _dy, _left,autoKeying,_breakTangents);
+        dragTangent(_time, *counterPart, transform, _dx, _dy, _left,autoKeying,_breakTangents);
     }
 
     if (_firstRedoCalled) {
@@ -812,7 +880,7 @@ MoveFeatherBarUndoCommand::MoveFeatherBarUndoCommand(RotoGui* roto,
                                                      double dx,
                                                      double dy,
                                                      const std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > & point,
-                                                     int time)
+                                                     double time)
     : QUndoCommand()
       , _roto(roto)
       , _firstRedoCalled(false)
@@ -854,9 +922,17 @@ MoveFeatherBarUndoCommand::redo()
     boost::shared_ptr<BezierCP> fp = _newPoint.first->isFeatherPoint() ?
     _newPoint.first : _newPoint.second;
     Point delta;
-    Point featherPoint,controlPoint;
-    p->getPositionAtTime(_time, &controlPoint.x, &controlPoint.y);
-    bool isOnKeyframe = fp->getPositionAtTime(_time, &featherPoint.x, &featherPoint.y);
+    
+    Transform::Matrix3x3 transform;
+    p->getBezier()->getTransformAtTime(_time, &transform);
+    
+    Transform::Point3D featherPoint,controlPoint;
+    featherPoint.z = controlPoint.z = 1.;
+    p->getPositionAtTime(true,_time, &controlPoint.x, &controlPoint.y);
+    bool isOnKeyframe = fp->getPositionAtTime(true,_time, &featherPoint.x, &featherPoint.y);
+    
+    controlPoint = Transform::matApply(transform, controlPoint);
+    featherPoint = Transform::matApply(transform, featherPoint);
     
     if ( (controlPoint.x != featherPoint.x) || (controlPoint.y != featherPoint.y) ) {
         Point featherVec;
@@ -891,8 +967,8 @@ MoveFeatherBarUndoCommand::redo()
         }
         
         double leftX,leftY,rightX,rightY,norm;
-        Bezier::leftDerivativeAtPoint(_time, **cur, **prev, &leftX, &leftY);
-        Bezier::rightDerivativeAtPoint(_time, **cur, **next, &rightX, &rightY);
+        Bezier::leftDerivativeAtPoint(true,_time, **cur, **prev, transform ,&leftX, &leftY);
+        Bezier::rightDerivativeAtPoint(true,_time, **cur, **next, transform ,&rightX, &rightY);
         norm = sqrt( (rightX - leftX) * (rightX - leftX) + (rightY - leftY) * (rightY - leftY) );
         
         ///normalize derivatives by their norm
@@ -1067,7 +1143,7 @@ OpenCloseUndoCommand::redo()
 
 SmoothCuspUndoCommand::SmoothCuspUndoCommand(RotoGui* roto,
                                              const std::list<SmoothCuspCurveData> & data,
-                                             int time,
+                                             double time,
                                              bool cusp,
                                              const std::pair<double, double>& pixelScale)
     : QUndoCommand()
@@ -1191,7 +1267,7 @@ MakeBezierUndoCommand::MakeBezierUndoCommand(RotoGui* roto,
                                              bool createPoint,
                                              double dx,
                                              double dy,
-                                             int time)
+                                             double time)
     : QUndoCommand()
       , _firstRedoCalled(false)
       , _roto(roto)
@@ -1337,9 +1413,12 @@ MakeBezierUndoCommand::mergeWith(const QUndoCommand *other)
 MakeEllipseUndoCommand::MakeEllipseUndoCommand(RotoGui* roto,
                                                bool create,
                                                bool fromCenter,
-                                               double dx,
-                                               double dy,
-                                               int time)
+                                               bool constrained,
+                                               double fromx,
+                                               double fromy,
+                                               double tox,
+                                               double toy,
+                                               double time)
     : QUndoCommand()
       , _firstRedoCalled(false)
       , _roto(roto)
@@ -1347,10 +1426,11 @@ MakeEllipseUndoCommand::MakeEllipseUndoCommand(RotoGui* roto,
       , _curve()
       , _create(create)
       , _fromCenter(fromCenter)
-      , _x(dx)
-      , _y(dy)
-      , _dx(create ? 0 : dx)
-      , _dy(create ? 0 : dy)
+      , _constrained(constrained)
+      , _fromx(fromx)
+      , _fromy(fromy)
+      , _tox(tox)
+      , _toy(toy)
       , _time(time)
 {
     if (!_create) {
@@ -1378,51 +1458,44 @@ MakeEllipseUndoCommand::redo()
         _roto->getContext()->addItem(_parentLayer, _indexInLayer, _curve, RotoItem::eSelectionReasonOverlayInteract);
         _roto->evaluate(true);
     } else {
-        
+        double ytop, xright, ybottom, xleft;
+        double tox = _tox;
+        if (_constrained) {
+            tox =  _fromx + (_tox > _fromx ? 1 : -1) * std::abs(_toy - _fromy);
+        }
+        if (_fromCenter) {
+            ytop = _fromy - (_toy - _fromy);
+            xleft = _fromx - (tox - _fromx);
+        } else {
+            ytop = _fromy;
+            xleft = _fromx;
+        }
+        ybottom = _toy;
+        xright = tox;
+        double xmid = (xleft + xright) / 2;
+        double ymid = (ytop + ybottom) / 2;
         if (_create) {
-            _curve = _roto->getContext()->makeBezier(_x,_y,kRotoEllipseBaseName, _time,false);
+            _curve = _roto->getContext()->makeBezier(xmid, ytop, kRotoEllipseBaseName, _time, false); //top
             assert(_curve);
-            _curve->addControlPoint(_x + 1,_y - 1, _time);
-            _curve->addControlPoint(_x,_y - 2, _time);
-            _curve->addControlPoint(_x - 1,_y - 1, _time);
+            _curve->addControlPoint(xright, ymid, _time); // right
+            _curve->addControlPoint(xmid, ybottom, _time); // bottom
+            _curve->addControlPoint(xleft, ymid, _time); //left
             _curve->setCurveFinished(true);
         } else {
+            _curve->setPointByIndex(0, _time, xmid, ytop); // top
+            _curve->setPointByIndex(1,_time, xright, ymid); // right
+            _curve->setPointByIndex(2,_time, xmid, ybottom); // bottom
+            _curve->setPointByIndex(3,_time, xleft, ymid); // left
+
             boost::shared_ptr<BezierCP> top = _curve->getControlPointAtIndex(0);
             boost::shared_ptr<BezierCP> right = _curve->getControlPointAtIndex(1);
             boost::shared_ptr<BezierCP> bottom = _curve->getControlPointAtIndex(2);
             boost::shared_ptr<BezierCP> left = _curve->getControlPointAtIndex(3);
-            if (_fromCenter) {
-                //top only moves by x
-                _curve->movePointByIndex(0,_time, 0, _dy);
-
-                //right
-                _curve->movePointByIndex(1,_time, _dx, 0);
-
-                //bottom
-                _curve->movePointByIndex(2,_time, 0., -_dy );
-
-                //left only moves by y
-                _curve->movePointByIndex(3,_time, -_dx, 0);
-            } else {
-                //top only moves by x
-                _curve->movePointByIndex(0,_time, _dx / 2., 0);
-
-                //right
-                _curve->movePointByIndex(1,_time, _dx, _dy / 2.);
-
-                //bottom
-                _curve->movePointByIndex(2,_time, _dx / 2., _dy );
-
-                //left only moves by y
-                _curve->movePointByIndex(3,_time, 0, _dy / 2.);
-
-            }
-            
             double topX,topY,rightX,rightY,btmX,btmY,leftX,leftY;
-            top->getPositionAtTime(_time, &topX, &topY);
-            right->getPositionAtTime(_time, &rightX, &rightY);
-            bottom->getPositionAtTime(_time, &btmX, &btmY);
-            left->getPositionAtTime(_time, &leftX, &leftY);
+            top->getPositionAtTime(true,_time, &topX, &topY);
+            right->getPositionAtTime(true,_time, &rightX, &rightY);
+            bottom->getPositionAtTime(true,_time, &btmX, &btmY);
+            left->getPositionAtTime(true,_time, &leftX, &leftY);
             
             _curve->setLeftBezierPoint(0, _time,  (leftX + topX) / 2., topY);
             _curve->setRightBezierPoint(0, _time, (rightX + topX) / 2., topY);
@@ -1468,8 +1541,12 @@ MakeEllipseUndoCommand::mergeWith(const QUndoCommand *other)
     if (_curve != sCmd->_curve) {
         _curve->clone(sCmd->_curve.get());
     }
-    _dx += sCmd->_dx;
-    _dy += sCmd->_dy;
+    _fromx = sCmd->_fromx;
+    _fromy = sCmd->_fromy;
+    _tox = sCmd->_tox;
+    _toy = sCmd->_toy;
+    _fromCenter = sCmd->_fromCenter;
+    _constrained = sCmd->_constrained;
 
     return true;
 }
@@ -1479,9 +1556,13 @@ MakeEllipseUndoCommand::mergeWith(const QUndoCommand *other)
 
 MakeRectangleUndoCommand::MakeRectangleUndoCommand(RotoGui* roto,
                                                    bool create,
-                                                   double dx,
-                                                   double dy,
-                                                   int time)
+                                                   bool fromCenter,
+                                                   bool constrained,
+                                                   double fromx,
+                                                   double fromy,
+                                                   double tox,
+                                                   double toy,
+                                                   double time)
     : QUndoCommand()
       , _firstRedoCalled(false)
       , _roto(roto)
@@ -1489,10 +1570,12 @@ MakeRectangleUndoCommand::MakeRectangleUndoCommand(RotoGui* roto,
       , _indexInLayer(-1)
       , _curve()
       , _create(create)
-      , _x(dx)
-      , _y(dy)
-      , _dx(create ? 0 : dx)
-      , _dy(create ? 0 : dy)
+      , _fromCenter(fromCenter)
+      , _constrained(constrained)
+      , _fromx(fromx)
+      , _fromy(fromy)
+      , _tox(tox)
+      , _toy(toy)
       , _time(time)
 {
     if (!_create) {
@@ -1520,17 +1603,32 @@ MakeRectangleUndoCommand::redo()
         _roto->getContext()->addItem(_parentLayer, _indexInLayer, _curve, RotoItem::eSelectionReasonOverlayInteract);
         _roto->evaluate(true);
     } else {
+        double ytop, xright, ybottom, xleft;
+        double tox = _tox;
+        if (_constrained) {
+            tox =  _fromx + (_tox > _fromx ? 1 : -1) * std::abs(_toy - _fromy);
+        }
+        if (_fromCenter) {
+            ytop = _fromy - (_toy - _fromy);
+            xleft = _fromx - (tox - _fromx);
+        } else {
+            ytop = _fromy;
+            xleft = _fromx;
+        }
+        ybottom = _toy;
+        xright = tox;
         if (_create) {
-            _curve = _roto->getContext()->makeBezier(_x,_y,kRotoRectangleBaseName,_time,false);
+            _curve = _roto->getContext()->makeBezier(xleft, ytop, kRotoRectangleBaseName, _time, false); //topleft
             assert(_curve);
-            _curve->addControlPoint(_x + 1,_y,_time);
-            _curve->addControlPoint(_x + 1,_y - 1,_time);
-            _curve->addControlPoint(_x,_y - 1,_time);
+            _curve->addControlPoint(xright, ytop, _time); // topright
+            _curve->addControlPoint(xright, ybottom, _time); // bottomright
+            _curve->addControlPoint(xleft, ybottom, _time); // bottomleft
             _curve->setCurveFinished(true);
         } else {
-            _curve->movePointByIndex(1,_time, _dx, 0);
-            _curve->movePointByIndex(2,_time, _dx, _dy);
-            _curve->movePointByIndex(3,_time, 0, _dy);
+            _curve->setPointByIndex(0, _time, xleft, ytop); // topleft
+            _curve->setPointByIndex(1,_time, xright, ytop); // topright
+            _curve->setPointByIndex(2,_time, xright, ybottom); // bottomright
+            _curve->setPointByIndex(3,_time, xleft, ybottom); // bottomleft
         }
         boost::shared_ptr<RotoItem> parentItem =  _roto->getContext()->getItemByName( _curve->getParentLayer()->getScriptName() );
         if (parentItem) {
@@ -1564,8 +1662,12 @@ MakeRectangleUndoCommand::mergeWith(const QUndoCommand *other)
     if (_curve != sCmd->_curve) {
         _curve->clone(sCmd->_curve.get());
     }
-    _dx += sCmd->_dx;
-    _dy += sCmd->_dy;
+    _fromx = sCmd->_fromx;
+    _fromy = sCmd->_fromy;
+    _tox = sCmd->_tox;
+    _toy = sCmd->_toy;
+    _fromCenter = sCmd->_fromCenter;
+    _constrained = sCmd->_constrained;
 
     return true;
 }
@@ -1820,6 +1922,7 @@ getItemCopyName(RotoPanel* roto,
     return name;
 }
 
+static
 void
 setItemCopyNameRecursive(RotoPanel* panel,
                          const boost::shared_ptr<RotoItem>& item)
@@ -1855,9 +1958,9 @@ PasteItemUndoCommand::PasteItemUndoCommand(RotoPanel* roto,
         _pastedItems.push_back(item);
     }
 
-    boost::shared_ptr<Bezier> isBezier = boost::dynamic_pointer_cast<Bezier>(_targetItem);
+    boost::shared_ptr<RotoDrawableItem> isDrawable = boost::dynamic_pointer_cast<RotoDrawableItem>(_targetItem);
 
-    if (isBezier) {
+    if (isDrawable) {
         _mode = ePasteModeCopyToItem;
         assert(source.size() == 1 && _pastedItems.size() == 1);
         assert( dynamic_cast<RotoDrawableItem*>( _pastedItems.front().rotoItem.get() ) );
@@ -1883,6 +1986,7 @@ PasteItemUndoCommand::PasteItemUndoCommand(RotoPanel* roto,
                                                                           srcStroke->getContext(),
                                                                           name,
                                                                           boost::shared_ptr<RotoLayer>()));
+                copy->createNodes();
                 if (srcStroke->getParentLayer()) {
                     srcStroke->getParentLayer()->insertItem(copy, 0);
                 }
@@ -1944,7 +2048,7 @@ PasteItemUndoCommand::redo()
             oldStroke->createNodes();
             _oldTargetItem = oldStroke;
             if (isStroke->getParentLayer()) {
-                isStroke->getParentLayer()->insertItem(_oldTargetItem, 0);
+                //isStroke->getParentLayer()->insertItem(_oldTargetItem, 0);
             }
             
         }

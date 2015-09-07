@@ -1,20 +1,29 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef OUTPUTSCHEDULERTHREAD_H
 #define OUTPUTSCHEDULERTHREAD_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/shared_ptr.hpp>
@@ -24,15 +33,19 @@
 
 #include "Global/GlobalDefines.h"
 
-
 ///Natron
 class ViewerInstance;
+class RenderStats;
+
+typedef boost::shared_ptr<RenderStats> RenderStatsPtr;
+
 namespace Natron {
     class Node;
     class EffectInstance;
     class OutputEffectInstance;
 }
 
+class RenderStats;
 class RenderEngine;
 
 /**
@@ -68,11 +81,14 @@ struct BufferedFrame
 {
     int view;
     double time;
-    
+    RenderStatsPtr stats;
     boost::shared_ptr<BufferableObject> frame;
     
     BufferedFrame()
-    : view(0) , time(0), frame()
+    : view(0)
+    , time(0)
+    , stats()
+    , frame()
     {
         
     }
@@ -111,7 +127,7 @@ protected:
     /**
      * @brief Must render the frame
      **/
-    virtual void renderFrame(int time) = 0;
+    virtual void renderFrame(int time, bool enableRenderStats) = 0;
         
     boost::scoped_ptr<RenderThreadTaskPrivate> _imp;
 };
@@ -124,8 +140,10 @@ protected:
 struct OutputSchedulerThreadPrivate;
 class OutputSchedulerThread : public QThread
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-    
+GCC_DIAG_SUGGEST_OVERRIDE_ON
+
 public:
     
     friend class RenderThreadTask;
@@ -152,12 +170,22 @@ public:
      * This wakes up the scheduler thread waiting on the bufCondition. If you need to append several frames 
      * use the other version of this function.
      **/
-    void appendToBuffer(double time,int view,const boost::shared_ptr<BufferableObject>& frame);
-    void appendToBuffer(double time,int view,const BufferableObjectList& frames);
+    void appendToBuffer(double time,
+                        int view,
+                        const RenderStatsPtr& stats,
+                        const boost::shared_ptr<BufferableObject>& frame);
+    void appendToBuffer(double time,
+                        int view,
+                        const RenderStatsPtr& stats,
+                        const BufferableObjectList& frames);
     
 private:
     
-    void appendToBuffer_internal(double time,int view,const boost::shared_ptr<BufferableObject>& frame,bool wakeThread);
+    void appendToBuffer_internal(double time,
+                                 int view,
+                                 const RenderStatsPtr& stats,
+                                 const boost::shared_ptr<BufferableObject>& frame,
+                                 bool wakeThread);
     
 public:
     
@@ -175,14 +203,14 @@ public:
     /**
      * @brief Call this to render from firstFrame to lastFrame included.
      **/
-    void renderFrameRange(int firstFrame,int lastFrame,RenderDirectionEnum forward);
+    void renderFrameRange(bool enableRenderStats, int firstFrame,int lastFrame,RenderDirectionEnum forward);
 
     /**
      * @brief Same as renderFrameRange except that the frame range will be computed automatically and it will
      * start from the current frame.
      * This is not appropriate to call this function from a writer.
      **/
-    void renderFromCurrentFrame(RenderDirectionEnum forward);
+    void renderFromCurrentFrame(bool enableRenderStats, RenderDirectionEnum forward);
 
     
     /**
@@ -191,7 +219,11 @@ public:
      * but is directly rendering (e.g: a Writer rendering image sequences doesn't need to be ordered)
      * then the scheduler takes this as a hint to know how many frames have been rendered.
      **/
-    void notifyFrameRendered(int frame,int viewIndex,int viewsCount,Natron::SchedulingPolicyEnum policy);
+    void notifyFrameRendered(int frame,
+                             int viewIndex,
+                             int viewsCount,
+                             const RenderStatsPtr& stats,
+                             Natron::SchedulingPolicyEnum policy);
 
     /**
      * @brief To be called by concurrent worker threads in case of failure, all renders will be aborted
@@ -230,7 +262,7 @@ public:
     /**
      * @brief Called by render-threads to pick some work to do or to get asleep if theres nothing to do
      **/
-    int pickFrameToRender(RenderThreadTask* thread);
+    int pickFrameToRender(RenderThreadTask* thread, bool* enableRenderStats);
     
 
     /**
@@ -248,12 +280,6 @@ public:
      * @brief Returns the desired user FPS that the internal scheduler should stick to
      **/
     double getDesiredFPS() const;
-    
-    /**
-     * @brief Returns the frame range of the output node, as given by the getFrameRange action
-     **/
-    void getPluginFrameRange(int& first,int &last) const;
-    
     
     void runCallbackWithVariables(const QString& callback);
     
@@ -404,7 +430,7 @@ private:
      * @brief Starts/stops more threads according to CPU activity and user preferences 
      * @param optimalNThreads[out] Will be set to the new number of threads
      **/
-    void adjustNumberOfThreads(int* newNThreads);
+    void adjustNumberOfThreads(int* newNThreads, int *lastNThreads);
     
     /**
      * @brief Make nThreadsToStop quit running. If 0 then all threads will be destroyed.
@@ -511,17 +537,17 @@ struct RequestedFrame;
 struct ViewerCurrentFrameRequestSchedulerPrivate;
 class ViewerCurrentFrameRequestScheduler : public QThread
 {
-
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-    
-    
+GCC_DIAG_SUGGEST_OVERRIDE_ON
+
 public:
     
     ViewerCurrentFrameRequestScheduler(ViewerInstance* viewer);
     
     virtual ~ViewerCurrentFrameRequestScheduler();
     
-    void renderCurrentFrame(bool canAbort);
+    void renderCurrentFrame(bool enableRenderStats,bool canAbort);
     
     void quitThread();
     
@@ -529,15 +555,15 @@ public:
     
     bool hasThreadsWorking() const;
     
-    void notifyFrameProduced(const BufferableObjectList& frames,const boost::shared_ptr<RequestedFrame>& request);
+    void notifyFrameProduced(const BufferableObjectList& frames,const RenderStatsPtr& stats, const boost::shared_ptr<RequestedFrame>& request);
     
 public Q_SLOTS:
     
-    void doProcessProducedFrameOnMainThread(const BufferableObjectList& frames);
+    void doProcessProducedFrameOnMainThread(const RenderStatsPtr& stats,const BufferableObjectList& frames);
     
 Q_SIGNALS:
     
-    void s_processProducedFrameOnMainThread(const BufferableObjectList& frames);
+    void s_processProducedFrameOnMainThread(const RenderStatsPtr& stats,const BufferableObjectList& frames);
     
 private:
     
@@ -552,6 +578,7 @@ struct CurrentFrameFunctorArgs
 {
     int view;
     int time;
+    RenderStatsPtr stats;
     ViewerInstance* viewer;
     U64 viewerHash;
     boost::shared_ptr<RequestedFrame> request;
@@ -610,21 +637,23 @@ public:
     /**
      * @brief Call this to render from firstFrame to lastFrame included.
      **/
-    void renderFrameRange(int firstFrame,int lastFrame,OutputSchedulerThread::RenderDirectionEnum forward);
+    void renderFrameRange(bool enableRenderStats, int firstFrame,int lastFrame,OutputSchedulerThread::RenderDirectionEnum forward);
     
     /**
      * @brief Same as renderFrameRange except that the frame range will be computed automatically and it will
      * start from the current frame.
      * This is not appropriate to call this function from a writer.
      **/
-    void renderFromCurrentFrame(OutputSchedulerThread::RenderDirectionEnum forward);
+    void renderFromCurrentFrame(bool enableRenderStats, OutputSchedulerThread::RenderDirectionEnum forward);
+    
+    void renderFromCurrentFrameUsingCurrentDirection(bool enableRenderStats);
     
     /**
      * @brief Basically it just renders with the current frame on the timeline.
      * @param abortPrevious If true then it will stop any ongoing render and render the current frame
      * in a separate thread
      **/
-    void renderCurrentFrame(bool canAbort);
+    void renderCurrentFrame(bool enableRenderStats,bool canAbort);
 
     /**
      * @brief Returns the playback mode of the internal scheduler
@@ -656,6 +685,11 @@ public:
      **/
     bool isSequentialRenderBeingAborted() const;
     
+    /**
+     * @brief Returns true if playback is active
+     **/
+    bool isDoingSequentialRender() const;
+    
     
 public Q_SLOTS:
 
@@ -674,9 +708,9 @@ public Q_SLOTS:
     
     
     /**
-     * @brief Aborts the internal scheduler
+     * @brief Aborts the internal scheduler and returns true if it was working.
      **/
-    void abortRendering(bool blocking);
+    bool abortRendering(bool blocking);
     void abortRendering_Blocking() { abortRendering(true); }
 
     
@@ -693,6 +727,11 @@ Q_SIGNALS:
      * This will not be emitted after calling renderCurrentFrame
      **/
     void frameRendered(int time);
+    
+    /**
+     * @brief Same as frameRendered(int) but with more infos
+     **/
+    void frameRenderedWithTimer(int frame, double timeElapsed, double timeRemaining);
     
     /**
      * @brief Emitted when the stopRender() function is called
@@ -724,12 +763,15 @@ private:
      **/
     void s_fpsChanged(double actual,double desired) { Q_EMIT fpsChanged(actual, desired); }
     void s_frameRendered(int time) { Q_EMIT frameRendered(time); }
+    void s_frameRenderedWithTimer(int time, double timeElapsed, double timeRemaining) {
+        Q_EMIT frameRenderedWithTimer(time, timeElapsed, timeRemaining);
+    }
     void s_renderStarted(bool forward) { Q_EMIT renderStarted(forward); }
     void s_renderFinished(int retCode) { Q_EMIT renderFinished(retCode); }
     void s_refreshAllKnobs() { Q_EMIT refreshAllKnobs(); }
     
     friend class ViewerInstance;
-    void notifyFrameProduced(const BufferableObjectList& frames,const boost::shared_ptr<RequestedFrame>& request);
+    void notifyFrameProduced(const BufferableObjectList& frames, const RenderStatsPtr& stats ,const boost::shared_ptr<RequestedFrame>& request);
 
     
     boost::scoped_ptr<RenderEnginePrivate> _imp;

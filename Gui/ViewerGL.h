@@ -1,20 +1,29 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef NATRON_GUI_VIEWERGL_H_
 #define NATRON_GUI_VIEWERGL_H_
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <vector>
 #include <utility>
@@ -29,7 +38,7 @@ CLANG_DIAG_OFF(uninitialized)
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
-#include "Engine/Rect.h"
+//#include "Engine/Rect.h"
 #include "Engine/OpenGLViewerI.h"
 #include "Global/Macros.h"
 
@@ -59,7 +68,9 @@ class Format;
 class ViewerGL
     : public QGLWidget, public OpenGLViewerI
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -126,7 +137,7 @@ public:
     /**
      *@returns Returns the current zoom factor that is applied to the display.
      **/
-    double getZoomFactor() const;
+    double getZoomFactor() const OVERRIDE FINAL WARN_UNUSED_RETURN;
 
     /**
      * @brief Returns the rectangle of the image displayed by the viewer
@@ -167,7 +178,7 @@ public:
      * 4) glTexSubImage2D or glTexImage2D depending whether we resize the texture or not.
      **/
     virtual void transferBufferFromRAMtoGPU(const unsigned char* ramBuffer,
-                                            const boost::shared_ptr<Natron::Image>& image,
+                                            const std::list<boost::shared_ptr<Natron::Image> >& tiles,
                                             Natron::ImageBitDepthEnum depth,
                                             int time,
                                             const RectD& rod,
@@ -216,11 +227,6 @@ public Q_SLOTS:
         zoomSlot( (int)v );
     }
 
-    /**
-     *@brief Convenience function. See ViewerGL::zoomSlot(int)
-     * It parses the Qstring and removes the '%' character
-     **/
-    void zoomSlot(QString);
 
     void setRegionOfDefinition(const RectD & rod, double par, int textureIndex);
 
@@ -273,6 +279,8 @@ public:
     bool isVisibleInViewport(const RectD& rectangle) const;
 
     void setUserRoIEnabled(bool b);
+    
+    void setBuildNewUserRoI(bool b);
 
     virtual bool isUserRegionOfInterestEnabled() const OVERRIDE FINAL;
     virtual RectD getUserRegionOfInterest() const OVERRIDE FINAL;
@@ -342,9 +350,9 @@ public:
      * @brief Called by the Histogram when it wants to refresh. It returns a pointer to the last
      * rendered image by the viewer. It doesn't re-render the image if it is not present.
      **/
-    boost::shared_ptr<Natron::Image> getLastRenderedImage(int textureIndex) const;
+    void getLastRenderedImage(int textureIndex, std::list<boost::shared_ptr<Natron::Image> >* ret) const;
     
-    boost::shared_ptr<Natron::Image> getLastRenderedImageByMipMapLevel(int textureIndex,unsigned int mipMapLevel) const;
+    void getLastRenderedImageByMipMapLevel(int textureIndex,unsigned int mipMapLevel, std::list<boost::shared_ptr<Natron::Image> >* ret) const;
 
     /**
      * @brief Get the color of the currently displayed image at position x,y.
@@ -368,6 +376,8 @@ public:
     int getMipMapLevelCombinedToZoomFactor() const WARN_UNUSED_RETURN;
     
     virtual int getCurrentlyDisplayedTime() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    
+    QPointF toZoomCoordinates(const QPointF& position) const;
     
 Q_SIGNALS:
 
@@ -442,11 +452,6 @@ private:
     void checkFrameBufferCompleteness(const char where[],bool silent = true);
 
     /**
-     *@brief Checks extensions and init glew on windows. Called by  initializeGL()
-     **/
-    void initAndCheckGlExtensions ();
-
-    /**
      *@brief Initialises shaders. If they were initialized ,returns instantly.
      **/
     void initShaderGLSL(); // init shaders
@@ -460,12 +465,6 @@ private:
     };
 
     /**
-     *@brief Fill the rendering VAO with vertices and texture coordinates
-     * that depends upon the currently displayed texture.
-     **/
-    void drawRenderingVAO(unsigned int mipMapLevel,int textureIndex,DrawPolygonModeEnum polygonMode);
-
-    /**
      *@brief Makes the viewer display black only.
      **/
     void clearViewer();
@@ -474,11 +473,6 @@ private:
      *@brief Returns !=0 if the extension given by its name is supported by this OpenGL version.
      **/
     int isExtensionSupported(const char* extension);
-
-    QString getOpenGLVersionString() const;
-
-    QString getGlewVersionString() const;
-
 
     /**
      *@brief Called inside paintGL(). It will draw all the overlays. 

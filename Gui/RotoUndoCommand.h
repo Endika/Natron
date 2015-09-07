@@ -1,21 +1,30 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 
 #ifndef ROTOUNDOCOMMAND_H
 #define ROTOUNDOCOMMAND_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <list>
 #include <map>
@@ -32,6 +41,7 @@ class RotoGui;
 class RotoLayer;
 class RotoPanel;
 class QRectF;
+class Curve;
 class RotoDrawableItem;
 class RotoStrokeItem;
 class QTreeWidgetItem;
@@ -52,7 +62,7 @@ public:
                                  ,
                                  double dx,
                                  double dy,
-                                 int time);
+                                 double time);
 
     virtual ~MoveControlPointsUndoCommand();
 
@@ -69,7 +79,7 @@ private:
     bool _featherLinkEnabled;
     bool _rippleEditEnabled;
     int _selectedTool; //< corresponds to the RotoGui::RotoToolEnum enum
-    int _time; //< the time at which the change was made
+    double _time; //< the time at which the change was made
     std::list<boost::shared_ptr<RotoDrawableItem> > _selectedCurves;
     std::list<int> _indexesToMove; //< indexes of the control points
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > _originalPoints,_selectedPoints,_pointsToDrag;
@@ -100,7 +110,7 @@ public:
                          double ty,
                          double sx,
                          double sy,
-                         int time);
+                         double time);
 
     virtual ~TransformUndoCommand();
 
@@ -118,7 +128,7 @@ private:
     bool _rippleEditEnabled;
     int _selectedTool; //< corresponds to the RotoGui::RotoToolEnum enum
     boost::shared_ptr<Transform::Matrix3x3> _matrix;
-    int _time; //< the time at which the change was made
+    double _time; //< the time at which the change was made
     std::list<boost::shared_ptr<RotoDrawableItem> > _selectedCurves;
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > _originalPoints,_selectedPoints;
 };
@@ -236,6 +246,27 @@ private:
     int _indexInLayer;
 };
 
+class AddMultiStrokeUndoCommand : public QUndoCommand
+{
+public:
+    
+    AddMultiStrokeUndoCommand(RotoGui* roto,const boost::shared_ptr<RotoStrokeItem>& item);
+    
+    virtual ~AddMultiStrokeUndoCommand();
+    virtual void undo() OVERRIDE FINAL;
+    virtual void redo() OVERRIDE FINAL;
+    
+private:
+    
+    RotoGui* _roto;
+    bool _firstRedoCalled;
+    boost::shared_ptr<RotoStrokeItem> _item;
+    boost::shared_ptr<RotoLayer> _layer;
+    int _indexInLayer;
+    boost::shared_ptr<Curve> _xCurve,_yCurve,_pCurve;
+    bool isRemoved;
+};
+
 
 class MoveTangentUndoCommand
     : public QUndoCommand
@@ -245,7 +276,7 @@ public:
     MoveTangentUndoCommand(RotoGui* roto,
                            double dx,
                            double dy,
-                           int time,
+                           double time,
                            const boost::shared_ptr<BezierCP> & cp,
                            bool left,
                            bool breakTangents);
@@ -264,7 +295,7 @@ private:
     double _dx,_dy;
     bool _featherLinkEnabled;
     bool _rippleEditEnabled;
-    int _time; //< the time at which the change was made
+    double _time; //< the time at which the change was made
     std::list<boost::shared_ptr<RotoDrawableItem> > _selectedCurves;
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > > _selectedPoints;
     boost::shared_ptr<BezierCP> _tangentBeingDragged,_oldCp,_oldFp;
@@ -282,7 +313,7 @@ public:
                               double dx,
                               double dy,
                               const std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > & point,
-                              int time);
+                              double time);
 
     virtual ~MoveFeatherBarUndoCommand();
 
@@ -297,7 +328,7 @@ private:
     bool _firstRedoCalled;
     double _dx,_dy;
     bool _rippleEditEnabled;
-    int _time; //< the time at which the change was made
+    double _time; //< the time at which the change was made
     boost::shared_ptr<Bezier> _curve;
     std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > _oldPoint,_newPoint;
 };
@@ -366,7 +397,7 @@ public:
 
     SmoothCuspUndoCommand(RotoGui* roto,
                           const std::list<SmoothCuspCurveData> & data,
-                          int time,
+                          double time,
                           bool cusp,
                           const std::pair<double, double>& pixelScale);
 
@@ -380,7 +411,7 @@ public:
 private:
     RotoGui* _roto;
     bool _firstRedoCalled;
-    int _time;
+    double _time;
     int _count;
     bool _cusp;
     std::list<SmoothCuspCurveData> curves;
@@ -399,7 +430,7 @@ public:
                           bool createPoint,
                           double dx,
                           double dy,
-                          int time);
+                          double time);
 
     virtual ~MakeBezierUndoCommand();
 
@@ -422,7 +453,7 @@ private:
     bool _createdPoint;
     double _x,_y;
     double _dx,_dy;
-    int _time;
+    double _time;
     int _lastPointAdded;
     bool _isOpenBezier;
 };
@@ -436,9 +467,12 @@ public:
     MakeEllipseUndoCommand(RotoGui* roto,
                            bool create,
                            bool fromCenter,
-                           double dx,
-                           double dy,
-                           int time);
+                           bool constrained,
+                           double fromx,
+                           double fromy,
+                           double tox,
+                           double toy,
+                           double time);
 
     virtual ~MakeEllipseUndoCommand();
 
@@ -455,9 +489,10 @@ private:
     boost::shared_ptr<Bezier> _curve;
     bool _create;
     bool _fromCenter;
-    double _x,_y;
-    double _dx,_dy;
-    int _time;
+    bool _constrained;
+    double _fromx,_fromy;
+    double _tox, _toy;
+    double _time;
 };
 
 
@@ -468,9 +503,13 @@ public:
 
     MakeRectangleUndoCommand(RotoGui* roto,
                              bool create,
-                             double dx,
-                             double dy,
-                             int time);
+                             bool fromCenter,
+                             bool constrained,
+                             double fromx,
+                             double fromy,
+                             double tox,
+                             double toy,
+                             double time);
 
     virtual ~MakeRectangleUndoCommand();
 
@@ -486,9 +525,11 @@ private:
     int _indexInLayer;
     boost::shared_ptr<Bezier> _curve;
     bool _create;
-    double _x,_y;
-    double _dx,_dy;
-    int _time;
+    bool _fromCenter;
+    bool _constrained;
+    double _fromx,_fromy;
+    double _tox, _toy;
+    double _time;
 };
 
 

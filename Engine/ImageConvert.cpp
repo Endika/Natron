@@ -1,23 +1,36 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Image.h"
 
+#include <algorithm> // min, max
+
 #include <QDebug>
 #ifndef Q_MOC_RUN
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
 #include <boost/math/special_functions/fpclassify.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 #endif
 #include "Engine/AppManager.h"
 #include "Engine/Lut.h"
@@ -417,6 +430,7 @@ Image::convertToFormatInternalForColorSpace(const RectI & renderWindow,
                                 
                                 ///Apply dst color-space
                                 if (dstMaxValue == 255) {
+                                    assert(k < 3);
                                     error[k] = (error[k] & 0xff) + ( dstLut ? dstLut->toColorSpaceUint8xxFromLinearFloatFast(pixFloat) :
                                                                     Color::floatToInt<0xff01>(pixFloat) );
                                     pix = error[k] >> 8;
@@ -687,8 +701,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                            Natron::Image* dstImg) const
 {
     
-    QWriteLocker k(&dstImg->_entryLock);
-    QReadLocker k2(&_entryLock);
+    QMutexLocker k(&dstImg->_entryLock);
+    QMutexLocker k2(&_entryLock);
     
     assert( _bounds.contains(renderWindow) &&  dstImg->_bounds.contains(renderWindow) );
     
@@ -706,6 +720,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                         convertToFormatInternal_sameComps<unsigned short, unsigned char, 65535, 255>(renderWindow,*this, *dstImg,
                                                                                                      srcColorSpace,
                                                                                                      dstColorSpace,copyBitmap);
+                        break;
+                    case eImageBitDepthHalf:
                         break;
                     case eImageBitDepthFloat:
                         convertToFormatInternal_sameComps<float, unsigned char, 1, 255>(renderWindow,*this, *dstImg,
@@ -731,6 +747,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                                                                                                         srcColorSpace,
                                                                                                         dstColorSpace,copyBitmap);
                         break;
+                    case eImageBitDepthHalf:
+                        break;
                     case eImageBitDepthFloat:
                         convertToFormatInternal_sameComps<float, unsigned short, 1, 65535>(renderWindow,*this, *dstImg,
                                                                                            srcColorSpace,
@@ -741,7 +759,10 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                 }
                 break;
             }
-                
+
+            case eImageBitDepthHalf:
+                break;
+
             case eImageBitDepthFloat: {
                 switch ( getBitDepth() ) {
                     case eImageBitDepthByte:
@@ -753,6 +774,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                         convertToFormatInternal_sameComps<unsigned short, float, 65535, 1>(renderWindow,*this, *dstImg,
                                                                                            srcColorSpace,
                                                                                            dstColorSpace,copyBitmap);
+                        break;
+                    case eImageBitDepthHalf:
                         break;
                     case eImageBitDepthFloat:
                         ///Same as a copy
@@ -790,6 +813,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                                                                                                    useAlpha0,
                                                                                                    copyBitmap,requiresUnpremult);
                         break;
+                    case eImageBitDepthHalf:
+                        break;
                     case eImageBitDepthFloat:
                         convertToFormatInternalForDepth<float, unsigned char, 1, 255>(renderWindow,*this, *dstImg,
                                                                                       srcColorSpace,
@@ -824,6 +849,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                                                                                                       copyBitmap,requiresUnpremult);
                         
                         break;
+                    case eImageBitDepthHalf:
+                        break;
                     case eImageBitDepthFloat:
                         convertToFormatInternalForDepth<float, unsigned short, 1, 65535>(renderWindow,*this, *dstImg,
                                                                                          srcColorSpace,
@@ -837,6 +864,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                 }
                 break;
             }
+            case eImageBitDepthHalf:
+                break;
             case eImageBitDepthFloat: {
                 switch ( getBitDepth() ) {
                     case eImageBitDepthByte:
@@ -855,6 +884,8 @@ Image::convertToFormatCommon(const RectI & renderWindow,
                                                                                          useAlpha0,
                                                                                          copyBitmap,requiresUnpremult);
                         
+                        break;
+                    case eImageBitDepthHalf:
                         break;
                     case eImageBitDepthFloat:
                         convertToFormatInternalForDepth<float, float, 1, 1>(renderWindow,*this, *dstImg,

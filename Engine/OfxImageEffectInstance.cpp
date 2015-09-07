@@ -1,16 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-//
-//  Created by Frédéric Devernay on 03/09/13.
-//
-//
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "OfxImageEffectInstance.h"
 
@@ -18,6 +28,7 @@
 #include <string>
 #include <map>
 #include <locale>
+#include <stdexcept>
 
 #include <QDebug>
 
@@ -65,16 +76,19 @@ OfxImageEffectInstance::~OfxImageEffectInstance()
 
 class ThreadIsActionCaller_RAII
 {
+    OfxImageEffectInstance* _self;
+    
 public:
     
-    ThreadIsActionCaller_RAII()
+    ThreadIsActionCaller_RAII(OfxImageEffectInstance* self)
+    : _self(self)
     {
-        appPTR->setThreadAsActionCaller(true);
+        appPTR->setThreadAsActionCaller(_self,true);
     }
     
     ~ThreadIsActionCaller_RAII()
     {
-        appPTR->setThreadAsActionCaller(false);
+        appPTR->setThreadAsActionCaller(_self,false);
     }
 };
 
@@ -84,7 +98,7 @@ OfxImageEffectInstance::mainEntry(const char *action,
                                   OFX::Host::Property::Set *inArgs,
                                   OFX::Host::Property::Set *outArgs)
 {
-    ThreadIsActionCaller_RAII t;
+    ThreadIsActionCaller_RAII t(this);
     return OFX::Host::ImageEffect::Instance::mainEntry(action, handle, inArgs, outArgs);
 }
 
@@ -102,7 +116,7 @@ OfxImageEffectInstance::newClipInstance(OFX::Host::ImageEffect::Instance* plugin
                                         OFX::Host::ImageEffect::ClipDescriptor* descriptor,
                                         int index)
 {
-    (void)plugin;
+    Q_UNUSED(plugin);
 
     return new OfxClipInstance(getOfxEffectInstance(), this, index, descriptor);
 }
@@ -307,7 +321,7 @@ OfxImageEffectInstance::getViewCount(int *nViews) const
 }
 
 OfxStatus
-OfxImageEffectInstance::getViewName(int viewIndex,char** name) const
+OfxImageEffectInstance::getViewName(int viewIndex, const char** name) const
 {
 #pragma message WARN("TODO")
     return kOfxStatFailed;
@@ -514,10 +528,13 @@ OfxImageEffectInstance::newParam(const std::string &paramName,
     } else if (descriptor.getType() == kOfxParamTypeParametric) {
         OfxParametricInstance* ret = new OfxParametricInstance(getOfxEffectInstance(), descriptor);
         OfxStatus stat = ret->defaultInitializeAllCurves(descriptor);
+        
         if (stat == kOfxStatFailed) {
             throw std::runtime_error("The parameter failed to create curves from their default\n"
                                      "initialized by the plugin.");
         }
+        ret->onCurvesDefaultInitialized();
+
         knob = ret->getKnob();
         instance = ret;
     }
@@ -724,16 +741,16 @@ OfxImageEffectInstance::editEnd()
 
 /// Start doing progress.
 void
-OfxImageEffectInstance::progressStart(const std::string & message)
+OfxImageEffectInstance::progressStart(const std::string & message, const std::string &messageid)
 {
-    _ofxEffectInstance->getApp()->startProgress(_ofxEffectInstance, message);
+    _ofxEffectInstance->getApp()->progressStart(_ofxEffectInstance, message, messageid);
 }
 
 /// finish yer progress
 void
 OfxImageEffectInstance::progressEnd()
 {
-    _ofxEffectInstance->getApp()->endProgress(_ofxEffectInstance);
+    _ofxEffectInstance->getApp()->progressEnd(_ofxEffectInstance);
 }
 
 /** @brief Indicate how much of the processing task has been completed and reports on any abort status.
@@ -772,7 +789,7 @@ OfxImageEffectInstance::timeLineGotoTime(double t)
     
     ///Calling seek will force a re-render of the frame T so we wipe the overlay redraw needed counter
     bool redrawNeeded = _ofxEffectInstance->checkIfOverlayRedrawNeeded();
-    (void)redrawNeeded;
+    Q_UNUSED(redrawNeeded);
     
     _ofxEffectInstance->getApp()->getTimeLine()->seekFrame( (int)t, false, 0, Natron::eTimelineChangeReasonPlaybackSeek);
 }
@@ -782,7 +799,7 @@ void
 OfxImageEffectInstance::timeLineGetBounds(double &t1,
                                           double &t2)
 {
-    int first,last;
+    double first,last;
     _ofxEffectInstance->getApp()->getFrameRange(&first, &last);
     t1 = first;
     t2 = last;
@@ -1086,11 +1103,13 @@ OfxImageEffectInstance::getInputsHoldingTransform(std::list<int>* inputs) const
     return !inputs->empty();
 }
 
+#ifdef kOfxImageEffectPropInAnalysis // removed in OFX 1.4
 bool
 OfxImageEffectInstance::isInAnalysis() const
 {
     return _properties.getIntProperty(kOfxImageEffectPropInAnalysis) == 1;
 }
+#endif
 
 OfxImageEffectDescriptor::OfxImageEffectDescriptor(OFX::Host::Plugin *plug)
 : OFX::Host::ImageEffect::Descriptor(plug)

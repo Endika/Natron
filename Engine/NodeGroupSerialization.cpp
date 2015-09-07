@@ -1,17 +1,26 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "NodeGroupSerialization.h"
 
@@ -22,6 +31,7 @@
 #include "Engine/AppInstance.h"
 #include "Engine/NodeGroup.h"
 #include "Engine/ViewerInstance.h"
+#include <SequenceParsing.h>
 
 void
 NodeCollectionSerialization::initialize(const NodeCollection& group)
@@ -130,6 +140,26 @@ NodeCollectionSerialization::restoreFromSerialization(const std::list< boost::sh
             if (!qPyModulePath.endsWith(".py")) {
                 qPyModulePath.append(".py");
             }
+            ///The path that has been saved in the project might not be corresponding on this computer.
+            ///We need to search through all search paths for a match
+            std::string pythonModuleUnPathed = qPyModulePath.toStdString();
+            std::string s = SequenceParsing::removePath(pythonModuleUnPathed);
+            Q_UNUSED(s);
+            
+            qPyModulePath.clear();
+            QStringList natronPaths = appPTR->getAllNonOFXPluginsPaths();
+            for (int i = 0; i < natronPaths.size(); ++i) {
+                QString path = natronPaths[i];
+                if (!path.endsWith("/")) {
+                    path.append('/');
+                }
+                path.append(pythonModuleUnPathed.c_str());
+                if (QFile::exists(path)) {
+                    qPyModulePath = path;
+                    break;
+                }
+            }
+           
             //This is a python group plug-in, try to find the corresponding .py file, maybe a more recent version of the plug-in exists.
             QFileInfo pythonModuleInfo(qPyModulePath);
             if (pythonModuleInfo.exists() && appPTR->getCurrentSettings()->isLoadFromPyPlugsEnabled()) {
@@ -190,7 +220,7 @@ NodeCollectionSerialization::restoreFromSerialization(const std::list< boost::sh
             }
         }
         
-        unsigned int majorVersion,minorVersion;
+        int majorVersion,minorVersion;
         if (usingPythonModule) {
             //We already asked the user whether he/she wanted to load a newer version of the PyPlug, let the loadNode function accept it
             majorVersion = -1;
@@ -216,7 +246,7 @@ NodeCollectionSerialization::restoreFromSerialization(const std::list< boost::sh
             mustShowErrorsLog = true;
             continue;
         } else {
-            if (n->getPlugin() && n->getPlugin()->getMajorVersion() != (int)majorVersion) {
+            if (!usingPythonModule && n->getPlugin() && n->getPlugin()->getMajorVersion() != (int)majorVersion) {
                 QString text( QObject::tr("WARNING: The node ") );
                 text.append((*it)->getNodeScriptName().c_str());
                 text.append(" (");

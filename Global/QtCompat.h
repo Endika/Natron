@@ -1,13 +1,20 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 #ifndef NATRON_GLOBAL_QTCOMPAT_H_
 #define NATRON_GLOBAL_QTCOMPAT_H_
 
@@ -44,6 +51,7 @@ removeRecursively(const QString & dirName)
 #endif
 
 #include <QtCore/QString>
+#include <QtCore/QUrl>
 
 namespace Natron {
 /*Removes the . and the extension from the filename and also
@@ -62,6 +70,16 @@ removeFileExtension(QString & filename)
 
     return extension;
 }
-}
+
+// in Qt 4.8 QUrl is broken on mac, it returns /.file/id= for local files
+// See https://bugreports.qt.io/browse/QTBUG-40449
+#if defined(Q_OS_MAC)
+//Implementation is in QUrlFix.mm
+QUrl toLocalFileUrlFixed(const QUrl& url);
+#else // #if defined(Q_OS_MAC) && QT_VERSION < 0x050000
+inline QUrl toLocalFileUrlFixed(const QUrl& url) { return url; }
+#endif // #if defined(Q_OS_MAC) && QT_VERSION < 0x050000
+
+} // namespace Natron
 
 #endif // NATRON_GLOBAL_QTCOMPAT_H_

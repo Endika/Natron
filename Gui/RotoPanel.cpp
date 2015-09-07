@@ -1,12 +1,26 @@
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "RotoPanel.h"
 
@@ -32,25 +46,26 @@ CLANG_DIAG_OFF(uninitialized)
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
-#include "Engine/RotoContext.h"
-#include "Engine/TimeLine.h"
-#include "Engine/Node.h"
 #include "Engine/EffectInstance.h"
-#include "Engine/KnobTypes.h"
 #include "Engine/Image.h"
+#include "Engine/KnobTypes.h"
+#include "Engine/Node.h"
+#include "Engine/RotoContext.h"
 #include "Engine/RotoContextPrivate.h" // for getCompositingOperators
+#include "Engine/TimeLine.h"
 
 #include "Gui/Button.h"
-#include "Gui/SpinBox.h"
 #include "Gui/ClickableLabel.h"
-#include "Gui/NodeGui.h"
+#include "Gui/ComboBox.h"
 #include "Gui/DockablePanel.h"
 #include "Gui/GuiAppInstance.h"
 #include "Gui/GuiApplicationManager.h"
-#include "Gui/RotoUndoCommand.h"
-#include "Gui/ComboBox.h"
 #include "Gui/GuiMacros.h"
 #include "Gui/Menu.h"
+#include "Gui/NodeGui.h"
+#include "Gui/NodeSettingsPanel.h"
+#include "Gui/RotoUndoCommand.h"
+#include "Gui/SpinBox.h"
 #include "Gui/Utils.h"
 
 #define COL_LABEL 0
@@ -241,7 +256,7 @@ struct RotoPanelPrivate
         assert(n && context);
     }
     
-    void updateSplinesInfoGUI(int time);
+    void updateSplinesInfoGUI(double time);
     
     void buildTreeFromContext();
     
@@ -267,7 +282,7 @@ struct RotoPanelPrivate
         return items.end();
     }
 
-    void insertItemRecursively(int time, const boost::shared_ptr<RotoItem>& item);
+    void insertItemRecursively(double time, const boost::shared_ptr<RotoItem>& item);
 
     void removeItemRecursively(const boost::shared_ptr<RotoItem>& item);
 
@@ -277,15 +292,15 @@ struct RotoPanelPrivate
 
     void setChildrenLockedRecursively(bool locked, QTreeWidgetItem* item);
 
-    bool itemHasKey(const boost::shared_ptr<RotoItem>& item, int time) const;
+    bool itemHasKey(const boost::shared_ptr<RotoItem>& item, double time) const;
 
-    void setItemKey(const boost::shared_ptr<RotoItem>& item, int time);
+    void setItemKey(const boost::shared_ptr<RotoItem>& item, double time);
 
-    void removeItemKey(const boost::shared_ptr<RotoItem>& item, int time);
+    void removeItemKey(const boost::shared_ptr<RotoItem>& item, double time);
     
     void removeItemAnimation(const boost::shared_ptr<RotoItem>& item);
 
-    void insertItemInternal(int reason, int time, const boost::shared_ptr<RotoItem>& item);
+    void insertItemInternal(int reason, double time, const boost::shared_ptr<RotoItem>& item);
     
     void setVisibleItemKeyframes(const std::set<int>& keys,bool visible, bool emitSignal);
 };
@@ -335,21 +350,23 @@ RotoPanel::RotoPanel(const boost::shared_ptr<NodeGui>&  n,
     _imp->splineLayout->addWidget(_imp->totalKeyframes);
 
     QPixmap prevPix,nextPix,addPix,removePix,clearAnimPix;
-    appPTR->getIcon(Natron::NATRON_PIXMAP_PLAYER_PREVIOUS_KEY, &prevPix);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_PLAYER_NEXT_KEY, &nextPix);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ADD_KEYFRAME, &addPix);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_REMOVE_KEYFRAME, &removePix);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_CLEAR_ALL_ANIMATION, &clearAnimPix);
+    appPTR->getIcon(Natron::NATRON_PIXMAP_PLAYER_PREVIOUS_KEY, NATRON_MEDIUM_BUTTON_ICON_SIZE, &prevPix);
+    appPTR->getIcon(Natron::NATRON_PIXMAP_PLAYER_NEXT_KEY, NATRON_MEDIUM_BUTTON_ICON_SIZE, &nextPix);
+    appPTR->getIcon(Natron::NATRON_PIXMAP_ADD_KEYFRAME, NATRON_MEDIUM_BUTTON_ICON_SIZE, &addPix);
+    appPTR->getIcon(Natron::NATRON_PIXMAP_REMOVE_KEYFRAME, NATRON_MEDIUM_BUTTON_ICON_SIZE, &removePix);
+    appPTR->getIcon(Natron::NATRON_PIXMAP_CLEAR_ALL_ANIMATION, NATRON_MEDIUM_BUTTON_ICON_SIZE, &clearAnimPix);
 
     _imp->prevKeyframe = new Button(QIcon(prevPix),"",_imp->splineContainer);
-    _imp->prevKeyframe->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->prevKeyframe->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->prevKeyframe->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->prevKeyframe->setToolTip(Natron::convertFromPlainText(tr("Go to the previous keyframe."), Qt::WhiteSpaceNormal));
     _imp->prevKeyframe->setEnabled(false);
     QObject::connect( _imp->prevKeyframe, SIGNAL( clicked(bool) ), this, SLOT( onGoToPrevKeyframeButtonClicked() ) );
     _imp->splineLayout->addWidget(_imp->prevKeyframe);
 
     _imp->nextKeyframe = new Button(QIcon(nextPix),"",_imp->splineContainer);
-    _imp->nextKeyframe->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->nextKeyframe->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE, NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->nextKeyframe->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->nextKeyframe->setToolTip(Natron::convertFromPlainText(tr("Go to the next keyframe."), Qt::WhiteSpaceNormal));
     _imp->nextKeyframe->setEnabled(false);
     QObject::connect( _imp->nextKeyframe, SIGNAL( clicked(bool) ), this, SLOT( onGoToNextKeyframeButtonClicked() ) );
@@ -357,6 +374,7 @@ RotoPanel::RotoPanel(const boost::shared_ptr<NodeGui>&  n,
 
     _imp->addKeyframe = new Button(QIcon(addPix),"",_imp->splineContainer);
     _imp->addKeyframe->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->addKeyframe->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->addKeyframe->setToolTip(Natron::convertFromPlainText(tr("Add keyframe at the current timeline's time."), Qt::WhiteSpaceNormal));
     _imp->addKeyframe->setEnabled(false);
     QObject::connect( _imp->addKeyframe, SIGNAL( clicked(bool) ), this, SLOT( onAddKeyframeButtonClicked() ) );
@@ -364,6 +382,7 @@ RotoPanel::RotoPanel(const boost::shared_ptr<NodeGui>&  n,
 
     _imp->removeKeyframe = new Button(QIcon(removePix),"",_imp->splineContainer);
     _imp->removeKeyframe->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->removeKeyframe->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->removeKeyframe->setToolTip(Natron::convertFromPlainText(tr("Remove keyframe at the current timeline's time."), Qt::WhiteSpaceNormal));
     _imp->removeKeyframe->setEnabled(false);
     QObject::connect( _imp->removeKeyframe, SIGNAL( clicked(bool) ), this, SLOT( onRemoveKeyframeButtonClicked() ) );
@@ -371,6 +390,7 @@ RotoPanel::RotoPanel(const boost::shared_ptr<NodeGui>&  n,
     
     _imp->clearAnimation = new Button(QIcon(clearAnimPix),"",_imp->splineContainer);
     _imp->clearAnimation->setFixedSize(NATRON_MEDIUM_BUTTON_SIZE,NATRON_MEDIUM_BUTTON_SIZE);
+    _imp->clearAnimation->setIconSize(QSize(NATRON_MEDIUM_BUTTON_ICON_SIZE, NATRON_MEDIUM_BUTTON_ICON_SIZE));
     _imp->clearAnimation->setToolTip(Natron::convertFromPlainText(tr("Remove all animation for the selected shape(s)."), Qt::WhiteSpaceNormal));
     _imp->clearAnimation->setEnabled(false);
     QObject::connect( _imp->clearAnimation, SIGNAL( clicked(bool) ), this, SLOT( onRemoveAnimationButtonClicked() ) );
@@ -414,26 +434,26 @@ RotoPanel::RotoPanel(const boost::shared_ptr<NodeGui>&  n,
 
     QPixmap pixLayer,pixBezier,pixVisible,pixUnvisible,pixLocked,pixUnlocked,pixInverted,pixUninverted,pixWheel,pixDefault,pixmerge;
     QPixmap pixPaintBrush,pixEraser,pixBlur,pixSmear,pixSharpen,pixDodge,pixBurn,pixClone,pixReveal;
-    appPTR->getIcon(NATRON_PIXMAP_LAYER, &pixLayer);
-    appPTR->getIcon(NATRON_PIXMAP_BEZIER, &pixBezier);
-    appPTR->getIcon(NATRON_PIXMAP_VISIBLE, &pixVisible);
-    appPTR->getIcon(NATRON_PIXMAP_UNVISIBLE, &pixUnvisible);
-    appPTR->getIcon(NATRON_PIXMAP_LOCKED, &pixLocked);
-    appPTR->getIcon(NATRON_PIXMAP_UNLOCKED, &pixUnlocked);
-    appPTR->getIcon(NATRON_PIXMAP_INVERTED, &pixInverted);
-    appPTR->getIcon(NATRON_PIXMAP_UNINVERTED, &pixUninverted);
-    appPTR->getIcon(NATRON_PIXMAP_COLORWHEEL, &pixWheel);
-    appPTR->getIcon(NATRON_PIXMAP_ROTO_MERGE, &pixmerge);
-    appPTR->getIcon(NATRON_PIXMAP_OVERLAY, &pixDefault);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_SOLID, &pixPaintBrush);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_ERASER, &pixEraser);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_BLUR, &pixBlur);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_SMEAR, &pixSmear);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_SHARPEN, &pixSharpen);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_DODGE, &pixDodge);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_BURN, &pixBurn);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_CLONE, &pixClone);
-    appPTR->getIcon(Natron::NATRON_PIXMAP_ROTOPAINT_REVEAL, &pixReveal);
+    appPTR->getIcon(NATRON_PIXMAP_LAYER, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixLayer);
+    appPTR->getIcon(NATRON_PIXMAP_BEZIER, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixBezier);
+    appPTR->getIcon(NATRON_PIXMAP_VISIBLE, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixVisible);
+    appPTR->getIcon(NATRON_PIXMAP_UNVISIBLE, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixUnvisible);
+    appPTR->getIcon(NATRON_PIXMAP_LOCKED, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixLocked);
+    appPTR->getIcon(NATRON_PIXMAP_UNLOCKED, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixUnlocked);
+    appPTR->getIcon(NATRON_PIXMAP_INVERTED, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixInverted);
+    appPTR->getIcon(NATRON_PIXMAP_UNINVERTED, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixUninverted);
+    appPTR->getIcon(NATRON_PIXMAP_COLORWHEEL, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixWheel);
+    appPTR->getIcon(NATRON_PIXMAP_ROTO_MERGE, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixmerge);
+    appPTR->getIcon(NATRON_PIXMAP_OVERLAY, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixDefault);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_SOLID, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixPaintBrush);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_ERASER, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixEraser);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_BLUR, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixBlur);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_SMEAR, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixSmear);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_SHARPEN, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixSharpen);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_DODGE, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixDodge);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_BURN, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixBurn);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_CLONE, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixClone);
+    appPTR->getIcon(NATRON_PIXMAP_ROTOPAINT_REVEAL, NATRON_MEDIUM_BUTTON_ICON_SIZE, &pixReveal);
     
     _imp->iconLayer.addPixmap(pixLayer);
     _imp->iconBezier.addPixmap(pixBezier);
@@ -561,8 +581,8 @@ RotoPanel::onSelectionChangedInternal()
     for (SelectedItems::const_iterator it = _imp->selectedItems.begin(); it != _imp->selectedItems.end(); ++it) {
         boost::shared_ptr<Bezier> isBezier = boost::dynamic_pointer_cast<Bezier>(*it);
         if (isBezier) {
-            QObject::disconnect( isBezier.get(), SIGNAL( keyframeSet(int) ), this, SLOT( onSelectedBezierKeyframeSet(int) ) );
-            QObject::disconnect( isBezier.get(), SIGNAL( keyframeRemoved(int) ), this, SLOT( onSelectedBezierKeyframeRemoved(int) ) );
+            QObject::disconnect( isBezier.get(), SIGNAL( keyframeSet(double) ), this, SLOT( onSelectedBezierKeyframeSet(double) ) );
+            QObject::disconnect( isBezier.get(), SIGNAL( keyframeRemoved(double) ), this, SLOT( onSelectedBezierKeyframeRemoved(double) ) );
             QObject::disconnect( isBezier.get(), SIGNAL( animationRemoved() ), this, SLOT( onSelectedBezierAnimationRemoved() ) );
             QObject::disconnect( isBezier.get(), SIGNAL( aboutToClone() ), this, SLOT( onSelectedBezierAboutToClone() ) );
             QObject::disconnect( isBezier.get(), SIGNAL( cloned() ), this, SLOT( onSelectedBezierCloned() ) );
@@ -599,8 +619,8 @@ RotoPanel::onSelectionChangedInternal()
         boost::shared_ptr<Bezier> isBezier = boost::dynamic_pointer_cast<Bezier>(*it);
         const RotoLayer* isLayer = dynamic_cast<const RotoLayer*>( it->get() );
         if (isBezier) {
-            QObject::connect( isBezier.get(), SIGNAL( keyframeSet(int) ), this, SLOT( onSelectedBezierKeyframeSet(int) ) );
-            QObject::connect( isBezier.get(), SIGNAL( keyframeRemoved(int) ), this, SLOT( onSelectedBezierKeyframeRemoved(int) ) );
+            QObject::connect( isBezier.get(), SIGNAL( keyframeSet(double) ), this, SLOT( onSelectedBezierKeyframeSet(double) ) );
+            QObject::connect( isBezier.get(), SIGNAL( keyframeRemoved(double) ), this, SLOT( onSelectedBezierKeyframeRemoved(double) ) );
             QObject::connect( isBezier.get(), SIGNAL( animationRemoved() ), this, SLOT( onSelectedBezierAnimationRemoved() ) );
             QObject::connect( isBezier.get(), SIGNAL( aboutToClone() ), this, SLOT( onSelectedBezierAboutToClone() ) );
             QObject::connect( isBezier.get(), SIGNAL( cloned() ), this, SLOT( onSelectedBezierCloned() ) );
@@ -641,19 +661,8 @@ RotoPanel::onSelectionChangedInternal()
     _imp->removeKeyframe->setEnabled(enabled);
     _imp->clearAnimation->setEnabled(enabled);
     
-    if (_imp->context->isRotoPaint()) {
-        _imp->splineLabel->setVisible(false);
-        _imp->currentKeyframe->setVisible(false);
-        _imp->ofLabel->setVisible(false);
-        _imp->totalKeyframes->setVisible(false);
-        _imp->prevKeyframe->setVisible(false);
-        _imp->nextKeyframe->setVisible(false);
-        _imp->addKeyframe->setVisible(false);
-        _imp->removeKeyframe->setVisible(false);
-        _imp->clearAnimation->setVisible(false);
-    }
 
-    int time = _imp->context->getTimelineCurrentTime();
+    double time = _imp->context->getTimelineCurrentTime();
 
     ///update the splines info GUI
     _imp->updateSplinesInfoGUI(time);
@@ -683,7 +692,7 @@ RotoPanel::onSelectionChanged(int reason)
 }
 
 void
-RotoPanel::onSelectedBezierKeyframeSet(int time)
+RotoPanel::onSelectedBezierKeyframeSet(double time)
 {
     Bezier* b = qobject_cast<Bezier*>( sender() );
     boost::shared_ptr<Bezier> isBezier;
@@ -697,7 +706,7 @@ RotoPanel::onSelectedBezierKeyframeSet(int time)
 }
 
 void
-RotoPanel::onSelectedBezierKeyframeRemoved(int time)
+RotoPanel::onSelectedBezierKeyframeRemoved(double time)
 {
     Bezier* b = qobject_cast<Bezier*>( sender() );
     boost::shared_ptr<Bezier> isBezier ;
@@ -786,7 +795,7 @@ makeSolidIcon(double *color,
 void
 RotoPanel::updateItemGui(QTreeWidgetItem* item)
 {
-    int time = _imp->context->getTimelineCurrentTime();
+    double time = _imp->context->getTimelineCurrentTime();
     TreeItems::iterator it = _imp->findItem(item);
 
     assert( it != _imp->items.end() );
@@ -818,11 +827,9 @@ RotoPanel::updateItemGui(QTreeWidgetItem* item)
 }
 
 void
-RotoPanelPrivate::updateSplinesInfoGUI(int time)
+RotoPanelPrivate::updateSplinesInfoGUI(double time)
 {
-    if (context->isRotoPaint()) {
-        return;
-    }
+  
     std::set<int> keyframes;
 
     for (SelectedItems::const_iterator it = selectedItems.begin(); it != selectedItems.end(); ++it) {
@@ -904,7 +911,7 @@ expandRecursively(QTreeWidgetItem* item)
 }
 
 void
-RotoPanelPrivate::insertItemRecursively(int time,
+RotoPanelPrivate::insertItemRecursively(double time,
                                         const boost::shared_ptr<RotoItem> & item)
 {
     QTreeWidgetItem* treeItem = new QTreeWidgetItem;
@@ -1001,6 +1008,18 @@ RotoPanelPrivate::insertItemRecursively(int time,
                          SIGNAL( compositingOperatorChanged(int,int) ),
                          publicInterface,
                          SLOT( onRotoItemCompOperatorChanged(int,int) ) );
+        
+        boost::shared_ptr<Bezier> isBezier = boost::dynamic_pointer_cast<Bezier>(item);
+        if (isBezier) {
+            ItemKeys::iterator it = keyframes.find(isBezier);
+            if ( it == keyframes.end() ) {
+                TimeLineKeys keys;
+                isBezier->getKeyframeTimes(&keys.keys);
+                keys.visible = false;
+                keyframes.insert( std::make_pair(isBezier, keys) );
+            }
+        }
+        
     } else if (layer) {
         treeItem->setIcon(0, iconLayer);
         ///insert children
@@ -1047,8 +1066,8 @@ RotoPanel::makeCustomWidgetsForItem(const boost::shared_ptr<RotoDrawableItem>& i
     _imp->tree->setItemWidget(treeItem, COL_OPERATOR, cb);
     
     //We must call this otherwise this is never called by Qt for custom widgets (this is a Qt bug)
-    (void)cb->minimumSizeHint();
-    
+    QSize s = cb->minimumSizeHint();
+    Q_UNUSED(s);
 }
 
 void
@@ -1077,14 +1096,14 @@ void
 RotoPanel::onItemInserted(int reason)
 {
     boost::shared_ptr<RotoItem> lastInsertedItem = _imp->context->getLastInsertedItem();
-    int time = _imp->context->getTimelineCurrentTime();
+    double time = _imp->context->getTimelineCurrentTime();
 
     _imp->insertItemInternal(reason,time, lastInsertedItem);
 }
 
 void
 RotoPanelPrivate::insertItemInternal(int reason,
-                                     int time,
+                                     double time,
                                      const boost::shared_ptr<RotoItem> & item)
 {
     boost::shared_ptr<Bezier> isBezier = boost::dynamic_pointer_cast<Bezier>(item);
@@ -1139,7 +1158,7 @@ RotoPanel::onItemRemoved(const boost::shared_ptr<RotoItem>& item,
 void
 RotoPanelPrivate::buildTreeFromContext()
 {
-    int time = context->getTimelineCurrentTime();
+    double time = context->getTimelineCurrentTime();
     const std::list< boost::shared_ptr<RotoLayer> > & layers = context->getLayers();
 
     tree->blockSignals(true);
@@ -1177,7 +1196,7 @@ RotoPanel::onRotoItemInvertedStateChanged()
     RotoDrawableItem* item = qobject_cast<RotoDrawableItem*>( sender() );
 
     if (item) {
-        int time = _imp->context->getTimelineCurrentTime();
+        double time = _imp->context->getTimelineCurrentTime();
         TreeItems::iterator it = _imp->findItem(item);
         if ( it != _imp->items.end() ) {
             it->treeItem->setIcon(COL_INVERTED, item->getInverted(time)  ? _imp->iconInverted : _imp->iconUninverted);
@@ -1197,7 +1216,7 @@ RotoPanel::onRotoItemShapeColorChanged()
     }
 
     if (item) {
-        int time = _imp->context->getTimelineCurrentTime();
+        double time = _imp->context->getTimelineCurrentTime();
         TreeItems::iterator it = _imp->findItem(item);
         if ( it != _imp->items.end() ) {
             QIcon icon;
@@ -1473,7 +1492,7 @@ RotoPanel::onItemDoubleClicked(QTreeWidgetItem* item,
             }
                 
             case COL_COLOR: {
-                int time = _imp->context->getTimelineCurrentTime();
+                double time = _imp->context->getTimelineCurrentTime();
                 RotoDrawableItem* drawable = dynamic_cast<RotoDrawableItem*>( it->rotoItem.get() );
                 QList<QTreeWidgetItem*> selected = _imp->tree->selectedItems();
                 bool colorChosen = false;
@@ -1587,13 +1606,13 @@ RotoPanel::onItemSelectionChanged()
         boost::shared_ptr<Bezier> isBezier = boost::dynamic_pointer_cast<Bezier>(*it);
         if (isBezier) {
             QObject::disconnect( isBezier.get(),
-                                SIGNAL( keyframeSet(int) ),
+                                SIGNAL( keyframeSet(double) ),
                                 this,
-                                SLOT( onSelectedBezierKeyframeSet(int) ) );
+                                SLOT( onSelectedBezierKeyframeSet(double) ) );
             QObject::disconnect( isBezier.get(),
-                                SIGNAL( keyframeRemoved(int) ),
+                                SIGNAL( keyframeRemoved(double) ),
                                 this,
-                                SLOT( onSelectedBezierKeyframeRemoved(int) ) );
+                                SLOT( onSelectedBezierKeyframeRemoved(double) ) );
             QObject::disconnect( isBezier.get(), SIGNAL( animationRemoved() ), this, SLOT( onSelectedBezierAnimationRemoved() ) );
         }
         ItemKeys::iterator found = _imp->keyframes.find(*it);
@@ -1695,7 +1714,7 @@ RotoPanel::onItemSelectionChanged()
     _imp->removeKeyframe->setEnabled(enabled);
     _imp->clearAnimation->setEnabled(enabled);
     
-    int time = _imp->context->getTimelineCurrentTime();
+    double time = _imp->context->getTimelineCurrentTime();
 
     ///update the splines info GUI
     _imp->updateSplinesInfoGUI(time);
@@ -2132,7 +2151,7 @@ RotoPanel::selectAll()
 
 bool
 RotoPanelPrivate::itemHasKey(const boost::shared_ptr<RotoItem>& item,
-                             int time) const
+                             double time) const
 {
     ItemKeys::const_iterator it = keyframes.find(item);
 
@@ -2148,7 +2167,7 @@ RotoPanelPrivate::itemHasKey(const boost::shared_ptr<RotoItem>& item,
 
 void
 RotoPanelPrivate::setItemKey(const boost::shared_ptr<RotoItem>& item,
-                             int time)
+                             double time)
 {
     ItemKeys::iterator it = keyframes.find(item);
 
@@ -2168,7 +2187,7 @@ RotoPanelPrivate::setItemKey(const boost::shared_ptr<RotoItem>& item,
 
 void
 RotoPanelPrivate::removeItemKey(const boost::shared_ptr<RotoItem>& item,
-                                int time)
+                                double time)
 {
     ItemKeys::iterator it = keyframes.find(item);
 

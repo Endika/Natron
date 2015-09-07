@@ -1,20 +1,29 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef NATRON_ENGINE_NODE_H_
 #define NATRON_ENGINE_NODE_H_
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <vector>
 #include <string>
@@ -43,8 +52,11 @@ CLANG_DIAG_ON(deprecated)
 #define kDisableNodeKnobName "disableNode"
 #define kUserLabelKnobName "userTextArea"
 #define kEnableMaskKnobName "enableMask"
+#define kEnableInputKnobName "enableInput"
 #define kMaskChannelKnobName "maskChannel"
+#define kInputChannelKnobName "inputChannel"
 #define kEnablePreviewKnobName "enablePreview"
+#define kOutputChannelsKnobName "channels"
 
 class AppInstance;
 class NodeSettingsPanel;
@@ -316,9 +328,20 @@ public:
     boost::shared_ptr<Node> getInput(int index) const;
     
     /**
+     * @brief Returns the input as seen on the gui. This is not necessarily the same as the value returned by getInput.
+     **/
+    boost::shared_ptr<Node> getGuiInput(int index) const;
+    
+    /**
      * @brief Same as getInput except that it doesn't do group redirections for Inputs/Outputs
      **/
     boost::shared_ptr<Node> getRealInput(int index) const;
+    
+private:
+    
+    boost::shared_ptr<Node> getInputInternal(bool useGuiInput, bool useGroupRedirections, int index) const;
+    
+public:
     
     /**
      * @brief Returns the input index of the node if it is an input of this node, -1 otherwise.
@@ -335,7 +358,8 @@ public:
      * The vector might be different from what getInputs_other_thread() could return.
      * This can only be called by the main thread.
      **/
-    const std::vector<boost::shared_ptr<Natron::Node> > & getInputs_mt_safe() const WARN_UNUSED_RETURN;
+    const std::vector<boost::shared_ptr<Natron::Node> > & getInputs() const WARN_UNUSED_RETURN;
+    const std::vector<boost::shared_ptr<Natron::Node> > & getGuiInputs() const WARN_UNUSED_RETURN;
     std::vector<boost::shared_ptr<Natron::Node> > getInputs_copy() const WARN_UNUSED_RETURN;
 
     /**
@@ -376,10 +400,21 @@ public:
     Natron::RenderSafetyEnum getCurrentRenderThreadSafety() const;
     void revertToPluginThreadSafety();
     
+    void setCurrentOpenGLRenderSupport(Natron::PluginOpenGLRenderSupport support);
+    Natron::PluginOpenGLRenderSupport getCurrentOpenGLRenderSupport() const;
+    
+    void setCurrentSequentialRenderSupport(Natron::SequentialPreferenceEnum support);
+    Natron::SequentialPreferenceEnum getCurrentSequentialRenderSupport() const;
+    
+    void setCurrentSupportTiles(bool support);
+    bool getCurrentSupportTiles() const;
+    
+    void refreshDynamicProperties();
+    
     /////////////////////ROTO-PAINT related functionnalities//////////////////////
     //////////////////////////////////////////////////////////////////////////////
     void updateLastPaintStrokeData(int newAge,const std::list<std::pair<Natron::Point,double> >& points,
-                                   const RectD& wholeBbox,const RectD& lastPointsBbox);
+                                   const RectD& lastPointsBbox);
     
     //Used by nodes below the rotopaint tree to optimize the RoI
     void setLastPaintStrokeDataNoRotopaint(const RectD& lastStrokeBbox);
@@ -390,10 +425,11 @@ public:
     
     bool isFirstPaintStrokeRenderTick() const;
     int getStrokeImageAge() const;
+    void updateStrokeImage(const boost::shared_ptr<Natron::Image>& image);
     void getLastPaintStrokeRoD(RectD* pointsBbox) ;
     bool isLastPaintStrokeBitmapCleared() const;
     void clearLastPaintStrokeRoD();
-    void getLastPaintStrokePoints(int time,std::list<std::pair<Natron::Point,double> >* points) const;
+    void getLastPaintStrokePoints(int time,std::list<std::list<std::pair<Natron::Point,double> > >* strokes) const;
     boost::shared_ptr<Natron::Image> getOrRenderLastStrokeImage(unsigned int mipMapLevel,
                                                                 const RectI& roi,
                                                                 double par,
@@ -422,6 +458,7 @@ public:
     void getOutputsConnectedToThisNode(std::map<Node*,int>* outputs);
 
     const std::list<Node* > & getOutputs() const;
+    const std::list<Node* > & getGuiOutputs() const;
     void getOutputs_mt_safe(std::list<Node*>& outputs) const;
     
     /**
@@ -533,12 +570,12 @@ private:
     /**
      * @brief Adds an output to this node.
      **/
-    void connectOutput(Node* output);
+    void connectOutput(bool useGuiValues,Node* output);
 
     /** @brief Removes the node output of the
      * node outputs. Returns the outputNumber if it could remove it,
        otherwise returns -1.*/
-    int disconnectOutput(Node*output);
+    int disconnectOutput(bool useGuiValues,Node*output);
     
 public:
     
@@ -908,6 +945,9 @@ public:
     std::string getAfterRenderCallback() const;
     std::string getAfterFrameRenderCallback() const;
     
+    std::string getAfterNodeCreatedCallback() const;
+    std::string getBeforeNodeRemovalCallback() const;
+    
     void computeFrameRangeForReader(const KnobI* fileKnob);
     
     bool getOverlayColor(double* r,double* g,double* b) const;
@@ -915,7 +955,7 @@ public:
     bool shouldDrawOverlay() const;
     
     
-    void drawDefaultOverlay(double scaleX,double scaleY);
+    void drawDefaultOverlay(double time, double scaleX,double scaleY);
     
     bool onOverlayPenDownDefault(double scaleX,double scaleY,const QPointF & viewportPos, const QPointF & pos, double pressure) WARN_UNUSED_RETURN;
     
@@ -1014,7 +1054,11 @@ public Q_SLOTS:
 
     void onParentMultiInstanceInputChanged(int input);
 
+    void doComputeHashOnMainThread();
+    
 Q_SIGNALS:
+    
+    void mustComputeHashOnMainThread();
 
     void settingsPanelClosed(bool);
 
@@ -1026,6 +1070,10 @@ Q_SIGNALS:
 
     void knobsInitialized();
 
+    /*
+     * @brief Emitted whenever an input changed on the GUI. Note that at the time this signal is emitted, the value returned by
+     * getInput() is not necessarily the same as the value returned by getGuiInput() since the node might still be rendering.
+     */
     void inputChanged(int);
 
     void outputsChanged();
@@ -1127,7 +1175,9 @@ private:
 class InspectorNode
     : public Natron::Node
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
     
     int _maxInputs;
 

@@ -1,3 +1,21 @@
+:: ***** BEGIN LICENSE BLOCK *****
+:: This file is part of Natron <http://www.natron.fr/>,
+:: Copyright (C) 2015 INRIA and Alexandre Gauthier
+::
+:: Natron is free software: you can redistribute it and/or modify
+:: it under the terms of the GNU General Public License as published by
+:: the Free Software Foundation; either version 2 of the License, or
+:: (at your option) any later version.
+::
+:: Natron is distributed in the hope that it will be useful,
+:: but WITHOUT ANY WARRANTY; without even the implied warranty of
+:: MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+:: GNU General Public License for more details.
+::
+:: You should have received a copy of the GNU General Public License
+:: along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+:: ***** END LICENSE BLOCK *****
+
 :: This script assumes you have installed Visual Studio 2010 and  the following libraries:
 :: - Qt 32 bit in C:\Qt\Qt4.8.6_win32 downloaded here:
 :: http://download.qt.io/archive/qt/4.8/4.8.6/ (for Visual 2010)
@@ -136,8 +154,11 @@ call "C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin\amd64\vcvars64.
 setlocal EnableDelayedExpansion
 
 if "%BITS%" == "64" (
+	::Force x64 because by default visual 2010 produces 32bit binaries
 	sed -e "/\/ResourceCompile>/a <Lib>\n    <TargetMachine>MachineX64</TargetMachine>\n</Lib>" -i Engine\Engine.vcxproj Gui\Gui.vcxproj HostSupport\HostSupport.vcxproj
 
+	sed -e "/<SubSystem>/ s/Windows/Console/g" -i App\Natron.vcxproj
+	
 	:: Qmake in the path is the Qmake 32 bit hence the visual studio solution is setup to build against
 	:: 32bit libraries of Qt. The following is to use our compiled version of Qt 64bit 
 	::for /f "tokens=*" %a in ('echo %DEP_PATH%^| sed "s/\\/\\\\/g"') do set DEP_PATH_ESCAPED=%a
@@ -195,6 +216,17 @@ if "%CONFIGURATION%" == "Release" (
 	copy /Y %QT_LIBRARIES_DIR%\bin\QtGui4.dll %DEPLOY_DIR%\bin
 	copy /Y %QT_LIBRARIES_DIR%\bin\QtNetwork4.dll %DEPLOY_DIR%\bin
 	copy /Y %QT_LIBRARIES_DIR%\bin\QtOpenGL4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtWebKit4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtXml4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtXmlPatterns4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtSvg4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtSql4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtScriptTools4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtScript4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtMultimedia4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtHelp4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtCLucene4.dll %DEPLOY_DIR%\bin
+	copy /Y %QT_LIBRARIES_DIR%\bin\QtDeclarative4.dll %DEPLOY_DIR%\bin
 	
 	copy /Y %DEP_PATH%\cairo_1.12\lib\%BUILD_SUB_DIR%\cairo.dll %DEPLOY_DIR%\bin
 	copy /Y C:\glew\bin\Release\%BUILD_SUB_DIR%\glew32.dll %DEPLOY_DIR%\bin

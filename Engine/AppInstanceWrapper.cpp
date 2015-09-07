@@ -1,16 +1,26 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "AppInstanceWrapper.h"
 
@@ -105,7 +115,7 @@ App::timelineGetTime() const
 int
 App::timelineGetLeftBound() const
 {
-    int left,right;
+    double left,right;
     _instance->getFrameRange(&left, &right);
     return left;
 }
@@ -113,7 +123,7 @@ App::timelineGetLeftBound() const
 int
 App::timelineGetRightBound() const
 {
-    int left,right;
+    double left,right;
     _instance->getFrameRange(&left, &right);
     return right;
 }
@@ -184,7 +194,7 @@ App::render(Effect* writeNode,int firstFrame,int lastFrame)
     
     std::list<AppInstance::RenderWork> l;
     l.push_back(w);
-    _instance->startWritersRendering(l);
+    _instance->startWritersRendering(false, l);
 }
 
 void
@@ -219,7 +229,7 @@ App::render(const std::list<Effect*>& effects,const std::list<int>& firstFrames,
         l.push_back(w);
 
     }
-    _instance->startWritersRendering(l);
+    _instance->startWritersRendering(false, l);
 }
 
 Param*
@@ -236,4 +246,12 @@ void
 App::writeToScriptEditor(const std::string& message)
 {
     _instance->appendToScriptEditor(message);
+}
+
+void
+App::addFormat(const std::string& formatSpec)
+{
+    if (!_instance->getProject()->addFormat(formatSpec)) {
+        _instance->appendToScriptEditor(formatSpec);
+    }
 }

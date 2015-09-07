@@ -1,24 +1,33 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef NATRON_ENGINE_IMAGE_H_
 #define NATRON_ENGINE_IMAGE_H_
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <list>
 #include <map>
-#include <algorithm>
+#include <algorithm> // min, max
 
 #include "Global/GlobalDefines.h"
 
@@ -31,7 +40,7 @@ CLANG_DIAG_ON(deprecated)
 #include "Engine/ImageComponents.h"
 #include "Engine/ImageParams.h"
 #include "Engine/CacheEntry.h"
-#include "Engine/Rect.h"
+#include "Engine/RectD.h"
 #include "Engine/OutputSchedulerThread.h"
 
 
@@ -190,8 +199,9 @@ namespace Natron {
 
         static ImageKey makeKey(U64 nodeHashKey,
                                 bool frameVaryingOrAnimated,
-                                SequenceTime time,
-                                int view);
+                                double time,
+                                int view,
+                                bool draftMode);
         static boost::shared_ptr<ImageParams> makeParams(int cost,
                                                          const RectD & rod,    // the image rod in canonical coordinates
                                                          const double par,
@@ -244,14 +254,14 @@ namespace Natron {
      **/
         RectI getBounds() const
         {
-            QReadLocker k(&_entryLock);
+            QMutexLocker k(&_entryLock);
             return _bounds;
         };
         virtual size_t size() const OVERRIDE FINAL
         {
             std::size_t dt = dataSize();
             
-            bool got = _entryLock.tryLockForRead();
+            bool got = _entryLock.tryLock();
             dt += _bitmap.getBounds().area();
             if (got) {
                 _entryLock.unlock();
@@ -435,15 +445,19 @@ namespace Natron {
         unsigned char* pixelAt(int x,int y);
         const unsigned char* pixelAt(int x,int y) const;
         
-        
+        /**
+         * @brief Locks the image for read/write access. In the past we used a ReadWriteLock, however we cannot use this
+         * anymore: The lock for read is taken when a plugin attempts to fetch an image from a source clip. But if the plug-ins
+         * fetches twice the very same image (likely if this is a tracker on the last frame for example) then it will deadlock
+         * if a clip is not asking for the exact same region and thus there is something left to render.
+         **/
         void lockForRead() const
         {
-            _entryLock.lockForRead();
+            _entryLock.lock();
         }
-        
         void lockForWrite() const
         {
-            _entryLock.lockForWrite();
+            _entryLock.lock();
         }
         
         void unlock() const
@@ -533,7 +547,7 @@ namespace Natron {
             if (!_useBitmap) {
                 return;
             }
-            QReadLocker locker(&_entryLock);
+            QMutexLocker locker(&_entryLock);
             _bitmap.minimalNonMarkedRects_trimap(regionOfInterest, ret, isBeingRenderedElsewhere);
         }
 #endif
@@ -542,7 +556,7 @@ namespace Natron {
             if (!_useBitmap) {
                 return ;
             }
-            QReadLocker locker(&_entryLock);
+            QMutexLocker locker(&_entryLock);
             _bitmap.minimalNonMarkedRects(regionOfInterest,ret);
         }
 
@@ -552,7 +566,7 @@ namespace Natron {
             if (!_useBitmap) {
                 return regionOfInterest;
             }
-            QReadLocker locker(&_entryLock);
+            QMutexLocker locker(&_entryLock);
             return _bitmap.minimalNonMarkedBbox_trimap(regionOfInterest,isBeingRenderedElsewhere);
         }
 #endif
@@ -561,7 +575,7 @@ namespace Natron {
             if (!_useBitmap) {
                 return regionOfInterest;
             }
-            QReadLocker locker(&_entryLock);
+            QMutexLocker locker(&_entryLock);
             return _bitmap.minimalNonMarkedBbox(regionOfInterest);
         }
 
@@ -570,9 +584,10 @@ namespace Natron {
             if (!_useBitmap) {
                 return;
             }
-            QWriteLocker locker(&_entryLock);
-
-            _bitmap.markForRendered(roi);
+            QMutexLocker locker(&_entryLock);
+            RectI intersection;
+            _bounds.intersect(roi, &intersection);
+            _bitmap.markForRendered(intersection);
         }
         
 #if NATRON_ENABLE_TRIMAP
@@ -582,9 +597,10 @@ namespace Natron {
             if (!_useBitmap) {
                 return;
             }
-            QWriteLocker locker(&_entryLock);
-            
-            _bitmap.markForRendering(roi);
+            QMutexLocker locker(&_entryLock);
+            RectI intersection;
+            _bounds.intersect(roi, &intersection);
+            _bitmap.markForRendering(intersection);
         }
 #endif
 
@@ -593,7 +609,7 @@ namespace Natron {
             if (!_useBitmap) {
                 return;
             }
-            QWriteLocker locker(&_entryLock);
+            QMutexLocker locker(&_entryLock);
             RectI intersection;
             _bounds.intersect(roi, &intersection);
             _bitmap.clear(intersection);

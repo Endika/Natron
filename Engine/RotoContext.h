@@ -1,30 +1,40 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
-#ifndef KNOBROTO_H
-#define KNOBROTO_H
+#ifndef _Engine_RotoContext_h_
+#define _Engine_RotoContext_h_
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <list>
 #include <set>
 #include <string>
 
+#include "Global/Macros.h"
+
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 #include <boost/scoped_ptr.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
-#include <boost/serialization/split_member.hpp>
 #endif
 
 #include "Global/GlobalDefines.h"
@@ -35,9 +45,6 @@ CLANG_DIAG_OFF(deprecated-declarations)
 #include <QMutex>
 #include <QMetaType>
 CLANG_DIAG_ON(deprecated-declarations)
-
-#include "Engine/Rect.h"
-
 
 #define kRotoLayerBaseName "Layer"
 #define kRotoBezierBaseName "Bezier"
@@ -60,11 +67,7 @@ class Image;
 class ImageComponents;
 class Node;
 }
-namespace boost {
-namespace serialization {
-class access;
-}
-}
+namespace boost { namespace serialization { class access; } }
 
 class RectI;
 class RectD;
@@ -126,27 +129,27 @@ public:
 
     void clone(const BezierCP & other);
 
-    void setPositionAtTime(int time,double x,double y);
+    void setPositionAtTime(bool useGuiCurves,double time,double x,double y);
 
-    void setLeftBezierPointAtTime(int time,double x,double y);
+    void setLeftBezierPointAtTime(bool useGuiCurves,double time,double x,double y);
 
-    void setRightBezierPointAtTime(int time,double x,double y);
+    void setRightBezierPointAtTime(bool useGuiCurves,double time,double x,double y);
 
-    void setStaticPosition(double x,double y);
+    void setStaticPosition(bool useGuiCurves,double x,double y);
 
-    void setLeftBezierStaticPosition(double x,double y);
+    void setLeftBezierStaticPosition(bool useGuiCurves,double x,double y);
 
-    void setRightBezierStaticPosition(double x,double y);
+    void setRightBezierStaticPosition(bool useGuiCurves,double x,double y);
 
-    void removeKeyframe(int time);
+    void removeKeyframe(bool useGuiCurves,double time);
     
-    void removeAnimation(int currentTime);
+    void removeAnimation(bool useGuiCurves,int currentTime);
 
     ///returns true if a keyframe was set
-    bool cuspPoint(int time,bool autoKeying,bool rippleEdit,const std::pair<double,double>& pixelScale);
+    bool cuspPoint(bool useGuiCurves,double time,bool autoKeying,bool rippleEdit,const std::pair<double,double>& pixelScale);
 
     ///returns true if a keyframe was set
-    bool smoothPoint(int time,bool autoKeying,bool rippleEdit,const std::pair<double,double>& pixelScale);
+    bool smoothPoint(bool useGuiCurves,double time,bool autoKeying,bool rippleEdit,const std::pair<double,double>& pixelScale);
 
 
     virtual bool isFeatherPoint() const
@@ -154,27 +157,27 @@ public:
         return false;
     }
 
-    bool equalsAtTime(int time,const BezierCP & other) const;
+    bool equalsAtTime(bool useGuiCurves,double time,const BezierCP & other) const;
 
-    bool getPositionAtTime(int time,double* x,double* y,bool skipMasterOrRelative = false) const;
+    bool getPositionAtTime(bool useGuiCurves,double time,double* x,double* y,bool skipMasterOrRelative = false) const;
 
-    bool getLeftBezierPointAtTime(int time,double* x,double* y,bool skipMasterOrRelative = false) const;
+    bool getLeftBezierPointAtTime(bool useGuiCurves,double time,double* x,double* y,bool skipMasterOrRelative = false) const;
 
-    bool getRightBezierPointAtTime(int time,double *x,double *y,bool skipMasterOrRelative = false) const;
+    bool getRightBezierPointAtTime(bool useGuiCurves,double time,double *x,double *y,bool skipMasterOrRelative = false) const;
 
-    bool hasKeyFrameAtTime(int time) const;
+    bool hasKeyFrameAtTime(bool useGuiCurves,double time) const;
 
-    void getKeyframeTimes(std::set<int>* times) const;
+    void getKeyframeTimes(bool useGuiCurves,std::set<int>* times) const;
     
-    void getKeyFrames(std::list<std::pair<int,Natron::KeyframeTypeEnum> >* keys) const;
+    void getKeyFrames(bool useGuiCurves,std::list<std::pair<int,Natron::KeyframeTypeEnum> >* keys) const;
     
-    int getKeyFrameIndex(double time) const;
+    int getKeyFrameIndex(bool useGuiCurves,double time) const;
     
-    void setKeyFrameInterpolation(Natron::KeyframeTypeEnum interp,int index);
+    void setKeyFrameInterpolation(bool useGuiCurves,Natron::KeyframeTypeEnum interp,int index);
 
-    int getKeyframeTime(int index) const;
+    int getKeyframeTime(bool useGuiCurves,int index) const;
 
-    int getKeyframesCount() const;
+    int getKeyframesCount(bool useGuiCurves) const;
 
     int getControlPointsCount() const;
 
@@ -192,7 +195,7 @@ public:
      * This function can also return the tangent of a feather point, to find out if the point is a feather point call
      * isFeatherPoint() on the returned control point.
      **/
-    int isNearbyTangent(int time,double x,double y,double acceptance) const;
+    int isNearbyTangent(bool useGuiCurves,double time,double x,double y,double acceptance) const;
 
     /**
      * The functions below are to slave/unslave a control point to a track
@@ -202,6 +205,10 @@ public:
     void unslave();
 
     SequenceTime getOffsetTime() const;
+    
+    void cloneInternalCurvesToGuiCurves();
+    
+    void cloneGuiCurvesToInternalCurves();
 
 private:
 
@@ -211,8 +218,9 @@ private:
     template<class Archive>
     void load(Archive & ar, const unsigned int version);
     
-    BOOST_SERIALIZATION_SPLIT_MEMBER()
-    
+    template<class Archive>
+    void serialize(Archive & ar, const unsigned int version);
+
     boost::scoped_ptr<BezierCPPrivate> _imp;
 };
 
@@ -375,7 +383,9 @@ struct RotoDrawableItemPrivate;
 class RotoDrawableItem
     : public RotoItem
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -389,11 +399,13 @@ public:
     
     void createNodes(bool connectNodes = true);
     
+    void setNodesThreadSafetyForRotopainting();
+    
     void incrementNodesAge();
     
     void refreshNodesConnections();
 
-    virtual void clone(const RotoItem*  other);
+    virtual void clone(const RotoItem*  other) OVERRIDE;
 
     /**
      * @brief Must be implemented by the derived class to save the state into
@@ -413,28 +425,28 @@ public:
      * @brief When deactivated the spline will not be taken into account when rendering, neither will it be visible on the viewer.
      * If isGloballyActivated() returns false, this function will return false aswell.
      **/
-    bool isActivated(int time) const;
-    void setActivated(bool a, int time);
+    bool isActivated(double time) const;
+    void setActivated(bool a, double time);
 
     /**
      * @brief The opacity of the curve
      **/
-    double getOpacity(int time) const;
-    void setOpacity(double o,int time);
+    double getOpacity(double time) const;
+    void setOpacity(double o,double time);
 
     /**
      * @brief The distance of the feather is the distance from the control point to the feather point plus
      * the feather distance returned by this function.
      **/
-    double getFeatherDistance(int time) const;
-    void setFeatherDistance(double d,int time);
+    double getFeatherDistance(double time) const;
+    void setFeatherDistance(double d,double time);
     int getNumKeyframesFeatherDistance() const;
 
     /**
      * @brief The fall-off rate: 0.5 means half color is faded at half distance.
      **/
-    double getFeatherFallOff(int time) const;
-    void setFeatherFallOff(double f,int time);
+    double getFeatherFallOff(double time) const;
+    void setFeatherFallOff(double f,double time);
 
     /**
      * @brief The color that the GUI should use to draw the overlay of the shape
@@ -442,10 +454,10 @@ public:
     void getOverlayColor(double* color) const;
     void setOverlayColor(const double* color);
 
-    bool getInverted(int time) const;
+    bool getInverted(double time) const;
 
-    void getColor(int time,double* color) const;
-    void setColor(int time,double r,double g,double b);
+    void getColor(double time,double* color) const;
+    void setColor(double time,double r,double g,double b);
     
     int getCompositingOperator() const;
     
@@ -477,18 +489,18 @@ public:
     boost::shared_ptr<Choice_Knob> getBrushSourceTypeKnob() const;
     boost::shared_ptr<Double_Knob> getBrushCloneTranslateKnob() const;
     
-    void setKeyframeOnAllTransformParameters(int time);
+    void setKeyframeOnAllTransformParameters(double time);
 
     const std::list<boost::shared_ptr<KnobI> >& getKnobs() const;
     
-    virtual RectD getBoundingBox(int time) const = 0;
+    virtual RectD getBoundingBox(double time) const = 0;
 
-    void getTransformAtTime(int time,Transform::Matrix3x3* matrix) const;
+    void getTransformAtTime(double time,Transform::Matrix3x3* matrix) const;
     
     /**
      * @brief Set the transform at the given time
      **/
-    void setTransform(int time, double tx, double ty, double sx, double sy, double centerX, double centerY, double rot, double skewX, double skewY);
+    void setTransform(double time, double tx, double ty, double sx, double sy, double centerX, double centerY, double rot, double skewX, double skewY);
     
     boost::shared_ptr<Natron::Node> getEffectNode() const;
     boost::shared_ptr<Natron::Node> getMergeNode() const;
@@ -516,13 +528,13 @@ Q_SIGNALS:
 public Q_SLOTS:
     
     void onRotoOutputChannelsChanged();
-    void onRotoKnobChanged(int);
+    void onRotoKnobChanged(int,int);
     
 protected:
     
-    void rotoKnobChanged(const boost::shared_ptr<KnobI>& knob);
+    void rotoKnobChanged(const boost::shared_ptr<KnobI>& knob, Natron::ValueChangedReasonEnum reason);
     
-    virtual void onTransformSet(int /*time*/) {}
+    virtual void onTransformSet(double /*time*/) {}
     
     void addKnob(const boost::shared_ptr<KnobI>& knob);
 
@@ -612,7 +624,9 @@ struct BezierPrivate;
 class Bezier
     : public RotoDrawableItem
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -625,6 +639,7 @@ public:
            const boost::shared_ptr<RotoLayer>& parent);
 
     virtual ~Bezier();
+
     
     static void
     bezierPoint(const Natron::Point & p0,
@@ -659,7 +674,7 @@ public:
      * This function is used to build-up the curve as opposed to addControlPointAfterIndex which is there to
      * edit an already fully shaped spline.
      **/
-    boost::shared_ptr<BezierCP> addControlPoint(double x,double y,int time);
+    boost::shared_ptr<BezierCP> addControlPoint(double x,double y,double time);
 
     /**
      * @brief Adds a new control point to the curve after the control point at the given index.
@@ -690,6 +705,8 @@ public:
      **/
     void setCurveFinished(bool finished);
     bool isCurveFinished() const;
+    
+    void resetCenterKnob();
 
     /**
      * @brief Removes the control point at the given index if any. The feather point will also be removed , at the same position.
@@ -704,19 +721,29 @@ public:
      * This function asserts that  auto-keying is  enabled.
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      **/
-    void movePointByIndex(int index,int time,double dx,double dy);
+    void movePointByIndex(int index, double time, double dx, double dy);
+
+    /**
+     * @brief Set the control point at the given index to x,y.
+     * If feather link is enabled, the feather point will also be moved by the same deltas.
+     * If  there's no keyframe at the current time, a new keyframe will be added.
+     * This function asserts that  auto-keying is  enabled.
+     * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
+     **/
+    void setPointByIndex(int index, double time, double x, double y);
 
     /**
      * @brief Moves the feather point at the given index if any by the given dx and dy.
      * If auto keying is enabled and there's no keyframe at the current time, a new keyframe will be added.
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      **/
-    void moveFeatherByIndex(int index,int time,double dx,double dy);
+    void moveFeatherByIndex(int index, double time, double dx, double dy);
     
 private:
     
-    void movePointByIndexInternal(int index,int time,double dx,double dy,bool onlyFeather);
-    
+    void movePointByIndexInternal(bool useGuiCurve,int index, double time, double dx, double dy, bool onlyFeather);
+    void setPointByIndexInternal(bool useGuiCurve,int index, double time, double dx, double dy);
+
 public:
     
 
@@ -726,7 +753,7 @@ public:
      * If auto keying is enabled and there's no keyframe at the current time, a new keyframe will be added.
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      **/
-    void moveLeftBezierPoint(int index,int time,double dx,double dy);
+    void moveLeftBezierPoint(int index,double time,double dx,double dy);
 
     /**
      * @brief Moves the right bezier point of the control point at the given index by the given deltas
@@ -734,11 +761,11 @@ public:
      * If auto keying is enabled and there's no keyframe at the current time, a new keyframe will be added.
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      **/
-    void moveRightBezierPoint(int index,int time,double dx,double dy);
+    void moveRightBezierPoint(int index,double time,double dx,double dy);
     
 private:
     
-    void moveBezierPointInternal(BezierCP* cpParam,int index,int time, double lx, double ly, double rx, double ry, bool isLeft, bool moveBoth);
+    void moveBezierPointInternal(BezierCP* cpParam,int index,double time, double lx, double ly, double rx, double ry, bool isLeft, bool moveBoth);
     
 public:
 
@@ -746,7 +773,7 @@ public:
     /**
      * @brief Transforms the given point at the given time by the given matrix.
      **/
-    void transformPoint(const boost::shared_ptr<BezierCP> & point,int time,Transform::Matrix3x3* matrix);
+    void transformPoint(const boost::shared_ptr<BezierCP> & point,double time,Transform::Matrix3x3* matrix);
 
     /**
      * @brief Provided for convenience. It set the left bezier point of the control point at the given index to
@@ -755,7 +782,7 @@ public:
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      * This function will also set the point of the feather point at the given x,y.
      **/
-    void setLeftBezierPoint(int index,int time,double x,double y);
+    void setLeftBezierPoint(int index,double time,double x,double y);
 
     /**
      * @brief Provided for convenience. It set the right bezier point of the control point at the given index to
@@ -764,17 +791,17 @@ public:
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      * This function will also set the point of the feather point at the given x,y.
      **/
-    void setRightBezierPoint(int index,int time,double x,double y);
+    void setRightBezierPoint(int index,double time,double x,double y);
 
 
     /**
      * @brief This function is a combinaison of setPosition + setLeftBezierPoint / setRightBeziePoint
      **/
-    void setPointAtIndex(bool feather,int index,int time,double x,double y,double lx,double ly,double rx,double ry);
+    void setPointAtIndex(bool feather,int index,double time,double x,double y,double lx,double ly,double rx,double ry);
     
 private:
     
-    void setPointAtIndexInternal(bool setLeft,bool setRight,bool setPoint,bool feather,bool featherAndCp,int index,int time,double x,double y,double lx,double ly,double rx,double ry);
+    void setPointAtIndexInternal(bool setLeft,bool setRight,bool setPoint,bool feather,bool featherAndCp,int index,double time,double x,double y,double lx,double ly,double rx,double ry);
     
 public:
     
@@ -782,7 +809,7 @@ public:
     /**
      * @brief Set the left and right bezier point of the control point.
      **/
-    void movePointLeftAndRightIndex(BezierCP & p,int time,double lx,double ly,double rx,double ry);
+    void movePointLeftAndRightIndex(BezierCP & p,double time,double lx,double ly,double rx,double ry);
 
 
     /**
@@ -801,7 +828,7 @@ public:
      * If auto keying is enabled and there's no keyframe at the current time, a new keyframe will be added.
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      **/
-    void smoothPointAtIndex(int index,int time,const std::pair<double,double>& pixelScale);
+    void smoothPointAtIndex(int index,double time,const std::pair<double,double>& pixelScale);
 
     /**
      * @brief Cusps the curvature of the bezier at the given index by reducing the tangents.
@@ -809,11 +836,11 @@ public:
      * If auto keying is enabled and there's no keyframe at the current time, a new keyframe will be added.
      * If ripple edit is enabled, the point will be moved at the same location at all keyframes.
      **/
-    void cuspPointAtIndex(int index,int time,const std::pair<double,double>& pixelScale);
+    void cuspPointAtIndex(int index,double time,const std::pair<double,double>& pixelScale);
 
 private:
     
-    void smoothOrCuspPointAtIndex(bool isSmooth,int index,int time,const std::pair<double,double>& pixelScale);
+    void smoothOrCuspPointAtIndex(bool isSmooth,int index,double time,const std::pair<double,double>& pixelScale);
     
 public:
     
@@ -821,12 +848,12 @@ public:
     /**
      * @brief Set a new keyframe at the given time. If a keyframe already exists this function does nothing.
      **/
-    void setKeyframe(int time);
+    void setKeyframe(double time);
 
     /**
      * @brief Removes a keyframe at the given time if any.
      **/
-    void removeKeyframe(int time);
+    void removeKeyframe(double time);
         
     /**
      * @brief Removes all animation
@@ -844,7 +871,8 @@ public:
      **/
     int getKeyframesCount() const;
 
-    static void deCastelJau(const std::list<boost::shared_ptr<BezierCP> >& cps, int time, unsigned int mipMapLevel,
+    static void deCastelJau(bool useGuiCurves,
+                            const std::list<boost::shared_ptr<BezierCP> >& cps, double time, unsigned int mipMapLevel,
                             bool finished,
                             int nBPointsPerSegment,
                             const Transform::Matrix3x3& transform,
@@ -860,7 +888,8 @@ public:
      * @brief Evaluates the spline at the given time and returns the list of all the points on the curve.
      * @param nbPointsPerSegment controls how many points are used to draw one Bezier segment
      **/
-    void evaluateAtTime_DeCasteljau(int time,
+    void evaluateAtTime_DeCasteljau(bool useGuiCurves,
+                                    double time,
                                     unsigned int mipMapLevel,
                                     int nbPointsPerSegment,
                                     std::list<Natron::Point>* points,
@@ -869,7 +898,8 @@ public:
     /**
      * @brief Same as evaluateAtTime_DeCasteljau but nbPointsPerSegment is approximated automatically
      **/
-    void evaluateAtTime_DeCasteljau_autoNbPoints(int time,
+    void evaluateAtTime_DeCasteljau_autoNbPoints(bool useGuiCurves,
+                                                 double time,
                                                  unsigned int mipMapLevel,
                                                  std::list<Natron::Point>* points,
                                                  RectD* bbox) const;
@@ -878,7 +908,8 @@ public:
      * @brief Evaluates the bezier formed by the feather points. Segments which are equal to the control points of the bezier
      * will not be drawn.
      **/
-    void evaluateFeatherPointsAtTime_DeCasteljau(int time,
+    void evaluateFeatherPointsAtTime_DeCasteljau(bool useGuiCurves,
+                                                 double time,
                                                  unsigned int mipMapLevel,
                                                  int nbPointsPerSegment,
                                                  bool evaluateIfEqual,
@@ -889,13 +920,14 @@ public:
      * @brief Returns the bounding box of the bezier. The last value computed by evaluateAtTime_DeCasteljau will be returned,
      * otherwise if it has never been called, evaluateAtTime_DeCasteljau will be called to compute the bounding box.
      **/
-    virtual RectD getBoundingBox(int time) const OVERRIDE;
+    virtual RectD getBoundingBox(double time) const OVERRIDE;
     
     static void
-    bezierSegmentListBboxUpdate(const std::list<boost::shared_ptr<BezierCP> > & points,
+    bezierSegmentListBboxUpdate(bool useGuiCurves,
+                                const std::list<boost::shared_ptr<BezierCP> > & points,
                                 bool finished,
                                 bool isOpenBezier,
-                                int time,
+                                double time,
                                 unsigned int mipMapLevel,
                                 const Transform::Matrix3x3& transform,
                                 RectD* bbox);
@@ -904,7 +936,6 @@ public:
      * @brief Returns a const ref to the control points of the bezier curve. This can only ever be called on the main thread.
      **/
     const std::list< boost::shared_ptr<BezierCP> > & getControlPoints() const;
-    
 protected:
     
     std::list< boost::shared_ptr<BezierCP> > & getControlPoints_internal();
@@ -919,7 +950,6 @@ public:
      **/
     const std::list< boost::shared_ptr<BezierCP> > & getFeatherPoints() const;
     std::list< boost::shared_ptr<BezierCP> > getFeatherPoints_mt_safe() const;
-    
     
     enum ControlPointSelectionPrefEnum
     {
@@ -940,8 +970,8 @@ public:
      * @brief Given the control point in parameter, return its index in the curve's control points list.
      * If no such control point could be found, -1 is returned.
      **/
-    virtual int getControlPointIndex(const boost::shared_ptr<BezierCP> & cp) const;
-    virtual int getControlPointIndex(const BezierCP* cp) const;
+    int getControlPointIndex(const boost::shared_ptr<BezierCP> & cp) const;
+    int getControlPointIndex(const BezierCP* cp) const;
 
     /**
      * @brief Given the feather point in parameter, return its index in the curve's feather points list.
@@ -972,8 +1002,8 @@ public:
      **/
     std::list< std::pair<boost::shared_ptr<BezierCP>,boost::shared_ptr<BezierCP> > >
     controlPointsWithinRect(double l,double r,double b,double t,double acceptance,int mode) const;
-    static void leftDerivativeAtPoint(int time,const BezierCP & p,const BezierCP & prev,double *dx,double *dy);
-    static void rightDerivativeAtPoint(int time,const BezierCP & p,const BezierCP & next,double *dx,double *dy);
+    static void leftDerivativeAtPoint(bool useGuiCurves,double time,const BezierCP & p,const BezierCP & prev, const Transform::Matrix3x3& transform,double *dx,double *dy);
+    static void rightDerivativeAtPoint(bool useGuiCurves,double time,const BezierCP & p,const BezierCP & next, const Transform::Matrix3x3& transform, double *dx,double *dy);
 
     /**
      * @brief Computes the location of the feather extent relative to the current feather point position and
@@ -986,13 +1016,15 @@ public:
      *
      * Note that the delta will be applied to fp.
      **/
-    static Natron::Point expandToFeatherDistance(const Natron::Point & cp, //< the point
+    static Natron::Point expandToFeatherDistance(bool useGuiCurve,
+                                                 const Natron::Point & cp, //< the point
                                                  Natron::Point* fp, //< the feather point
                                                  double featherDistance, //< feather distance
                                                  //const std::list<Natron::Point> & featherPolygon, //< the polygon of the bezier
                                                  //const RectD & featherPolyBBox, //< helper to speed-up pointInPolygon computations
-                                                 int time, //< time
+                                                 double time, //< time
                                                  bool clockWise, //< is the bezier  clockwise oriented or not
+                                                 const Transform::Matrix3x3& transform,
                                                  std::list<boost::shared_ptr<BezierCP> >::const_iterator prevFp, //< iterator pointing to the feather before curFp
                                                  std::list<boost::shared_ptr<BezierCP> >::const_iterator curFp, //< iterator pointing to fp
                                                  std::list<boost::shared_ptr<BezierCP> >::const_iterator nextFp); //< iterator pointing after curFp
@@ -1003,24 +1035,33 @@ public:
     };
 
     
-    bool isFeatherPolygonClockwiseOriented(int time) const;
+    bool isFeatherPolygonClockwiseOriented(bool useGuiCurve,double time) const;
     
     /**
      * @brief Refresh the polygon orientation for a specific keyframe or for all keyframes. Auto polygon orientation must be set to true
      * so make sure setAutoOrientationComputation(true) has been called before.
      **/
-    void refreshPolygonOrientation(int time);
-    void refreshPolygonOrientation();
+    void refreshPolygonOrientation(bool useGuiCurve,double time);
+    void refreshPolygonOrientation(bool useGuiCurve);
 
     void setAutoOrientationComputation(bool autoCompute);
+    
+    bool dequeueGuiActions();
+    
 private:
     
-    virtual void onTransformSet(int time) OVERRIDE FINAL;
+    virtual void onTransformSet(double time) OVERRIDE FINAL;
     
-    bool isFeatherPolygonClockwiseOrientedInternal(int time) const;
+    bool isFeatherPolygonClockwiseOrientedInternal(bool useGuiCurve,double time) const;
     
-    void computePolygonOrientation(int time,bool isStatic) const;
-        
+    void computePolygonOrientation(bool useGuiCurves,double time,bool isStatic) const;
+    
+    /*
+     * @brief If the node is currently involved in a render, returns false, otherwise returns true
+     */
+    bool canSetInternalPoints() const;
+    
+    void copyInternalPointsToGuiPoints();
     
 public:
     
@@ -1047,13 +1088,13 @@ public:
      * @brief Get the nearest previous keyframe from the given time.
      * If nothing was found INT_MIN is returned.
      **/
-    int getPreviousKeyframeTime(int time) const;
+    int getPreviousKeyframeTime(double time) const;
 
     /**
      * @brief Get the nearest next keyframe from the given time.
      * If nothing was found INT_MAX is returned.
      **/
-    int getNextKeyframeTime(int time) const;
+    int getNextKeyframeTime(double time) const;
     
     int getKeyFrameIndex(double time) const;
     
@@ -1066,9 +1107,9 @@ Q_SIGNALS:
 
     void cloned();
 
-    void keyframeSet(int time);
+    void keyframeSet(double time);
 
-    void keyframeRemoved(int time);
+    void keyframeRemoved(double time);
     
     void animationRemoved();
         
@@ -1118,7 +1159,18 @@ public:
      * @brief Appends to the paint stroke the raw points list.
      * @returns True if the number of points is > 1
      **/
-    bool appendPoint(const RotoPoint& p);
+    bool appendPoint(bool newStroke,const RotoPoint& p);
+    
+    void addStroke(const boost::shared_ptr<Curve>& xCurve,
+                  const boost::shared_ptr<Curve>& yCurve,
+                  const boost::shared_ptr<Curve>& pCurve);
+    
+    /**
+     * @brief Returns true if the stroke should be removed
+     **/
+    bool removeLastStroke(boost::shared_ptr<Curve>* xCurve,
+                          boost::shared_ptr<Curve>* yCurve,
+                          boost::shared_ptr<Curve>* pCurve);
     
     std::vector<cairo_pattern_t*> getPatternCache() const;
     void updatePatternCache(const std::vector<cairo_pattern_t*>& cache);
@@ -1135,9 +1187,12 @@ public:
 
     
     
-    bool getMostRecentStrokeChangesSinceAge(int lastAge, std::list<std::pair<Natron::Point,double> >* points, RectD* pointsBbox,
-                                             int* newAge);
+    bool getMostRecentStrokeChangesSinceAge(int time,int lastAge, std::list<std::pair<Natron::Point,double> >* points,
+                                            RectD* pointsBbox,
+                                            RectD* wholeStrokeBbox,
+                                            int* newAge);
     
+    RectD getWholeStrokeRoDWhilePainting() const;
     
     void setStrokeFinished();
     
@@ -1158,18 +1213,19 @@ public:
      **/
     virtual void load(const RotoItemSerialization & obj) OVERRIDE FINAL;
     
-    virtual RectD getBoundingBox(int time) const OVERRIDE FINAL;
+    virtual RectD getBoundingBox(double time) const OVERRIDE FINAL;
     
     
     ///bbox is in canonical coords
-    void evaluateStroke(unsigned int mipMapLevel, int time, std::list<std::pair<Natron::Point,double> >* points,
+    void evaluateStroke(unsigned int mipMapLevel, double time,
+                        std::list<std::list<std::pair<Natron::Point,double> > >* strokes,
                         RectD* bbox = 0) const;
     
-    const Curve& getXControlPoints() const;
-    const Curve& getYControlPoints() const;    
+    std::list<boost::shared_ptr<Curve> > getXControlPoints() const;
+    std::list<boost::shared_ptr<Curve> > getYControlPoints() const;    
 private:
     
-    RectD computeBoundingBox(int time) const;
+    RectD computeBoundingBox(double time) const;
     
     
     boost::scoped_ptr<RotoStrokeItemPrivate> _imp;
@@ -1253,9 +1309,9 @@ public:
      * @brief Make a new bezier curve and append it into the currently selected layer.
      * @param baseName A hint to name the item. It can be something like "Bezier", "Ellipse", "Rectangle" , etc...
      **/
-    boost::shared_ptr<Bezier> makeBezier(double x,double y,const std::string & baseName,int time, bool isOpenBezier);
-    boost::shared_ptr<Bezier> makeEllipse(double x,double y,double diameter,bool fromCenter,int time);
-    boost::shared_ptr<Bezier> makeSquare(double x,double y,double initialSize,int time);
+    boost::shared_ptr<Bezier> makeBezier(double x,double y,const std::string & baseName,double time, bool isOpenBezier);
+    boost::shared_ptr<Bezier> makeEllipse(double x,double y,double diameter,bool fromCenter,double time);
+    boost::shared_ptr<Bezier> makeSquare(double x,double y,double initialSize,double time);
     
     
     boost::shared_ptr<RotoStrokeItem> makeStroke(Natron::RotoStrokeType type,
@@ -1289,7 +1345,7 @@ public:
      * @brief Returns the region of definition of the shape unioned to the region of definition of the node
      * or the project format.
      **/
-    void getMaskRegionOfDefinition(int time,
+    void getMaskRegionOfDefinition(double time,
                                    int view,
                                    RectD* rod) const; //!< rod in canonical coordinates
 
@@ -1323,7 +1379,7 @@ private:
                                                         SequenceTime time,
                                                         Natron::ImageBitDepthEnum depth,
                                                         unsigned int mipmapLevel,
-                                                        const std::list<std::pair<Natron::Point,double> >& points,
+                                                        const std::list<std::list<std::pair<Natron::Point,double> > >& strokes,
                                                         const boost::shared_ptr<Natron::Image> &image);
     
 public:
@@ -1465,8 +1521,35 @@ public:
      **/
     boost::shared_ptr<RotoLayer> findDeepestSelectedLayer() const;
     
+    void dequeueGuiActions();
+    
+    /**
+     * @brief When finishing a stroke with the paint brush, we need to re-render it because the interpolation of the curve
+     * will be much smoother with more points than what it was during painting.
+     * We explicitly freeze the UI while waiting for the image to be drawn, otherwise the user might attempt to do a 
+     * multiple stroke on top of it which could make some artifacts.
+     **/
+    void evaluateNeatStrokeRender();
+    
+    /**
+     * @brief Called when a render is finished to wake-up the main-thread if it was waiting in 
+     * evaluateNeatStrokeRender()
+     **/
+    void notifyRenderFinished();
+    
+    void setIsDoingNeatRender(bool doing);
+    
+    bool isDoingNeatRender() const;
+    
+    void s_breakMultiStroke() { Q_EMIT breakMultiStroke(); }
+    
 Q_SIGNALS:
 
+    /**
+     * @brief Signalled when the gui should force a new stroke to be added
+     **/
+    void breakMultiStroke();
+    
     /**
      * Emitted when the selection is changed. The integer corresponds to the
      * RotoItem::SelectionReasonEnum enum.
@@ -1509,4 +1592,4 @@ private:
     boost::scoped_ptr<RotoContextPrivate> _imp;
 };
 
-#endif // KNOBROTO_H
+#endif // _Engine_RotoContext_h_

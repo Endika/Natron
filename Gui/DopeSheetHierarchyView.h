@@ -1,9 +1,29 @@
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
+
 #ifndef DOPESHEETHIERARCHYVIEW_H
 #define DOPESHEETHIERARCHYVIEW_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
 #include "Global/Macros.h"
@@ -21,6 +41,7 @@ CLANG_DIAG_ON(uninitialized)
 
 class DopeSheet;
 class DSKnob;
+class HierarchyView;
 class DSNode;
 class Gui;
 class HierarchyViewPrivate;
@@ -42,18 +63,35 @@ class QStyleOptionViewItem;
  */
 class HierarchyViewSelectionModel : public QItemSelectionModel
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
-    explicit HierarchyViewSelectionModel(QAbstractItemModel *model,
+    
+    
+    explicit HierarchyViewSelectionModel(DopeSheet* dopesheetModel,
+                                         HierarchyView* view,
+                                         QAbstractItemModel *model,
                                          QObject *parent = 0);
     ~HierarchyViewSelectionModel();
 
+    void selectWithRecursion(const QItemSelection &userSelection,
+                QItemSelectionModel::SelectionFlags command,
+                bool recurse);
+    
 public Q_SLOTS:
+    
     virtual void select(const QItemSelection &userSelection,
                         QItemSelectionModel::SelectionFlags command) OVERRIDE FINAL;
 
 private: /* functions */
+    
+    void selectInternal(const QItemSelection &userSelection,
+                QItemSelectionModel::SelectionFlags command,
+                bool recurse);
+
+    
     /**
      * @brief Selects recursively all children of 'index' and put them in
      * 'selection'.
@@ -65,6 +103,11 @@ private: /* functions */
      */
     void checkParentsSelectedStates(const QModelIndex &index, QItemSelectionModel::SelectionFlags flags,
                                    const QItemSelection &unitedSelection, QItemSelection *finalSelection) const;
+    
+private:
+    
+    DopeSheet* _dopesheetModel;
+    HierarchyView* _view;
 };
 
 
@@ -87,7 +130,9 @@ private: /* functions */
  */
 class HierarchyView : public QTreeWidget
 {
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
     explicit HierarchyView(DopeSheet *dopeSheetModel, Gui *gui, QWidget *parent = 0);
@@ -117,7 +162,11 @@ public:
      * in its parent) child of 'item".
      */
     QTreeWidgetItem *lastVisibleChild(QTreeWidgetItem *item) const;
+    
+    QTreeWidgetItem* getTreeItemForModelIndex(const QModelIndex& index) const;
 
+    void setCanResizeOtherWidget(bool canResize);
+    
 protected:
     virtual void drawRow(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const OVERRIDE FINAL;
     virtual void drawBranches(QPainter *painter, const QRect &rect, const QModelIndex &index) const OVERRIDE FINAL;
@@ -178,7 +227,7 @@ private Q_SLOTS:
      * This slot is automatically called when a keyframe selection is changed
      * (keyframe added/removed, selection moved) in the dope sheet model.
      */
-    void onKeyframeSelectionChanged();
+    void onKeyframeSelectionChanged(bool recurse);
 
     /**
      * @brief Puts the settings panel associated with 'item' on top of the
@@ -198,6 +247,9 @@ private Q_SLOTS:
     void onSelectionChanged();
 
 private:
+    
+    virtual void resizeEvent(QResizeEvent* e) OVERRIDE FINAL;
+    
     boost::scoped_ptr<HierarchyViewPrivate> _imp;
 };
 

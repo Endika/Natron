@@ -1,26 +1,36 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "TimeLineGui.h"
 
 #include <cmath>
 #include <set>
 #include <QtGui/QFont>
-CLANG_DIAG_OFF(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_OFF
 // /opt/local/include/QtGui/qmime.h:119:10: warning: private field 'type' is not used [-Wunused-private-field]
 #include <QtGui/QMouseEvent>
-CLANG_DIAG_ON(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include <QCoreApplication>
 #include <QThread>
 #include "Global/GlobalDefines.h"
@@ -103,6 +113,7 @@ struct TimelineGuiPrivate
 {
     TimeLineGui *parent;
     ViewerInstance* viewer;
+    ViewerTab* viewerTab;
     boost::shared_ptr<TimeLine> timeline; //ptr to the internal timeline
     Gui* gui; //< ptr to the gui
     bool alphaCursor; // should cursor be drawn semi-transparant
@@ -122,9 +133,11 @@ struct TimelineGuiPrivate
     
     TimelineGuiPrivate(TimeLineGui *qq,
                        ViewerInstance* viewer,
-                       Gui* gui)
-        : parent(qq),
-          viewer(viewer)
+                       Gui* gui,
+                       ViewerTab* viewerTab)
+        : parent(qq)
+        , viewer(viewer)
+        , viewerTab(viewerTab)
         , timeline()
         , gui(gui)
         , alphaCursor(false)
@@ -168,10 +181,9 @@ struct TimelineGuiPrivate
 TimeLineGui::TimeLineGui(ViewerInstance* viewer,
                          boost::shared_ptr<TimeLine> timeline,
                          Gui* gui,
-                         QWidget* parent,
-                         const QGLWidget *shareWidget)
-    : QGLWidget(parent,shareWidget)
-    , _imp( new TimelineGuiPrivate(this, viewer,gui) )
+                         ViewerTab* viewerTab)
+    : QGLWidget(viewerTab)
+    , _imp( new TimelineGuiPrivate(this, viewer,gui, viewerTab) )
 {
     setTimeline(timeline);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
@@ -288,6 +300,7 @@ TimeLineGui::paintGL()
     if ( (left == right) || (top == bottom) ) {
         glClearColor(clearR,clearG,clearB,1.);
         glClear(GL_COLOR_BUFFER_BIT);
+        glCheckErrorIgnoreOSXBug();
 
         return;
     }
@@ -311,8 +324,15 @@ TimeLineGui::paintGL()
 
 
         /// change the backgroud color of the portion of the timeline where images are lying
-        int firstFrame,lastFrame;
-        _imp->gui->getApp()->getFrameRange(&firstFrame, &lastFrame);
+        double firstFrame,lastFrame;
+        if (!_imp->viewerTab->isFileDialogViewer()) {
+            _imp->gui->getApp()->getFrameRange(&firstFrame, &lastFrame);
+        } else {
+            int f,l;
+            _imp->viewerTab->getTimelineBounds(&f, &l);
+            firstFrame = (double)f;
+            lastFrame = (double)l;
+        }
         QPointF firstFrameWidgetPos = toWidgetCoordinates(firstFrame,0);
         QPointF lastFrameWidgetPos = toWidgetCoordinates(lastFrame,0);
 
@@ -450,7 +470,8 @@ TimeLineGui::paintGL()
 
         //draw an alpha cursor if the mouse is hovering the timeline
         glEnable(GL_POLYGON_SMOOTH);
-        glHint(GL_POLYGON_SMOOTH_HINT,GL_DONT_CARE);
+        glHint(GL_POLYGON_SMOOTH_HINT, GL_DONT_CARE);
+        glCheckError();
         if (_imp->alphaCursor) {
             int currentPosBtmWidgetCoordX = _imp->lastMouseEventWidgetCoord.x();
             int currentPosBtmWidgetCoordY = toWidgetCoordinates(0,lineYpos).y();
@@ -485,7 +506,7 @@ TimeLineGui::paintGL()
             glVertex2f( currentPosTopLeft.x(),currentPosTopLeft.y() );
             glVertex2f( currentPosTopRight.x(),currentPosTopRight.y() );
             glEnd();
-            glCheckError();
+            glCheckErrorIgnoreOSXBug();
 
             renderText(mouseNumberPos.x(),mouseNumberPos.y(), mouseNumber, currentColor, _imp->font);
         }
@@ -691,7 +712,7 @@ TimeLineGui::mouseMoveEvent(QMouseEvent* e)
     bool onEditingFinishedOnly = appPTR->getCurrentSettings()->getRenderOnEditingFinishedOnly();
     if (_imp->state == eTimelineStateDraggingCursor && !onEditingFinishedOnly) {
         if ( tseq != _imp->timeline->currentFrame() ) {
-            _imp->gui->setUserScrubbingSlider(true);
+            _imp->gui->setDraftRenderEnabled(true);
             _imp->gui->getApp()->setLastViewerUsingTimeline(_imp->viewer->getNode());
             Q_EMIT frameChanged(tseq);
         }
@@ -755,8 +776,8 @@ TimeLineGui::mouseReleaseEvent(QMouseEvent* e)
     if (_imp->state == eTimelineStateDraggingCursor) {
         
         bool wasScrubbing = false;
-        if (_imp->gui->isUserScrubbingSlider()) {
-            _imp->gui->setUserScrubbingSlider(false);
+        if (_imp->gui->isDraftRenderEnabled()) {
+            _imp->gui->setDraftRenderEnabled(false);
             wasScrubbing = true;
         }
         _imp->gui->refreshAllPreviews();
@@ -1051,6 +1072,10 @@ TimeLineGui::clearCachedFrames()
 void
 TimeLineGui::onProjectFrameRangeChanged(int left,int right)
 {
+    assert(_imp->viewerTab);
+    if (_imp->viewerTab->isFileDialogViewer()) {
+        return;
+    }
     if (!isFrameRangeEdited()) {
         setBoundariesInternal(left, right, true);
         setFrameRangeEdited(false);

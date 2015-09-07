@@ -1,16 +1,26 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "TabWidget.h"
 
@@ -25,40 +35,147 @@ CLANG_DIAG_OFF(deprecated)
 #include <QtCore/QMimeData>
 #include <QtGui/QDrag>
 #include <QDebug>
-CLANG_DIAG_OFF(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_OFF
 // /opt/local/include/QtGui/qmime.h:119:10: warning: private field 'type' is not used [-Wunused-private-field]
 #include <QtGui/QDragEnterEvent>
-CLANG_DIAG_ON(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include <QtGui/QDragLeaveEvent>
 #include <QtGui/QPaintEvent>
 #include <QScrollArea>
 #include <QSplitter>
 CLANG_DIAG_ON(deprecated)
 
-#include "Engine/ViewerInstance.h"
 #include "Engine/Project.h"
 #include "Engine/ScriptObject.h"
+#include "Engine/ViewerInstance.h"
 
+#include "Gui/ActionShortcuts.h"
 #include "Gui/Button.h"
-#include "Gui/GuiApplicationManager.h"
-#include "Gui/GuiAppInstance.h"
-#include "Gui/Gui.h"
-#include "Gui/NodeGraph.h"
 #include "Gui/CurveEditor.h"
 #include "Gui/DopeSheetEditor.h"
-#include "Gui/ViewerTab.h"
-#include "Gui/Histogram.h"
-#include "Gui/Splitter.h"
+#include "Gui/FloatingWidget.h"
+#include "Gui/Gui.h"
+#include "Gui/GuiAppInstance.h"
+#include "Gui/GuiApplicationManager.h"
 #include "Gui/GuiMacros.h"
-#include "Gui/ActionShortcuts.h"
+#include "Gui/Histogram.h"
 #include "Gui/Menu.h"
-#include "Gui/ScriptEditor.h"
+#include "Gui/NodeGraph.h"
+#include "Gui/PropertiesBinWrapper.h"
 #include "Gui/PythonPanels.h"
+#include "Gui/RegisteredTabs.h"
+#include "Gui/ScriptEditor.h"
+#include "Gui/Splitter.h"
 #include "Gui/Utils.h"
+#include "Gui/ViewerTab.h"
 
 #define LEFT_HAND_CORNER_BUTTON_TT "Manage the layouts for this pane"
 
+#define TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING 0.13
+
 using namespace Natron;
+
+
+class TransparantDropRect: public QWidget
+{
+    
+    TabWidget::DropRectType _type;
+    TabWidget* _widget;
+    
+public:
+    
+    
+    TransparantDropRect(TabWidget* pane, QWidget* parent = 0)
+    : QWidget(parent)
+    , _type(TabWidget::eDropRectNone)
+    , _widget(pane)
+    {
+        setWindowFlags(Qt::FramelessWindowHint | Qt::Window | Qt::WindowStaysOnTopHint);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setStyleSheet("background:transparent;");
+        setEnabled(false);
+        setFocusPolicy(Qt::NoFocus);
+        setObjectName("__tab_widget_transparant_window__");
+    }
+    
+    virtual ~TransparantDropRect() {}
+    
+    TabWidget::DropRectType getDropType() const
+    {
+        return _type;
+    }
+    
+    void setDropType(TabWidget::DropRectType type)
+    {
+        _type = type;
+        if (type != TabWidget::eDropRectNone) {
+            repaint();
+        }
+    }
+    
+    TabWidget* getPane() const
+    {
+        return _widget;
+    }
+    
+private:
+    
+    virtual bool event(QEvent* e) OVERRIDE FINAL
+    {
+        QInputEvent* isInput = dynamic_cast<QInputEvent*>(e);
+        if (isInput) {
+            e->ignore();
+            return false;
+        } else {
+            return QWidget::event(e);
+        }
+    }
+    
+    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL
+    {
+        QRect r;
+        switch (_type) {
+            case TabWidget::eDropRectAll:
+                r = rect();
+                break;
+            case TabWidget::eDropRectLeftSplit: {
+                QRect tmp = rect();
+                r = tmp;
+                r.setWidth(tmp.width() / 2.);
+            }   break;
+            case TabWidget::eDropRectRightSplit: {
+                QRect tmp = rect();
+                r = QRect(tmp.left() + tmp.width() / 2., tmp.top(), tmp.width() / 2., tmp.height());
+            }   break;
+            case TabWidget::eDropRectTopSplit: {
+                QRect tmp = rect();
+                r = QRect(tmp.left(), tmp.top(), tmp.width(), tmp.height() / 2.);
+            }   break;
+            case TabWidget::eDropRectBottomSplit: {
+                QRect tmp = rect();
+                r = QRect(tmp.left(), tmp.top() + tmp.height() / 2., tmp.width(), tmp.height() / 2.);
+            }   break;
+            case TabWidget::eDropRectNone: {
+                QWidget::paintEvent(e);
+                return;
+            }
+        }
+        
+        QPainter p(this);
+        QPen pen;
+        pen.setWidth(2);
+        QVector<qreal> pattern;
+        pattern << 3 << 3;
+        pen.setDashPattern(pattern);
+        pen.setBrush( QColor(243,149,0,255) );
+        p.setPen(pen);
+        r.adjust(1, 1, -2, -2);
+        p.drawRect(r);
+        
+        QWidget::paintEvent(e);
+    }
+};
 
 struct TabWidgetPrivate
 {
@@ -78,6 +195,9 @@ struct TabWidgetPrivate
     bool fullScreen;
     bool isAnchor;
     bool tabBarVisible;
+    
+    ///Used to draw drop rects
+    TransparantDropRect* transparantFloatingWidget;
     
     ///Protects  currentWidget, fullScreen, isViewerAnchor
     mutable QMutex tabWidgetStateMutex;
@@ -99,6 +219,7 @@ struct TabWidgetPrivate
     , fullScreen(false)
     , isAnchor(false)
     , tabBarVisible(true)
+    , transparantFloatingWidget(0)
     , tabWidgetStateMutex()
     {
         
@@ -116,6 +237,9 @@ TabWidget::TabWidget(Gui* gui,
 {
     setMouseTracking(true);
     setFrameShape(QFrame::NoFrame);
+    
+    _imp->transparantFloatingWidget = new TransparantDropRect(this, 0);
+    
     _imp->mainLayout = new QVBoxLayout(this);
     _imp->mainLayout->setContentsMargins(0, 5, 0, 0);
     _imp->mainLayout->setSpacing(0);
@@ -135,7 +259,8 @@ TabWidget::TabWidget(Gui* gui,
 
 
     _imp->leftCornerButton = new Button(QIcon(pixL),"", _imp->header);
-    _imp->leftCornerButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->leftCornerButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE, NATRON_SMALL_BUTTON_SIZE);
+    _imp->leftCornerButton->setIconSize(QSize(NATRON_SMALL_BUTTON_ICON_SIZE, NATRON_SMALL_BUTTON_ICON_SIZE));
     _imp->leftCornerButton->setToolTip( Natron::convertFromPlainText(tr(LEFT_HAND_CORNER_BUTTON_TT), Qt::WhiteSpaceNormal) );
     _imp->leftCornerButton->setFocusPolicy(Qt::NoFocus);
     _imp->headerLayout->addWidget(_imp->leftCornerButton);
@@ -149,7 +274,8 @@ TabWidget::TabWidget(Gui* gui,
     _imp->headerLayout->addWidget(_imp->tabBar);
     _imp->headerLayout->addStretch();
     _imp->floatButton = new Button(QIcon(pixM),"",_imp->header);
-    _imp->floatButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->floatButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE, NATRON_SMALL_BUTTON_SIZE);
+    _imp->floatButton->setIconSize(QSize(NATRON_SMALL_BUTTON_ICON_SIZE, NATRON_SMALL_BUTTON_ICON_SIZE));
     _imp->floatButton->setToolTip( Natron::convertFromPlainText(tr("Float pane"), Qt::WhiteSpaceNormal) );
     _imp->floatButton->setEnabled(true);
     _imp->floatButton->setFocusPolicy(Qt::NoFocus);
@@ -157,7 +283,8 @@ TabWidget::TabWidget(Gui* gui,
     _imp->headerLayout->addWidget(_imp->floatButton);
 
     _imp->closeButton = new Button(QIcon(pixC),"",_imp->header);
-    _imp->closeButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE,NATRON_SMALL_BUTTON_SIZE);
+    _imp->closeButton->setFixedSize(NATRON_SMALL_BUTTON_SIZE, NATRON_SMALL_BUTTON_SIZE);
+    _imp->closeButton->setIconSize(QSize(NATRON_SMALL_BUTTON_ICON_SIZE, NATRON_SMALL_BUTTON_ICON_SIZE));
     _imp->closeButton->setToolTip( Natron::convertFromPlainText(tr("Close pane"), Qt::WhiteSpaceNormal) );
     _imp->closeButton->setFocusPolicy(Qt::NoFocus);
     QObject::connect( _imp->closeButton, SIGNAL( clicked() ), this, SLOT( closePane() ) );
@@ -175,6 +302,7 @@ TabWidget::TabWidget(Gui* gui,
 
 TabWidget::~TabWidget()
 {
+    delete _imp->transparantFloatingWidget;
 }
 
 Gui*
@@ -358,6 +486,29 @@ TabWidget::moveToNextTab()
     if (nextTab != -1) {
         makeCurrentTab(nextTab);
     }
+}
+
+void
+TabWidget::moveToPreviousTab()
+{
+    int prevTab = -1;
+    {
+        QMutexLocker l(&_imp->tabWidgetStateMutex);
+        
+        for (U32 i = 0; i < _imp->tabs.size(); ++i) {
+            if (_imp->tabs[i].first == _imp->currentWidget) {
+                if (i == 0) {
+                    prevTab = _imp->tabs.size() - 1;
+                } else {
+                    prevTab = i - 1;
+                }
+            }
+        }
+    }
+    if (prevTab != -1) {
+        makeCurrentTab(prevTab);
+    }
+
 }
 
 void
@@ -901,7 +1052,7 @@ TabWidget::removeTab(int index,bool userAction)
         _imp->modifyingTabBar = false;
         if (_imp->tabs.size() > 0) {
             l.unlock();
-            makeCurrentTab(0);
+            makeCurrentTab((index - 1 >= 0) ? index - 1 : 0);
             l.relock();
         } else {
             _imp->currentWidget = 0;
@@ -966,7 +1117,7 @@ TabWidget::removeTab(QWidget* widget,bool userAction)
     if (index != -1) {
         QWidget* tab = removeTab(index,userAction);
         assert(tab == widget);
-        (void)tab;
+        Q_UNUSED(tab);
     }
 }
 
@@ -1062,20 +1213,30 @@ TabWidget::onCurrentTabDeleted()
 void
 TabWidget::paintEvent(QPaintEvent* e)
 {
+    
     QFrame::paintEvent(e);
-
-    if (_imp->drawDropRect) {
-        QRect r = rect();
-        QPainter p(this);
-        QPen pen;
-        pen.setBrush( QColor(243,149,0,255) );
-        p.setPen(pen);
-        //        QPalette* palette = new QPalette();
-        //        palette->setColor(QPalette::Foreground,c);
-        //        setPalette(*palette);
-        r.adjust(0, 0, -1, -1);
-        p.drawRect(r);
+    
+    bool mustDraw = false;
+    {
+        QMutexLocker k(&_imp->tabWidgetStateMutex);
+        mustDraw = _imp->tabs.empty() && _imp->isAnchor;
     }
+    if (mustDraw) {
+        QPainter p(this);
+        QPen pen = p.pen();
+        pen.setColor(QColor(200,200,200));
+        p.setPen(pen);
+        QFont f = font();
+        f.setPointSize(50);
+        p.setFont(f);
+        QString text = tr("(Viewer Pane)");
+        QFontMetrics fm(f);
+        QPointF pos(width() / 2., height() / 2.);
+        pos.rx() -= (fm.width(text) / 2.);
+        pos.ry() -= (fm.height() / 2.);
+        p.drawText(pos, text);
+    }
+    
 }
 
 void
@@ -1087,7 +1248,17 @@ TabWidget::dropEvent(QDropEvent* e)
     ScriptObject* obj;
     _imp->gui->findExistingTab(name.toStdString(), &w, &obj);
     if (w && obj) {
-        moveTab(w, obj, this);
+        TabWidget* where = 0;
+        if (_imp->transparantFloatingWidget->getDropType() == eDropRectLeftSplit) {
+            splitHorizontally();
+            where = this;
+        } else if (_imp->transparantFloatingWidget->getDropType() == eDropRectRightSplit) {
+            where = splitHorizontally();
+        } else {
+            where = this;
+        }
+        assert(where);
+        moveTab(w, obj, where);
     }
     _imp->drawDropRect = false;
     setFrameShape(QFrame::NoFrame);
@@ -1136,8 +1307,11 @@ static TabWidget* findTabWidgetRecursive(QWidget* w)
 {
     assert(w);
     TabWidget* isTab = dynamic_cast<TabWidget*>(w);
+    TransparantDropRect* isTransparant = dynamic_cast<TransparantDropRect*>(w);
     if (isTab) {
         return isTab;
+    } else if (isTransparant) {
+        return isTransparant->getPane();
     } else {
         if (w->parentWidget()) {
             return findTabWidgetRecursive(w->parentWidget());
@@ -1162,17 +1336,35 @@ TabBar::mouseMoveEvent(QMouseEvent* e)
 
     if ( _tabWidget->getGui()->isDraggingPanel() ) {
         const QPoint & globalPos = e->globalPos();
+        
         QWidget* widgetUnderMouse = qApp->widgetAt(globalPos);
         if (widgetUnderMouse) {
             TabWidget* topLvlTabWidget = findTabWidgetRecursive(widgetUnderMouse);
             if (topLvlTabWidget) {
+        
+                QPointF localPos = topLvlTabWidget->mapFromGlobal(globalPos);
+                int w = widgetUnderMouse->width();
+                int h = widgetUnderMouse->height();
+                TabWidget::DropRectType dropType = TabWidget::eDropRectAll;
+                if (localPos.x() < 0 || localPos.x() >= w || localPos.y() < 0 || localPos.y() >= h) {
+                    dropType = TabWidget::eDropRectNone;
+                } else if (localPos.x() / (double)w < TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING) {
+                    dropType = TabWidget::eDropRectLeftSplit;
+                } else if (localPos.x() / (double)w > (1. - TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING)) {
+                    dropType = TabWidget::eDropRectRightSplit;
+                } else if (localPos.y() / (double)h < TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING) {
+                    dropType = TabWidget::eDropRectTopSplit;
+                } else if (localPos.y() / (double)h > (1. - TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING)) {
+                    dropType = TabWidget::eDropRectBottomSplit;
+                }
+
                 
                 const std::list<TabWidget*> panes = _tabWidget->getGui()->getPanes();
                 for (std::list<TabWidget*>::const_iterator it = panes.begin(); it != panes.end(); ++it) {
                     if ( *it == topLvlTabWidget ) {
-                        (*it)->setDrawDropRect(true);
+                        (*it)->setDrawDropRect(dropType, true);
                     } else {
-                        (*it)->setDrawDropRect(false);
+                        (*it)->setDrawDropRect(TabWidget::eDropRectNone, false);
                     }
                 }
             }
@@ -1229,9 +1421,18 @@ TabBar::makePixmapForDrag(int index)
         addTab(tabs[i].second, tabs[i].first);
     }
 
-
+    
     QImage tabBarImg = tabBarPixmap.toImage();
     QImage currentTabImg = currentTabPixmap.toImage();
+    
+#if QT_VERSION < 0x050000
+    ///Prevent a bug with grabWidget and retina display on Qt4
+    bool isHighDPI = _tabWidget->getGui()->isHighDPI();
+    if (isHighDPI) {
+        tabBarImg = tabBarImg.scaled(tabBarImg.width() / 2., tabBarImg.height() / 2.);
+        currentTabImg = currentTabImg.scaled(currentTabImg.width() / 2., currentTabImg.height() / 2.);
+    }
+#endif
 
     //now we just put together the 2 pixmaps and set it with mid transparancy
     QImage ret(currentTabImg.width(),currentTabImg.height() + tabBarImg.height(),QImage::Format_ARGB32_Premultiplied);
@@ -1304,16 +1505,47 @@ TabWidget::stopDragTab(const QPoint & globalPos)
     
     
     const std::list<TabWidget*> panes = _imp->gui->getPanes();
-    
+
     QWidget* widgetUnderMouse = qApp->widgetAt(globalPos);
     bool foundTabWidgetUnderneath = false;
     if (widgetUnderMouse) {
+        
         TabWidget* topLvlTabWidget = findTabWidgetRecursive(widgetUnderMouse);
         if (topLvlTabWidget) {
+            QPointF localPos = topLvlTabWidget->mapFromGlobal(globalPos);
+            int w = widgetUnderMouse->width();
+            int h = widgetUnderMouse->height();
+            TabWidget::DropRectType dropType = TabWidget::eDropRectAll;
+            if (localPos.x() < 0 || localPos.x() >= w || localPos.y() < 0 || localPos.y() >= h) {
+                dropType = TabWidget::eDropRectNone;
+            } else if (localPos.x() / (double)w < TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING) {
+                dropType = TabWidget::eDropRectLeftSplit;
+            } else if (localPos.x() / (double)w > (1. - TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING)) {
+                dropType = TabWidget::eDropRectRightSplit;
+            } else if (localPos.y() / (double)h < TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING) {
+                dropType = TabWidget::eDropRectTopSplit;
+            } else if (localPos.y() / (double)h > (1. - TAB_DRAG_WIDGET_PERCENT_FOR_SPLITTING)) {
+                dropType = TabWidget::eDropRectBottomSplit;
+            }
             
-            topLvlTabWidget->appendTab(draggedPanel, obj);
+            TabWidget* where = 0;
+            if (dropType == eDropRectLeftSplit) {
+                topLvlTabWidget->splitHorizontally();
+                where = topLvlTabWidget;
+            } else if (dropType == eDropRectRightSplit) {
+                where = topLvlTabWidget->splitHorizontally();
+            } else if (dropType == eDropRectTopSplit) {
+                topLvlTabWidget->splitVertically();
+                where =  topLvlTabWidget;
+            } else if (dropType == eDropRectBottomSplit) {
+                where = topLvlTabWidget->splitVertically();
+            } else {
+                where = topLvlTabWidget;
+            }
+            assert(where);
+            
+            where->appendTab(draggedPanel, obj);
             foundTabWidgetUnderneath = true;
-            
         }
     }
 
@@ -1332,7 +1564,6 @@ TabWidget::stopDragTab(const QPoint & globalPos)
         floatingW->setWidget(newTab);
         floatingW->move(windowPos);
         _imp->gui->registerFloatingWindow(floatingW);
-        
         _imp->gui->checkNumberOfNonFloatingPanes();
         
         bool isClosable = _imp->closeButton->isEnabled();
@@ -1344,7 +1575,7 @@ TabWidget::stopDragTab(const QPoint & globalPos)
     
     
     for (std::list<TabWidget*>::const_iterator it = panes.begin(); it != panes.end(); ++it) {
-        (*it)->setDrawDropRect(false);
+        (*it)->setDrawDropRect(TabWidget::eDropRectNone, false);
     }
     return ret;
 }
@@ -1366,19 +1597,27 @@ TabWidget::startDragTab(int index)
 }
 
 void
-TabWidget::setDrawDropRect(bool draw)
+TabWidget::setDrawDropRect(DropRectType type, bool draw)
 {
-    if (draw == _imp->drawDropRect) {
+    if (draw == _imp->drawDropRect && _imp->transparantFloatingWidget->getDropType() == type) {
         return;
     }
-
+    _imp->transparantFloatingWidget->setDropType(type);
     _imp->drawDropRect = draw;
-    if (draw) {
-        setFrameShape(QFrame::Box);
+    
+    if (type == eDropRectNone || !draw) {
+        _imp->transparantFloatingWidget->hide();
     } else {
-        setFrameShape(QFrame::NoFrame);
+        
+        _imp->transparantFloatingWidget->resize(size());
+    
+        if (!_imp->transparantFloatingWidget->isVisible()) {
+            _imp->transparantFloatingWidget->show();
+            activateWindow();
+        }
+        QPoint globalPos = mapToGlobal(QPoint(0,0));
+        _imp->transparantFloatingWidget->move(globalPos);
     }
-    repaint();
 }
 
 bool
@@ -1426,9 +1665,13 @@ TabWidget::onShowHideTabBarActionTriggered()
 void
 TabWidget::setAsAnchor(bool anchor)
 {
+    bool mustUpdate = false;
     {
         QMutexLocker l(&_imp->tabWidgetStateMutex);
         _imp->isAnchor = anchor;
+        if (anchor && _imp->tabs.empty()) {
+            mustUpdate = true;
+        }
     }
     QPixmap pix;
 
@@ -1438,6 +1681,9 @@ TabWidget::setAsAnchor(bool anchor)
         appPTR->getIcon(Natron::NATRON_PIXMAP_TAB_WIDGET_LAYOUT_BUTTON, &pix);
     }
     _imp->leftCornerButton->setIcon( QIcon(pix) );
+    if (mustUpdate) {
+        update();
+    }
 }
 
 void
@@ -1461,7 +1707,9 @@ TabWidget::keyPressEvent (QKeyEvent* e)
         e->accept();
     } else if (isKeybind(kShortcutGroupGlobal, kShortcutIDActionNextTab, e->modifiers(), e->key())) {
         moveToNextTab();
-    } else if (isKeybind(kShortcutGroupGlobal, kShortcutIDActionCloseTab, e->modifiers(), e->key())) {
+    } else if (isKeybind(kShortcutGroupGlobal, kShortcutIDActionPrevTab, e->modifiers(), e->key())) {
+        moveToPreviousTab();
+    }else if (isKeybind(kShortcutGroupGlobal, kShortcutIDActionCloseTab, e->modifiers(), e->key())) {
         closeCurrentWidget();
     } else if (isFloatingWindowChild() && isKeybind(kShortcutGroupGlobal, kShortcutIDActionFullscreen, e->modifiers(), e->key())) {
         _imp->gui->toggleFullScreen();
@@ -1499,7 +1747,7 @@ TabWidget::moveTab(QWidget* what,
     assert(where);
     where->appendTab(what,obj);
     //what->setParent(where);
-    if ( !where->getGui()->getApp()->getProject()->isLoadingProject() ) {
+    if ( !where->getGui()->isAboutToClose() &&  !where->getGui()->getApp()->getProject()->isLoadingProject() ) {
         where->getGui()->getApp()->triggerAutoSave();
     }
 
@@ -1699,7 +1947,7 @@ TabWidget::onTabScriptNameChanged(QWidget* tab,const std::string& oldName,const 
 
     std::stringstream ss;
     ss << "if hasattr(" << appID << "." << paneName << ",\"" << oldName << "\"):\n";
-    ss << "    del " << appID << "." << paneName << "." << oldName;
+    ss << "    del " << appID << "." << paneName << "." << oldName << "\n";
     ss << appID << "." << paneName << "." << newName << " = " << appID << ".getViewer(\"" << newName << "\")\n";
     
     std::string err;
@@ -1758,3 +2006,4 @@ TabWidgetPrivate::removeTabToPython(QWidget* widget,const std::string& tabName)
     bool ok = Natron::interpretPythonScript(script, &err, 0);
     assert(ok);
 }
+

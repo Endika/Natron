@@ -1,29 +1,41 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "OfxClipInstance.h"
 
 #include <cfloat>
 #include <limits>
+#include <stdexcept>
+
 #include <QDebug>
+
 #include "Global/Macros.h"
 
 #include "Engine/OfxEffectInstance.h"
 #include "Engine/OfxImageEffectInstance.h"
 #include "Engine/Settings.h"
-#include "Engine/ImageFetcher.h"
+//#include "Engine/ImageFetcher.h"
 #include "Engine/Image.h"
 #include "Engine/ImageParams.h"
 #include "Engine/TimeLine.h"
@@ -65,6 +77,7 @@ OfxClipInstance::getUnmappedBitDepth() const
     
     static const std::string byteStr(kOfxBitDepthByte);
     static const std::string shortStr(kOfxBitDepthShort);
+    static const std::string halfStr(kOfxBitDepthHalf);
     static const std::string floatStr(kOfxBitDepthFloat);
     static const std::string noneStr(kOfxBitDepthNone);
     EffectInstance* inputNode = getAssociatedNode();
@@ -83,6 +96,9 @@ OfxClipInstance::getUnmappedBitDepth() const
                 break;
             case Natron::eImageBitDepthShort:
                 return shortStr;
+                break;
+            case Natron::eImageBitDepthHalf:
+                return halfStr;
                 break;
             case Natron::eImageBitDepthFloat:
                 return floatStr;
@@ -232,7 +248,7 @@ OfxClipInstance::getComponentsPresent() const
     if (isOutput()) {
         //If called on the output clip and by a multi-planar effect while in the getClipComponents action
         //this might lead to infinite recursion, so make sure we do not issue a call to getClipComponents again
-        SequenceTime time = _nodeInstance->getCurrentTime();
+        double time = _nodeInstance->getCurrentTime();
         int maxInputs = _nodeInstance->getMaxInputCount();
         for (int i = 0; i < maxInputs; ++i) {
             if (!_nodeInstance->isInputMask(i) && !_nodeInstance->isInputRotoBrush(i)) {
@@ -242,10 +258,35 @@ OfxClipInstance::getComponentsPresent() const
                 if (input) {
                     input->getComponentsAvailable(time,&comps);
                 }
-                compsAvailable.insert(comps.begin(), comps.end());
+                
+                
+                for (EffectInstance::ComponentsAvailableMap::iterator it = comps.begin(); it != comps.end(); ++it) {
+                    
+                    EffectInstance::ComponentsAvailableMap::iterator alreadyExisting = compsAvailable.end();
+                    EffectInstance::ComponentsAvailableMap::iterator colorMatch = compsAvailable.end();
+                    bool isColor = it->first.isColorPlane();
+                    for (EffectInstance::ComponentsAvailableMap::iterator it2 = compsAvailable.begin(); it2 != compsAvailable.end(); ++it2) {
+                        if (it2->first == it->first) {
+                            alreadyExisting = it2;
+                            break;
+                        } else if (isColor && it2->first.isColorPlane()) {
+                            colorMatch = it2;
+                        }
+                    }
+                    if (alreadyExisting == compsAvailable.end()) {
+                        if (colorMatch != compsAvailable.end()) {
+                            if (colorMatch->first.getNumComponents() < it->first.getNumComponents()) {
+                                compsAvailable.erase(colorMatch);
+                            } else {
+                                continue;
+                            }
+                        }
+                        compsAvailable.insert(*it);
+                    }
+                }
+                
             }
-        }
-        
+        } 
         std::list<ImageComponents> userComps;
         _nodeInstance->getNode()->getUserComponents(&userComps);
         
@@ -288,7 +329,7 @@ OfxClipInstance::getComponentsPresent() const
         if (!effect) {
             return ret;
         }
-        int time = effect->getCurrentTime();
+        double time = effect->getCurrentTime();
         
         effect->getComponentsAvailable(time, &compsAvailable);
     }
@@ -358,17 +399,14 @@ OfxClipInstance::getFrameRange(double &startFrame,
     assert(_nodeInstance);
     EffectInstance* n = getAssociatedNode();
     if (n) {
-        SequenceTime first,last;
         U64 hash = n->getRenderHash();
-        n->getFrameRange_public(hash,&first, &last);
-        startFrame = first;
-        endFrame = last;
+        n->getFrameRange_public(hash,&startFrame, &endFrame);
         
     } else {
         assert(_nodeInstance);
         assert( _nodeInstance->getApp() );
         assert( _nodeInstance->getApp()->getTimeLine() );
-        int first,last;
+        double first,last;
         _nodeInstance->getApp()->getFrameRange(&first, &last);
         startFrame = first;
         endFrame = last;
@@ -402,22 +440,24 @@ OfxClipInstance::getConnected() const
             int inputNb = getInputNb();
             
             Natron::EffectInstance* input = 0;
-            if (isMask()) {
-                
-                if (!_nodeInstance->getNode()->isMaskEnabled(inputNb)) {
-                    return false;
-                }
-                ImageComponents comps;
-                boost::shared_ptr<Natron::Node> maskInput;
-                _nodeInstance->getNode()->getMaskChannel(inputNb, &comps, &maskInput);
-                if (maskInput) {
-                    input = maskInput->getLiveInstance();
-                }
-                
-            } else {
+            // if (isMask()) {
+            
+            if (!_nodeInstance->getNode()->isMaskEnabled(inputNb)) {
+                return false;
+            }
+            ImageComponents comps;
+            boost::shared_ptr<Natron::Node> maskInput;
+            _nodeInstance->getNode()->getMaskChannel(inputNb, &comps, &maskInput);
+            if (maskInput) {
+                input = maskInput->getLiveInstance();
+            }
+            
+            //} else {
+            if (!input) {
                 input = _nodeInstance->getInput(inputNb);
             }
-
+            //}
+            
             return input != NULL;
         }
     }
@@ -786,7 +826,7 @@ OfxClipInstance::getImagePlane(OfxTime time, int view, const std::string& plane,
         }
         
         //The output clip doesn't have any transform matrix
-        OfxImage* ret =  new OfxImage(outputImage,false,renderWindow,boost::shared_ptr<Transform::Matrix3x3>(), components, nComps, true, *this);
+        OfxImage* ret =  new OfxImage(outputImage,false,renderWindow,boost::shared_ptr<Transform::Matrix3x3>(), components, nComps, *this);
         args.imagesBeingRendered.push_back(ret);
         return ret;
     } // if (isOutput())
@@ -797,9 +837,10 @@ OfxClipInstance::getImagePlane(OfxTime time, int view, const std::string& plane,
     int rerouteInputNb;
     Natron::EffectInstance* node =0;
     unsigned int mipMapLevel;
+    ActionLocalData* tls = 0;
     if (hasLocalData) {
-        const ActionLocalData& args = _lastActionData.localData();
-        if (!args.isViewValid) {
+        tls = &_lastActionData.localData();
+        if (!tls->isViewValid) {
 #ifdef DEBUG
             if (QThread::currentThread() != qApp->thread()) {
                 qDebug() << _nodeInstance->getNode()->getScriptName_mt_safe().c_str() << " is trying to call clipGetImage on a thread "
@@ -810,25 +851,25 @@ OfxClipInstance::getImagePlane(OfxTime time, int view, const std::string& plane,
             view = 0;
         } else {
             if (view == -1) {
-                view = args.view;
+                view = tls->view;
             }
         }
         
-        if (!args.isMipmapLevelValid) {
+        if (!tls->isMipmapLevelValid) {
             mipMapLevel = 0;
         } else {
-            mipMapLevel = args.mipMapLevel;
+            mipMapLevel = tls->mipMapLevel;
         }
         
-        if (!args.isTransformDataValid || !args.rerouteNode) {
+        if (!tls->isTransformDataValid || !tls->rerouteNode) {
             node = _nodeInstance;
             usingReroute = false;
             rerouteInputNb = -1;
         } else {
-            node = args.rerouteNode;
+            node = tls->rerouteNode;
             assert(node);
-            rerouteInputNb = args.rerouteInputNb;
-            transform = args.matrix;
+            rerouteInputNb = tls->rerouteInputNb;
+            transform = tls->matrix;
             usingReroute = true;
         }
         
@@ -855,9 +896,19 @@ OfxClipInstance::getStereoscopicImage(OfxTime time,
     if (_lastActionData.hasLocalData()) {
         ActionLocalData & args = _lastActionData.localData();
         if (args.clipComponentsValid) {
-            if (!args.hasImage) {
+            
+            //Commented-out: Since pre-fetching is disabled for floating point dates, an effect such as retime may
+            //end-up in this situation
+            /*if (!args.hasImage) {
+                EffectInstance* input = getAssociatedNode();
+                QString inputName = input ? input->getNode()->getScriptName_mt_safe().c_str() : QString();
+                qDebug() << "WARNING:" << _nodeInstance->getScriptName_mt_safe().c_str() << "is trying to fetch an image from"
+                << inputName << "at time =" << time << "and view =" << view
+                << "but it did not manage to pre-fetch any image from upstream."
+                << "This may either be a bug in Natron when calling renderInputImagesForRoI or a plug-in that has mis-implemented the"
+                << "getRegionsOfInterest action.";
                 return 0;
-            }
+            }*/
             components = args.clipComponents;
         }
     }
@@ -927,41 +978,54 @@ OfxClipInstance::getImageInternal(OfxTime time,
         
         unsigned int mipMapLevel = Image::getLevelFromScale(renderScale.x);
         
-        EffectInstance::RoIMap regionsOfInterests;
-        bool gotit = _nodeInstance->getThreadLocalRegionsOfInterests(regionsOfInterests);
-        
-        
-        if (!gotit) {
-            qDebug() << "Bug in transform concatenations: thread-storage has not been set on the new upstream input.";
-            
-            RectD rod;
-            if (optionalBounds) {
-                rod = bounds;
-            } else {
-                bool isProjectFormat;
-                StatusEnum stat = node->getRegionOfDefinition_public(node->getHash(), time, renderScale, view, &rod, &isProjectFormat);
-                assert(stat == Natron::eStatusOK);
-                (void)stat;
-            }
-            node->getRegionsOfInterest_public(time, renderScale, rod, rod, 0,&regionsOfInterests);
-        }
-        
         EffectInstance* inputNode = node->getInput(rerouteInputNb);
         if (!inputNode) {
             return NULL;
         }
-        
         RectD roi;
-        if (!optionalBounds) {
+        bool roiWasInRequestPass = false;
+        
+        const ParallelRenderArgs* frameArgs = inputNode->getParallelRenderArgsTLS();
+        if (frameArgs && frameArgs->request) {
+            const FrameViewRequest* request =  frameArgs->request->getFrameViewRequest(time, view);
+            if (request) {
+                roi = request->finalData.finalRoi;
+                roiWasInRequestPass = true;
+            }
+        }
+        
+        if (optionalBounds) {
+            roi = bounds;
+        } else if (!roiWasInRequestPass) {
+            RoIMap regionsOfInterests;
+            bool gotit = _nodeInstance->getThreadLocalRegionsOfInterests(regionsOfInterests);
             
-            EffectInstance::RoIMap::iterator found = regionsOfInterests.find(inputNode);
+            
+            if (!gotit) {
+                qDebug() << "Bug in transform concatenations: thread-storage has not been set on the new upstream input.";
+                
+                RectD rod;
+                if (optionalBounds) {
+                    rod = bounds;
+                } else {
+                    bool isProjectFormat;
+                    StatusEnum stat = node->getRegionOfDefinition_public(node->getHash(), time, renderScale, view, &rod, &isProjectFormat);
+                    assert(stat == Natron::eStatusOK);
+                    Q_UNUSED(stat);
+                }
+                node->getRegionsOfInterest_public(time, renderScale, rod, rod, 0,&regionsOfInterests);
+            }
+            
+            
+            
+            RoIMap::iterator found = regionsOfInterests.find(inputNode);
             assert(found != regionsOfInterests.end());
             ///RoI is in canonical coordinates since the results of getRegionsOfInterest is in canonical coords.
             roi = found->second;
             
-        } else {
-            roi = bounds;
         }
+        
+       
         
         RectI pixelRoI;
         roi.toPixelEnclosing(mipMapLevel, par, &pixelRoI);
@@ -1010,25 +1074,41 @@ OfxClipInstance::getImageInternal(OfxTime time,
                 components = _components;
                 nComps = natronComps.front().getNumComponents();
             }
+            
+           /* // this will dump the image as seen from the plug-in
+            QString filename;
+            QTextStream ts(&filename);
+            QDateTime now = QDateTime::currentDateTime();
+            ts << "img_" << time << "_"  << now.toMSecsSinceEpoch() << ".png";
+            appPTR->debugImage(image.get(), renderWindow, filename);*/
+   
             /*
              * When reaching here, the plug-in asked for a source image on an input clip. If the plug-in is in the render action,
              * the image should have been pre-computed hence the call to getImage does not involve writing the image, so no 
              * write lock is taken. In this situation, we lock the OfxImage for reading to ensure another thread is not trying to 
              * write the pixels at the same time.
-             * When calling fetchImage from an instanceChangedAction, the image has NOT been pre-computed, hence the getImage call
-             * will take the write lock on the image. There is an issue if the effect is an analysis (e.g: tracker) and asks twice
-             * the same input image but with 2 different bounds. This happens for example when the tracker reaches the last frame of 
-             * the sequence and the next frame is the very same image because the reader returned -2 for isIdentityAction. 
-             * In that case if we take the lock when returning the image first,
-             * the thread will have the read lock, and when re-asking the image but with greater bounds it will deadlock because
-             * we will be attempting to lock for writing an image already locked for reading. To overcome this situation, we just
-             * don't take the lock for reading, which should not cause any problem since the effect is in analysis anyway.
              */
-            bool takeLock = !_nodeInstance->isCurrentRenderInAnalysis();
-            return new OfxImage(image,true,renderWindow,transform, components, nComps, takeLock, *this);
+            return new OfxImage(image,true,renderWindow,transform, components, nComps, *this);
         }
     }
 }
+
+#ifdef OFX_SUPPORTS_OPENGLRENDER
+/// override this to fill in the OpenGL texture at the given time.
+/// The bounds of the image on the image plane should be
+/// 'appropriate', typically the value returned in getRegionsOfInterest
+/// on the effect instance. Outside a render call, the optionalBounds should
+/// be 'appropriate' for the.
+/// If bounds is not null, fetch the indicated section of the canonical image plane.
+OFX::Host::ImageEffect::Texture*
+OfxClipInstance::loadTexture(OfxTime time, const char *format, const OfxRectD *optionalBounds)
+{
+    Q_UNUSED(time);
+    Q_UNUSED(format);
+    Q_UNUSED(optionalBounds);
+    return NULL;
+}
+#endif
 
 std::string
 OfxClipInstance::natronsComponentsToOfxComponents(const Natron::ImageComponents& comp)
@@ -1083,6 +1163,8 @@ OfxClipInstance::ofxDepthToNatronDepth(const std::string & depth)
         return Natron::eImageBitDepthByte;
     } else if (depth == kOfxBitDepthShort) {
         return Natron::eImageBitDepthShort;
+    } else if (depth == kOfxBitDepthHalf) {
+        return Natron::eImageBitDepthHalf;
     } else if (depth == kOfxBitDepthFloat) {
         return Natron::eImageBitDepthFloat;
     } else if (depth == kOfxBitDepthNone) {
@@ -1102,6 +1184,9 @@ OfxClipInstance::natronsDepthToOfxDepth(Natron::ImageBitDepthEnum depth)
     case Natron::eImageBitDepthShort:
 
         return kOfxBitDepthShort;
+    case Natron::eImageBitDepthHalf:
+
+        return kOfxBitDepthHalf;
     case Natron::eImageBitDepthFloat:
 
         return kOfxBitDepthFloat;
@@ -1122,7 +1207,6 @@ OfxImage::OfxImage(boost::shared_ptr<Natron::Image> internalImage,
                    const boost::shared_ptr<Transform::Matrix3x3>& mat,
                    const std::string& components,
                    int nComps,
-                   bool takeLock,
                    OfxClipInstance &clip)
 : OFX::Host::ImageEffect::Image(clip)
 , _floatImage(internalImage)
@@ -1166,11 +1250,6 @@ OfxImage::OfxImage(boost::shared_ptr<Natron::Image> internalImage,
         setPointerProperty( kOfxImagePropData, ptr);
         _imgAccess = access;
     }
-    
-    if (!takeLock) {
-        _imgAccess.reset();
-    }
-    
     
     
     ///We set the render window that was given to the render thread instead of the actual bounds of the image
@@ -1246,18 +1325,23 @@ OfxClipInstance::getAssociatedNode() const
     if (_isOutput) {
         return _nodeInstance;
     } else {
-        if (isMask()) {
-            ImageComponents comps;
-            boost::shared_ptr<Natron::Node> maskInput;
-            int inputNb = getInputNb();
-            _nodeInstance->getNode()->getMaskChannel(inputNb, &comps, &maskInput);
-            if (maskInput) {
-                return maskInput->getLiveInstance();
-            }
-            return 0;
-        } else {
-            return _nodeInstance->getInput( getInputNb() );
+        //if (isMask()) {
+        ImageComponents comps;
+        boost::shared_ptr<Natron::Node> maskInput;
+        int inputNb = getInputNb();
+        _nodeInstance->getNode()->getMaskChannel(inputNb, &comps, &maskInput);
+        if (maskInput) {
+            return maskInput->getLiveInstance();
         }
+        
+        //} else {
+        if (!maskInput) {
+            return  _nodeInstance->getInput( getInputNb() );
+        } else {
+            return maskInput->getLiveInstance();
+        }
+       // }
+
     }
 }
 

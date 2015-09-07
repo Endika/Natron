@@ -1,30 +1,44 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
+
 #ifndef ROTOSERIALIZATION_H
 #define ROTOSERIALIZATION_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Engine/RotoContext.h"
 #include "Engine/RotoContextPrivate.h"
 
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
+GCC_DIAG_OFF(unused-parameter)
 #include <boost/serialization/base_object.hpp>
 #include <boost/serialization/export.hpp>
 #include <boost/serialization/list.hpp>
 #include <boost/serialization/split_member.hpp>
 #include <boost/serialization/version.hpp>
 #include <boost/serialization/map.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
+GCC_DIAG_ON(unused-parameter)
 #endif
 
 #include "Engine/AppManager.h"
@@ -54,12 +68,25 @@
 #define BEZIER_SERIALIZATION_INTRODUCES_OPEN_BEZIER 4
 #define BEZIER_SERIALIZATION_VERSION BEZIER_SERIALIZATION_INTRODUCES_OPEN_BEZIER
 
+#define ROTO_STROKE_INTRODUCES_MULTIPLE_STROKES 2
+#define ROTO_STROKE_SERIALIZATION_VERSION ROTO_STROKE_INTRODUCES_MULTIPLE_STROKES
+
+//BOOST_SERIALIZATION_SPLIT_MEMBER()
+// split member function serialize funcition into save/load
+template<class Archive>
+void
+BezierCP::serialize(Archive &ar,
+                   const unsigned int file_version)
+{
+    boost::serialization::split_member(ar, *this, file_version);
+}
+
 template<class Archive>
 void
 BezierCP::save(Archive & ar,
                     const unsigned int version) const
 {
-    (void)version;
+    Q_UNUSED(version);
     ar & boost::serialization::make_nvp("X",_imp->x);
     ar & boost::serialization::make_nvp("X_animation",*_imp->curveX);
     ar & boost::serialization::make_nvp("Y",_imp->y);
@@ -184,7 +211,7 @@ private:
     void save(Archive & ar,
               const unsigned int version) const
     {
-        (void)version;
+        Q_UNUSED(version);
         ar & boost::serialization::make_nvp("Name",name);
         ar & boost::serialization::make_nvp("Label",label);
         ar & boost::serialization::make_nvp("Activated",activated);
@@ -196,7 +223,7 @@ private:
     void load(Archive & ar,
               const unsigned int version)
     {
-        (void)version;
+        Q_UNUSED(version);
         ar & boost::serialization::make_nvp("Name",name);
         if ( version >= ROTO_ITEM_INTRODUCES_LABEL) {
             ar & boost::serialization::make_nvp("Label",label);
@@ -243,7 +270,7 @@ private:
     void save(Archive & ar,
               const unsigned int version) const
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<RotoDrawableItemSerialization,RotoItemSerialization>(
             static_cast<RotoDrawableItemSerialization *>(NULL),
             static_cast<RotoItemSerialization *>(NULL)
@@ -265,7 +292,7 @@ private:
     void load(Archive & ar,
               const unsigned int version)
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<RotoDrawableItemSerialization,RotoItemSerialization>(
                                                                                                       static_cast<RotoDrawableItemSerialization *>(NULL),
                                                                                                       static_cast<RotoItemSerialization *>(NULL)
@@ -367,7 +394,7 @@ private:
     void save(Archive & ar,
               const unsigned int version) const
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<BezierSerialization,RotoDrawableItemSerialization>(
             static_cast<BezierSerialization *>(NULL),
             static_cast<RotoDrawableItemSerialization *>(NULL)
@@ -390,7 +417,7 @@ private:
     void load(Archive & ar,
               const unsigned int version)
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<BezierSerialization,RotoDrawableItemSerialization>(
             static_cast<BezierSerialization *>(NULL),
             static_cast<RotoDrawableItemSerialization *>(NULL)
@@ -440,9 +467,9 @@ public:
     RotoStrokeSerialization()
     : RotoDrawableItemSerialization()
     , _brushType()
-    , _xCurve()
-    , _yCurve()
-    , _pressureCurve()
+    , _xCurves()
+    , _yCurves()
+    , _pressureCurves()
     {
         
     }
@@ -464,41 +491,73 @@ private:
     void save(Archive & ar,
               const unsigned int version) const
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<RotoStrokeSerialization,RotoDrawableItemSerialization>(
                                                                                                         static_cast<RotoStrokeSerialization *>(NULL),
                                                                                                         static_cast<RotoDrawableItemSerialization *>(NULL)
                                                                                                         );
         ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(RotoDrawableItemSerialization);
+
+        assert(_xCurves.size() == _yCurves.size() && _xCurves.size() == _pressureCurves.size());
+        std::list<boost::shared_ptr<Curve> >::const_iterator itY = _yCurves.begin();
+        std::list<boost::shared_ptr<Curve> >::const_iterator itP = _pressureCurves.begin();
+        int nb = (int)_xCurves.size();
         ar & boost::serialization::make_nvp("BrushType",_brushType);
-        ar & boost::serialization::make_nvp("CurveX",_xCurve);
-        ar & boost::serialization::make_nvp("CurveY",_yCurve);
-        ar & boost::serialization::make_nvp("CurveP",_pressureCurve);
+        ar & boost::serialization::make_nvp("NbItems",nb);
+        for (std::list<boost::shared_ptr<Curve> >::const_iterator it = _xCurves.begin(); it!= _xCurves.end(); ++it, ++itY, ++itP) {
+            ar & boost::serialization::make_nvp("CurveX",**it);
+            ar & boost::serialization::make_nvp("CurveY",**itY);
+            ar & boost::serialization::make_nvp("CurveP",**itP);
+        }
+        
+        
     }
     
     template<class Archive>
     void load(Archive & ar,
               const unsigned int version)
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<RotoStrokeSerialization,RotoDrawableItemSerialization>(
                                                                                                         static_cast<RotoStrokeSerialization *>(NULL),
                                                                                                         static_cast<RotoDrawableItemSerialization *>(NULL)
                                                                                                         );
         ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(RotoDrawableItemSerialization);
-        ar & boost::serialization::make_nvp("BrushType",_brushType);
-        ar & boost::serialization::make_nvp("CurveX",_xCurve);
-        ar & boost::serialization::make_nvp("CurveY",_yCurve);
-        ar & boost::serialization::make_nvp("CurveP",_pressureCurve);
+        if (version < ROTO_STROKE_INTRODUCES_MULTIPLE_STROKES) {
+            ar & boost::serialization::make_nvp("BrushType",_brushType);
+            
+            boost::shared_ptr<Curve> x(new Curve),y(new Curve),p(new Curve);
+            ar & boost::serialization::make_nvp("CurveX",*x);
+            ar & boost::serialization::make_nvp("CurveY",*y);
+            ar & boost::serialization::make_nvp("CurveP",*p);
+            _xCurves.push_back(x);
+            _yCurves.push_back(y);
+            _pressureCurves.push_back(p);
+            
+        } else {
+            int nb;
+            ar & boost::serialization::make_nvp("BrushType",_brushType);
+            ar & boost::serialization::make_nvp("NbItems",nb);
+            for (int i = 0; i < nb ;++i) {
+                boost::shared_ptr<Curve> x(new Curve),y(new Curve),p(new Curve);
+                ar & boost::serialization::make_nvp("CurveX",*x);
+                ar & boost::serialization::make_nvp("CurveY",*y);
+                ar & boost::serialization::make_nvp("CurveP",*p);
+                _xCurves.push_back(x);
+                _yCurves.push_back(y);
+                _pressureCurves.push_back(p);
+
+            }
+        }
     }
     
     BOOST_SERIALIZATION_SPLIT_MEMBER()
     
     int _brushType;
-    Curve _xCurve;
-    Curve _yCurve;
-    Curve _pressureCurve;
+    std::list<boost::shared_ptr<Curve> > _xCurves,_yCurves,_pressureCurves;
 };
+
+BOOST_CLASS_VERSION(RotoStrokeSerialization, ROTO_STROKE_SERIALIZATION_VERSION)
 
 class RotoLayerSerialization
     : public RotoItemSerialization
@@ -524,7 +583,7 @@ private:
     void save(Archive & ar,
               const unsigned int version) const
     {
-        (void)version;
+        Q_UNUSED(version);
 
         boost::serialization::void_cast_register<RotoLayerSerialization,RotoItemSerialization>(
             static_cast<RotoLayerSerialization *>(NULL),
@@ -561,7 +620,7 @@ private:
     void load(Archive & ar,
               const unsigned int version)
     {
-        (void)version;
+        Q_UNUSED(version);
         boost::serialization::void_cast_register<RotoLayerSerialization,RotoItemSerialization>(
             static_cast<RotoLayerSerialization *>(NULL),
             static_cast<RotoItemSerialization *>(NULL)
@@ -629,7 +688,7 @@ private:
     void save(Archive & ar,
               const unsigned int version) const
     {
-        (void)version;
+        Q_UNUSED(version);
 
         ar & boost::serialization::make_nvp("BaseLayer",_baseLayer);
         ar & boost::serialization::make_nvp("AutoKeying",_autoKeying);

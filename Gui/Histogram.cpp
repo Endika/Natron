@@ -1,13 +1,30 @@
-//  Natron
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include "Histogram.h"
+
+#include <algorithm> // min, max
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -15,10 +32,10 @@
 #include <QSplitter>
 #include <QDesktopWidget>
 #include <QGLShaderProgram>
-CLANG_DIAG_OFF(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_OFF
 // /opt/local/include/QtGui/qmime.h:119:10: warning: private field 'type' is not used [-Wunused-private-field]
 #include <QMouseEvent>
-CLANG_DIAG_ON(unused-private-field)
+GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include <QDebug>
 #include <QApplication>
 #include <QToolButton>
@@ -429,50 +446,77 @@ boost::shared_ptr<Natron::Image> HistogramPrivate::getHistogramImage(RectI* imag
     QAction* selectedInputAction = viewerCurrentInputGroup->checkedAction();
     if (selectedInputAction) {
         textureIndex = selectedInputAction->data().toInt();
-    } 
+    }
+    
+    ViewerTab* viewer = 0;
     if (index == 0) {
         //no viewer selected
         imagePortion->clear();
-
         return boost::shared_ptr<Natron::Image>();
     } else if (index == 1) {
         //current viewer
-        ViewerTab* lastSelectedViewer = gui->getNodeGraph()->getLastSelectedViewer();
-        boost::shared_ptr<Natron::Image> ret;
-        if (lastSelectedViewer) {
-            ret = lastSelectedViewer->getViewer()->getLastRenderedImageByMipMapLevel(textureIndex,lastSelectedViewer->getInternalNode()->getMipMapLevelFromZoomFactor());
-        }
-        if (ret) {
-            if (!useImageRoD) {
-                if (lastSelectedViewer) {
-                    *imagePortion = lastSelectedViewer->getViewer()->getImageRectangleDisplayed(ret->getBounds(), ret->getPixelAspectRatio(), ret->getMipMapLevel());
-                }
-            } else {
-                *imagePortion = ret->getBounds();
-            }
-        }
-
-        return ret;
+        viewer = gui->getNodeGraph()->getLastSelectedViewer();
+        
     } else {
         boost::shared_ptr<Natron::Image> ret;
         const std::list<ViewerTab*> & viewerTabs = gui->getViewersList();
         for (std::list<ViewerTab*>::const_iterator it = viewerTabs.begin(); it != viewerTabs.end(); ++it) {
             if ( (*it)->getInternalNode()->getScriptName_mt_safe() == viewerName ) {
-                ret = (*it)->getViewer()->getLastRenderedImage(textureIndex);
-                if (ret) {
-                    if (!useImageRoD) {
-                        *imagePortion = (*it)->getViewer()->getImageRectangleDisplayed(ret->getBounds(), ret->getPixelAspectRatio(), ret->getMipMapLevel());
-                    } else {
-                        *imagePortion = ret->getBounds();
-                    }
-                }
-
-                return ret;
+                viewer = *it;
+                break;
             }
         }
 
-        return ret;
     }
+    
+    std::list<boost::shared_ptr<Natron::Image> > tiles;
+    if (viewer) {
+        viewer->getViewer()->getLastRenderedImageByMipMapLevel(textureIndex,viewer->getInternalNode()->getMipMapLevelFromZoomFactor(),&tiles);
+    }
+    
+    ///We must copy all tiles into an image of the whole size
+    boost::shared_ptr<Natron::Image> ret;
+    if (!tiles.empty()) {
+        const    boost::shared_ptr<Natron::Image>& firstTile = tiles.front();
+        RectI bounds;
+        unsigned int mipMapLevel = 0;
+        double par = 1.;
+        Natron::ImageBitDepthEnum depth = Natron::eImageBitDepthFloat;
+        Natron::ImageComponents comps;
+        for (std::list<boost::shared_ptr<Natron::Image> >::const_iterator it = tiles.begin(); it!=tiles.end(); ++it) {
+            if (bounds.isNull()) {
+                bounds = (*it)->getBounds();
+                mipMapLevel = (*it)->getMipMapLevel();
+                par = (*it)->getPixelAspectRatio();
+                depth = (*it)->getBitDepth();
+                comps = (*it)->getComponents();
+            } else {
+                bounds.merge((*it)->getBounds());
+                assert(mipMapLevel == (*it)->getMipMapLevel());
+                assert(depth == (*it)->getBitDepth());
+                assert(comps == (*it)->getComponents());
+                assert(par == (*it)->getPixelAspectRatio());
+            }
+        }
+        if (bounds.isNull()) {
+            return ret;
+        }
+        
+        ret.reset(new Natron::Image(comps,firstTile->getRoD(),bounds,mipMapLevel,par,depth,false));
+        for (std::list<boost::shared_ptr<Natron::Image> >::const_iterator it = tiles.begin(); it!=tiles.end(); ++it) {
+            ret->pasteFrom(**it, (*it)->getBounds(), false);
+        }
+        
+        if (!useImageRoD) {
+            if (viewer) {
+                *imagePortion = viewer->getViewer()->getImageRectangleDisplayed(bounds,par, mipMapLevel);
+            }
+        } else {
+            *imagePortion = ret->getBounds();
+        }
+    }
+    
+    return ret;
 } // getHistogramImage
 
 void
@@ -1120,6 +1164,7 @@ Histogram::paintGL()
     if ( (zoomLeft == zoomRight) || (zoomTop == zoomBottom) ) {
         glClearColor(0,0,0,1);
         glClear(GL_COLOR_BUFFER_BIT);
+        glCheckErrorIgnoreOSXBug();
 
         return;
     }

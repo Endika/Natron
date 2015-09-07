@@ -1,33 +1,43 @@
-//  Natron
-//
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * Created by Alexandre GAUTHIER-FOICHAT on 6/1/2012.
- * contact: immarespond at gmail dot com
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <http://www.natron.fr/>,
+ * Copyright (C) 2015 INRIA and Alexandre Gauthier-Foichat
  *
- */
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef KNOBSERIALIZATION_H
 #define KNOBSERIALIZATION_H
 
+// ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
 #include <Python.h>
+// ***** END PYTHON BLOCK *****
 
 #include <map>
 #include <vector>
 #include "Global/Macros.h"
-#if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
+#ifndef Q_MOC_RUN
 GCC_DIAG_OFF(unused-parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/xml_iarchive.hpp>
 GCC_DIAG_ON(unused-parameter)
 #include <boost/archive/xml_oarchive.hpp>
+GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
+GCC_DIAG_ON(unused-parameter)
 #include <boost/serialization/list.hpp>
 GCC_DIAG_OFF(sign-compare)
-//vector.hpp:216:18: warning: comparison of integers of different signs: 'int' and 'base_type' (aka 'unsigned long') [-Wsign-compare]
 #include <boost/serialization/vector.hpp>
 GCC_DIAG_ON(sign-compare)
 #include <boost/serialization/split_member.hpp>
@@ -77,7 +87,7 @@ struct MasterSerialization
     void serialize(Archive & ar,
                    const unsigned int version)
     {
-        (void)version;
+        Q_UNUSED(version);
         ar & boost::serialization::make_nvp("MasterDimension",masterDimension);
         ar & boost::serialization::make_nvp("MasterNodeName",masterNodeName);
         ar & boost::serialization::make_nvp("MasterKnobName",masterKnobName);
@@ -152,8 +162,10 @@ public:
     double dmax;
 };
 
+class KnobSerializationBase;
 struct ValueSerialization
 {
+    KnobSerializationBase* _serialization;
     boost::shared_ptr<KnobI> _knob;
     int _dimension;
     MasterSerialization _master;
@@ -161,7 +173,8 @@ struct ValueSerialization
     bool _exprHasRetVar;
     
     ///Load
-    ValueSerialization(const boost::shared_ptr<KnobI> & knob,
+    ValueSerialization(KnobSerializationBase* serialization,
+                       const boost::shared_ptr<KnobI> & knob,
                        int dimension);
     
     ///Save
@@ -170,6 +183,8 @@ struct ValueSerialization
                        bool exprHasRetVar,
                        const std::string& expr);
 
+    void setChoiceExtraLabel(const std::string& label);
+    
     
     template<class Archive>
     void save(Archive & ar,
@@ -293,6 +308,7 @@ struct ValueSerialization
                 if (version < VALUE_SERIALIZATION_REMOVES_EXTRA_DATA) {
                     std::string label;
                     ar & boost::serialization::make_nvp("Label", label);
+                    setChoiceExtraLabel(label);
                 }
                 
             }
@@ -366,7 +382,7 @@ public:
     
     virtual boost::shared_ptr<KnobI> getKnob() const = 0;
     
-    
+    virtual void setChoiceExtraString(const std::string& /*label*/) {}
     
     
 };
@@ -392,6 +408,8 @@ class KnobSerialization : public KnobSerializationBase
     std::string _tooltip;
     bool _useHostOverlay;
 
+    
+    virtual void setChoiceExtraString(const std::string& label) OVERRIDE FINAL;
     
     friend class boost::serialization::access;
     template<class Archive>
@@ -537,7 +555,7 @@ class KnobSerialization : public KnobSerializationBase
         }
         
         for (int i = 0; i < _knob->getDimension(); ++i) {
-            ValueSerialization vs(_knob,i);
+            ValueSerialization vs(this,_knob,i);
             ar & boost::serialization::make_nvp("item",vs);
             _masters.push_back(vs._master);
             _expressions.push_back(std::make_pair(vs._expression,vs._exprHasRetVar));
@@ -581,9 +599,11 @@ class KnobSerialization : public KnobSerializationBase
             
             Choice_Knob* isChoice = dynamic_cast<Choice_Knob*>( _knob.get() );
             if (isChoice) {
-                ChoiceExtraData* cData = new ChoiceExtraData;
+                //ChoiceExtraData* cData = new ChoiceExtraData;
+                assert(_extraData);
+                ChoiceExtraData* cData = dynamic_cast<ChoiceExtraData*>(_extraData);
                 ar & boost::serialization::make_nvp("ChoiceLabel",cData->_choiceString);
-                _extraData = cData;
+                //_extraData = cData;
             }
             
             
